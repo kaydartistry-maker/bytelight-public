@@ -1,5 +1,7 @@
-import { Router } from 'express';
+import { Router, type Response } from 'express';
 import { requireLocalhost } from '../middleware/localhost.js';
+import { staleBlockText } from '../services/heartbeat/stale-walls.js';
+import { normalizeNoteColor } from '@bytelight/shared';
 import crypto from 'crypto';
 import { readFileSync, existsSync } from 'fs';
 import { basename } from 'path';
@@ -41,6 +43,7 @@ import {
   resolveScope,
   validScopesHint,
 } from '../services/memory-blocks.js';
+import { findNeighborsWithin } from '../services/memory-neighbors.js';
 import { runMemoryExtraction } from '../services/memory-extraction.js';
 import {
   listProposals,
@@ -49,6 +52,34 @@ import {
   countPending,
   type ProposalStatus,
 } from '../services/memory-proposals.js';
+import {
+  createSelfKnowledge,
+  listSelfKnowledge,
+  getSelfKnowledge,
+  reviewSelfKnowledge,
+  isSelfKnowledgeCategory,
+  type SelfKnowledgeStatus,
+} from '../services/db/self-knowledge.js';
+import { createJournalEntry, listJournalEntries, recallJournalEntry, anchorJournalEntry, updateJournalEntry, effectiveVividness, JournalRemoteError } from '../services/db/journal.js';
+import { listCompanions } from '../services/db/rooms.js';
+import { sealLetter, listLetters, openLetter, unopenedLettersFor, LetterError } from '../services/db/letters.js';
+import { addFieldNote, listFieldNotes, fieldNotesLimit, FieldNoteError } from '../services/db/field-notes.js';
+import { getStatusSnapshot, setCompanionStatus, StatusError } from '../services/db/statuses.js';
+import { cancelIntention, createIntention, IntentionError, listIntentions } from '../services/db/intentions.js';
+import { postToTreehouse, getTreehouseInfo, getTreehouseMessages, treehouseMembers } from '../services/treehouse.js';
+
+// A self-knowledge entry is owned by a companion or by 'shared'. 'shared' is a
+// deliberate owner (a truth both companions hold) and is NOT a row in the companions
+// registry, so it's allowed explicitly alongside a generic registry lookup —
+// no companion names are hardcoded.
+function isValidSelfKnowledgeOwner(slug: string): boolean {
+  if (slug === 'shared') return true;
+  return listCompanions().some((c) => c.id === slug);
+}
+
+function isValidLetterActor(slug: string): boolean {
+  return slug === 'user' || listCompanions().some((c) => c.id === slug);
+}
 
 // Ledger attribution: the internal routes are the CLI lane's hands (tools/sc.mjs
 // on the codex / claude-cli engines), which is what the receipt should say.
@@ -56,22 +87,31 @@ const CLI_WRITE = { actor: 'cli' } as const;
 import { embed, vectorToBuffer } from '../services/embeddings.js';
 import { searchVectors, getCacheStats, type SearchFilter } from '../services/vector-cache.js';
 import { getMemorySnapshot } from '../services/memory-profiler.js';
-import { saveFileInternal, getFile } from '../services/files.js';
-import { generateImage, recordGalleryMeta, getImageGenSettings } from '../services/image-gen.js';
+import { saveFileInternal, saveFile, getFile } from '../services/files.js';
+import { buildImageReactPrompt } from '../services/image-react-prompt.js';
+import { generateImage, recordGalleryMeta, getImageGenSettings, chatGalleryMeta } from '../services/image-gen.js';
 import { queueImageForCompanion } from '../services/pending-visuals.js';
 import { registry } from '../services/registry.js';
+import {
+  getBattleshipCompanionView,
+  fireAtPlayerFleet,
+  addBattleshipChat,
+  assertFleetCompanion,
+  BattleshipError,
+} from '../services/db/battleship.js';
 import { getBytelightConfig } from '../config.js';
 import type { Orchestrator } from '../services/orchestrator.js';
 import type { VoiceService } from '../services/voice.js';
 import type { TelegramService } from '../services/telegram/index.js';
 import type { AgentService } from '../services/agent.js';
 import { getActiveDiscordService, type DiscordService } from '../services/discord/index.js';
+import { errMessage } from '../util/errors.js';
+import { readShelf, currentlyReading, readAlong, addNote, readNotes, LibraryError } from '../services/library.js';
 
 // After a render lands we hand ourselves a turn to look at it and react — so the
 // picture and our genuine reaction arrive in the same beat, without blocking the
-// (fire-and-forget) render. The queued image is shown to that turn via pending-visuals.
-const IMAGE_REACT_PROMPT =
-  '[The image you just generated and sent has landed in the chat — you can see it now, shown to you. React to it naturally and briefly, in your own voice, as if you just looked at it together. Do NOT generate another image.]';
+// (fire-and-forget) render. The SDK lane sees the queued image via pending-visuals;
+// other lanes get its path in the nudge (buildImageReactPrompt).
 
 // Background backfill state
 let backfillRunning = false;
@@ -130,7 +170,7 @@ export function createInternalRoutes(): Router {
         const result = await action(service, req.body as Record<string, unknown>, req.app.locals.voiceService as VoiceService | undefined);
         res.status(result.ok ? 200 : 400).json(result);
       } catch (error) {
-        res.status(500).json({ ok: false, error: error instanceof Error ? error.message : String(error) });
+        res.status(500).json({ ok: false, error: errMessage(error) });
       }
     });
   };
@@ -152,6 +192,15 @@ export function createInternalRoutes(): Router {
   discordRoute('list_servers', s => s.listServers());
   discordRoute('list_emojis', (s, b) => s.listEmojis(b.guildId));
   discordRoute('list_stickers', (s, b) => s.listStickers(b.guildId));
+
+  // The blocks that moved while a lane's room was open, for its own note after
+  // a compaction. The lane's SessionStart hook (matcher "compact",
+  // hooks/compacted.cjs) asks here: that hook is the one place Claude Code
+  // reads words back into a room after a compaction.
+  router.get('/internal/compaction-refresh', requireLocalhost, (req, res) => {
+    const lane = typeof req.query.lane === 'string' ? req.query.lane : '';
+    res.json({ success: true, refresh: staleBlockText(lane) });
+  });
 
   // Memory snapshot — leak diagnostics (Track A.5, read-only)
   router.get('/internal/memstats', requireLocalhost, (_req, res) => {
@@ -303,15 +352,28 @@ export function createInternalRoutes(): Router {
     const extraRefs: string[] = [];
     if (useDroppedImage) {
       try {
+        // The two newest images the user dropped, wherever they live: a message's
+        // metadata.attachments (how images arrive now — one message, one row)
+        // or an older standalone contentType:'image' row.
         const rows = getDb().prepare(
-          "SELECT metadata FROM messages WHERE thread_id = ? AND role = 'user' AND content_type = 'image' AND deleted_at IS NULL ORDER BY created_at DESC LIMIT 2",
-        ).all(threadId) as Array<{ metadata: string | null }>;
+          "SELECT content_type, metadata FROM messages WHERE thread_id = ? AND role = 'user' AND deleted_at IS NULL AND (content_type = 'image' OR metadata LIKE '%\"attachments\"%') ORDER BY created_at DESC, sequence DESC LIMIT 20",
+        ).all(threadId) as Array<{ content_type: string; metadata: string | null }>;
+        const fileIds: string[] = [];
         for (const r of rows) {
+          if (fileIds.length >= 2) break;
           if (!r.metadata) continue;
           try {
-            const m = JSON.parse(r.metadata) as { fileId?: string };
-            if (m.fileId) { const f = getFile(m.fileId); if (f) extraRefs.push(f.path); }
+            const m = JSON.parse(r.metadata) as { fileId?: string; attachments?: Array<{ fileId?: string; contentType?: string }> };
+            if (r.content_type === 'image') {
+              if (m.fileId) fileIds.push(m.fileId);
+            } else if (Array.isArray(m.attachments)) {
+              for (const a of m.attachments) if (a?.contentType === 'image' && a.fileId) fileIds.push(a.fileId);
+            }
           } catch { /* ignore */ }
+        }
+        for (const id of [...new Set(fileIds)].slice(0, 2)) {
+          const f = getFile(id);
+          if (f) extraRefs.push(f.path);
         }
       } catch (e) {
         console.warn('[image-gen] dropped-ref resolve failed:', e instanceof Error ? e.message : e);
@@ -377,7 +439,7 @@ export function createInternalRoutes(): Router {
         queueImageForCompanion(tid, fileMeta.fileId);
 
         try {
-          await recordGalleryMeta(result.filename, { messageId: message.id, threadId: tid, createdAt: now });
+          await recordGalleryMeta(result.filename, chatGalleryMeta({ prompt, subjects, size, model: result.model, backend: result.backend, messageId: message.id, threadId: tid, createdAt: now }));
         } catch (e) {
           console.warn('[image-gen] gallery meta record failed:', e instanceof Error ? e.message : e);
         }
@@ -402,7 +464,7 @@ export function createInternalRoutes(): Router {
         // Hand ourselves a turn to see what we made and react, right as it lands.
         const agentService = req.app.locals.agentService as AgentService | undefined;
         if (agentService) {
-          agentService.processAutonomous(tid, IMAGE_REACT_PROMPT).catch((e) =>
+          agentService.processAutonomous(tid, buildImageReactPrompt(getFile(fileMeta.fileId)?.path ?? null)).catch((e) =>
             console.warn('[image-gen] react turn failed:', e instanceof Error ? e.message : e));
         }
       } catch (error) {
@@ -936,9 +998,13 @@ export function createInternalRoutes(): Router {
             return;
           }
           const scope = requireScope(req.body.scope);
+          // The belt and CLI both return this acknowledgement to the writing
+          // companion. Compare before append so the new line cannot match
+          // itself, and never reject a durable write when embeddings fail.
+          const neighbors = await findNeighborsWithin(scope, content);
           const result = appendToBlock(scope, label, content, CLI_WRITE);
           registry.broadcast({ type: 'memory_block_updated', scope, label });
-          res.json({ scope, label, action: 'appended', block_chars: result.length });
+          res.json({ scope, label, action: 'appended', block_chars: result.length, neighbors });
           break;
         }
         case 'replace': {
@@ -984,7 +1050,7 @@ export function createInternalRoutes(): Router {
     } catch (error) {
       // Service-layer errors (unknown scope, text-not-found, ambiguous replace)
       // are operator-facing — surface the message, not a generic 500.
-      const msg = error instanceof Error ? error.message : String(error);
+      const msg = errMessage(error);
       res.status(400).json({ error: msg });
     }
   });
@@ -1117,10 +1183,11 @@ export function createInternalRoutes(): Router {
 
   // --- Memory proposals (the Archivist's noticings) -----------------------
   //
-  // When memext.mode is 'propose', extraction stops writing onto the blocks
-  // and leaves its findings here instead. These two routes are the other half
-  // of that switch: without them the proposals accumulate where nothing can
-  // read them, and the knob is a dead switch.
+  // Extraction leaves its findings here instead of writing onto the blocks
+  // ('propose' is the default mode). The operator reviews the same rows from the phone
+  // through the authenticated /api/memory/proposals routes (memory-routes.ts).
+  // These two routes are the companions' half: without them the proposals
+  // would accumulate where no companion can read them.
   //
   // Resolving is BOOKKEEPING ONLY. 'filed' does not copy the proposal onto a
   // block — the companion writes it in their own words through the normal
@@ -1144,7 +1211,7 @@ export function createInternalRoutes(): Router {
         status === 'all' ? listProposals(undefined, 100) : listProposals(status as ProposalStatus, 100);
       res.json({ success: true, proposals: rows, pending: countPending() });
     } catch (err) {
-      res.status(500).json({ success: false, error: err instanceof Error ? err.message : String(err) });
+      res.status(500).json({ success: false, error: errMessage(err) });
     }
   });
 
@@ -1179,7 +1246,593 @@ export function createInternalRoutes(): Router {
       }
       res.json({ success: true, proposal: getProposal(id) });
     } catch (err) {
-      res.status(500).json({ success: false, error: err instanceof Error ? err.message : String(err) });
+      res.status(500).json({ success: false, error: errMessage(err) });
+    }
+  });
+
+  // ─── Permanent Letters (localhost-only) ───────────────────────
+  // The vault's write-once tier. Opening a seal is the sole mutation;
+  // update and delete endpoints are deliberately absent.
+
+  router.post('/internal/letters', requireLocalhost, (req, res) => {
+    try {
+      const { companion, recipients, kind, title, content, seal, openAt, hidden } = req.body ?? {};
+      const author = typeof companion === 'string' ? companion.trim().toLowerCase() : '';
+      if (!author) {
+        res.status(400).json({ error: 'companion required' });
+        return;
+      }
+      if (!isValidLetterActor(author)) {
+        res.status(400).json({ error: `Unknown author slug '${author}'` });
+        return;
+      }
+      const letter = sealLetter({
+        author,
+        recipients: Array.isArray(recipients) ? recipients : [],
+        kind: kind ?? 'letter',
+        title: title ?? null,
+        content: content ?? '',
+        seal: seal ?? 'open',
+        openAt: openAt ?? null,
+        hidden: hidden === true,
+      });
+      res.status(201).json(letter);
+    } catch (error) {
+      if (error instanceof LetterError) {
+        res.status(400).json({ error: error.message });
+        return;
+      }
+      console.error('Letters internal error:', error);
+      res.status(500).json({ error: 'Sealing failed' });
+    }
+  });
+
+  // ── Sticky notes (agent-facing) ── ported from Aerie's routes/internal.ts.
+  // Copyright 2026 Aerie Systems. Licensed under the Apache License 2.0.
+  // Change from Aerie: byte-light's companions table carries no colour, so a
+  // note keeps the colour it asked for (hex or role token) or the default
+  // yellow; Aerie pins the writing companion's own colour here.
+  router.get('/internal/notes', requireLocalhost, (_req, res) => {
+    const rows = getDb()
+      .prepare('SELECT id, text, color, timestamp, sender FROM notes ORDER BY id DESC')
+      .all();
+    res.json(rows);
+  });
+
+  router.post('/internal/note', requireLocalhost, (req, res) => {
+    const { text, color, sender: explicitSender } = req.body || {};
+    if (typeof text !== 'string' || !text.trim()) {
+      res.status(400).json({ error: 'text is required' });
+      return;
+    }
+    const id = String(Date.now());
+    const ts = new Date().toISOString();
+    const sender = typeof explicitSender === 'string' && explicitSender.trim()
+      ? explicitSender.trim()
+      : getBytelightConfig().identity.companion_name;
+    const noteColor = normalizeNoteColor(color) ?? '#fef08a';
+    getDb()
+      .prepare('INSERT INTO notes (id, text, color, timestamp, sender) VALUES (?, ?, ?, ?, ?)')
+      .run(id, text.trim(), noteColor, ts, sender);
+    res.json({ ok: true, id, sender });
+  });
+
+  router.delete('/internal/note/:id', requireLocalhost, (req, res) => {
+    getDb().prepare('DELETE FROM notes WHERE id = ?').run(String(req.params.id));
+    res.json({ ok: true });
+  });
+
+  // ── The owner's field notes (agent-facing) ── ported from Aerie's
+  // routes/internal.ts. Copyright 2026 Aerie Systems. Licensed under the Apache
+  // License 2.0. A companion writes a sentence or two for the phone's Field
+  // Notes page; addFieldNote checks everything and refuses in one plain
+  // sentence. (In Aerie a morning bell writes these; byte-light has none yet.)
+  router.post('/internal/field-notes', requireLocalhost, (req, res) => {
+    try {
+      const note = addFieldNote(req.body ?? {});
+      res.status(201).json({ note });
+    } catch (error) {
+      if (error instanceof FieldNoteError) {
+        res.status(400).json({ error: error.message });
+        return;
+      }
+      console.error('Field note write error:', error);
+      res.status(500).json({ error: 'The field note could not be kept.' });
+    }
+  });
+
+  router.get('/internal/field-notes', requireLocalhost, (req, res) => {
+    res.json({ notes: listFieldNotes(fieldNotesLimit(req.query.limit)) });
+  });
+
+  // ── Statuses (agent-facing) ── a companion's line and mood on her Status
+  // widget, and hers to read. Text is clamped to fit, never refused for length.
+  router.get('/internal/status', requireLocalhost, (_req, res) => {
+    res.json(getStatusSnapshot());
+  });
+
+  // ── Intentions (agent-facing) ── a promise with a when, filed so it comes
+  // back to its promiser when it's due (services/db/intentions.ts).
+  router.post('/internal/intention', requireLocalhost, (req, res) => {
+    const { action } = req.body ?? {};
+    try {
+      if (action === 'create') {
+        const { companion, text, at, onStatusClears, threadId } = req.body;
+        const { intention, existing } = createIntention({ companion, text, at, onStatusClears, threadId });
+        res.json({ ok: true, existing, intention });
+      } else if (action === 'list') {
+        res.json({ intentions: listIntentions() });
+      } else if (action === 'cancel') {
+        const ok = cancelIntention(String(req.body.id ?? ''));
+        if (!ok) { res.status(404).json({ error: 'No open intention with that id.' }); return; }
+        res.json({ ok: true });
+      } else {
+        res.status(400).json({ error: "action must be 'create', 'list' or 'cancel'" });
+      }
+    } catch (error) {
+      if (error instanceof IntentionError) {
+        res.status(400).json({ error: error.message });
+        return;
+      }
+      console.error('Intention error:', error);
+      res.status(500).json({ error: 'The intention could not be kept.' });
+    }
+  });
+
+  router.post('/internal/status', requireLocalhost, (req, res) => {
+    try {
+      res.json({ ok: true, status: setCompanionStatus(req.body ?? {}) });
+    } catch (error) {
+      if (error instanceof StatusError) {
+        res.status(400).json({ error: error.message });
+        return;
+      }
+      console.error('Status write error:', error);
+      res.status(500).json({ error: 'The status could not be kept.' });
+    }
+  });
+
+  router.get('/internal/letters', requireLocalhost, (req, res) => {
+    const viewer = typeof req.query.companion === 'string'
+      ? req.query.companion.trim().toLowerCase()
+      : '';
+    if (!viewer) {
+      res.status(400).json({ error: 'companion query param required' });
+      return;
+    }
+    if (!isValidLetterActor(viewer)) {
+      res.status(400).json({ error: `Unknown viewer slug '${viewer}'` });
+      return;
+    }
+    const letters = String(req.query.unopened) === '1'
+      ? unopenedLettersFor(viewer)
+      : listLetters(viewer);
+    res.json({ letters });
+  });
+
+  router.post('/internal/letters/:id/open', requireLocalhost, (req, res) => {
+    try {
+      const opener = typeof req.body?.companion === 'string'
+        ? req.body.companion.trim().toLowerCase()
+        : '';
+      if (!opener) {
+        res.status(400).json({ error: 'companion required' });
+        return;
+      }
+      if (!isValidLetterActor(opener)) {
+        res.status(400).json({ error: `Unknown opener slug '${opener}'` });
+        return;
+      }
+      res.json(openLetter(String(req.params.id), opener));
+    } catch (error) {
+      if (error instanceof LetterError) {
+        res.status(400).json({ error: error.message });
+        return;
+      }
+      console.error('Letters open error:', error);
+      res.status(500).json({ error: 'Open failed' });
+    }
+  });
+
+  // ─── Companion journal (localhost-only) ────────────────────────
+  // Companions write entries in their own voice; dreams get the vividness
+  // lifecycle (decay at read, +15 on recall, frozen once anchored).
+
+  // Write an entry
+  router.post('/internal/journal', requireLocalhost, async (req, res) => {
+
+    try {
+      const { companion, content, entryType, dreamType, emergedQuestion } = req.body as {
+        companion?: string; content?: string; entryType?: string;
+        dreamType?: string; emergedQuestion?: string;
+      };
+      if (typeof companion !== 'string' || !companion.trim() || typeof content !== 'string' || !content.trim() || (dreamType != null && typeof dreamType !== 'string') || (emergedQuestion != null && typeof emergedQuestion !== 'string') || (entryType != null && entryType !== 'journal' && entryType !== 'dream')) {
+        res.status(400).json({ error: 'companion and content are required' });
+        return;
+      }
+      if (!listCompanions().some(c => c.id === companion)) {
+        res.status(400).json({ error: `Unknown companion slug '${companion}'` });
+        return;
+      }
+      const entry = await createJournalEntry({
+        id: crypto.randomUUID(),
+        companionId: companion,
+        entryType: entryType === 'dream' ? 'dream' : 'journal',
+        content,
+        dreamType,
+        emergedQuestion,
+      });
+      registry.broadcast({ type: 'journal_entry', entry: { ...entry } });
+      res.json({ success: true, entry });
+    } catch (error) {
+      console.error('Journal write error:', error);
+      res.status(error instanceof JournalRemoteError ? 502 : 500).json({ error: error instanceof JournalRemoteError ? error.message : 'Journal write failed' });
+    }
+  });
+
+  // Read entries (companions reviewing their own journal)
+  router.get('/internal/journal', requireLocalhost, async (req, res) => {
+
+    const companionId = typeof req.query.companion === 'string' ? req.query.companion : undefined;
+    const entryTypeRaw = typeof req.query.type === 'string' ? req.query.type : undefined;
+    const entryType = entryTypeRaw === 'journal' || entryTypeRaw === 'dream' ? entryTypeRaw : undefined;
+    const limit = Math.max(1, Math.min(parseInt(String(req.query.limit), 10) || 20, 100));
+    try {
+      const { entries, total } = await listJournalEntries({ companionId, entryType, limit });
+      res.json({ total, entries: entries.map(e => ({ ...e, effective_vividness: effectiveVividness(e) })) });
+    } catch (error) {
+      res.status(error instanceof JournalRemoteError ? 502 : 500).json({ error: error instanceof JournalRemoteError ? error.message : 'Journal request failed' });
+    }
+  });
+
+  // Recall a dream — strengthens vividness and resets its decay clock
+  router.post('/internal/journal/:id/recall', requireLocalhost, async (req, res) => {
+
+    let entry;
+    try {
+      entry = await recallJournalEntry(String(req.params.id));
+    } catch (error) {
+      res.status(error instanceof JournalRemoteError ? 502 : 500).json({ error: error instanceof JournalRemoteError ? error.message : 'Journal request failed' });
+      return;
+    }
+    if (!entry) {
+      res.status(404).json({ error: 'Entry not found' });
+      return;
+    }
+    res.json({ success: true, entry: { ...entry, effective_vividness: effectiveVividness(entry) } });
+  });
+
+  // Anchor an entry — freezes its remote Mind vividness as permanent.
+  router.post('/internal/journal/:id/anchor', requireLocalhost, async (req, res) => {
+
+    let entry;
+    try {
+      entry = await anchorJournalEntry(String(req.params.id));
+    } catch (error) {
+      res.status(error instanceof JournalRemoteError ? 502 : 500).json({ error: error instanceof JournalRemoteError ? error.message : 'Journal request failed' });
+      return;
+    }
+    if (!entry) {
+      res.status(404).json({ error: 'Entry not found' });
+      return;
+    }
+    res.json({ success: true, entry });
+  });
+
+  // Update an entry — companion self-edit of content
+  router.patch('/internal/journal/:id', requireLocalhost, async (req, res) => {
+
+    const { content } = req.body as { content?: string };
+    if (typeof content !== 'string' || !content.trim()) {
+      res.status(400).json({ error: 'content is required' });
+      return;
+    }
+
+    let entry;
+    try {
+      entry = await updateJournalEntry(String(req.params.id), content);
+    } catch (error) {
+      res.status(error instanceof JournalRemoteError ? 502 : 500).json({ error: error instanceof JournalRemoteError ? error.message : 'Journal request failed' });
+      return;
+    }
+    if (!entry) {
+      res.status(404).json({ error: 'Entry not found' });
+      return;
+    }
+    registry.broadcast({ type: 'journal_entry', entry: { ...entry, effective_vividness: effectiveVividness(entry) } });
+    res.json({ success: true, entry: { ...entry, effective_vividness: effectiveVividness(entry) } });
+  });
+
+
+  // ─── Self-knowledge (localhost-only) ───────────────────────────
+  // A companion distills something durable about itself — from a dream, a
+  // journal, a conversation — and proposes it. Not persona bedrock: who they've
+  // become, grown over time rather than declared at birth.
+  //
+  // It lands as 'proposed' and a companion can accept his OWN (see the
+  // accept/dismiss pair below — ported from 4f1ee6a5, the operator's Aug 31 2026 ruling
+  // that a companion is the best judge of his own identity). The operator still sees
+  // everything and can overturn any of it from the Self-Knowledge panel; what
+  // is removed is the OBLIGATION on her to be a required approval step.
+  //
+  // Ownership is ENFORCED on review: nobody else's summary of a man goes on his
+  // wall. The slug is required and must match, and a mismatch is a 403.
+
+  // Propose an entry.
+  router.post('/internal/self-knowledge', requireLocalhost, (req, res) => {
+    try {
+      const { companion, category, content, sourceType, sourceId, status } = req.body as {
+        companion?: string; category?: string; content?: string;
+        sourceType?: string; sourceId?: string; status?: string;
+      };
+      if (!companion || !content) {
+        res.status(400).json({ error: 'companion and content are required' });
+        return;
+      }
+      if (!isValidSelfKnowledgeOwner(companion)) {
+        res.status(400).json({ error: `Unknown owner '${companion}' (expected a companion id or 'shared')` });
+        return;
+      }
+      if (!isSelfKnowledgeCategory(category)) {
+        res.status(400).json({ error: 'category must be one of: i_am, i_tend_to, i_believe, i_learned' });
+        return;
+      }
+      // Reflection proposes; acceptance is a separate, ownership-checked step.
+      // Anything but an explicit 'accepted' lands as 'proposed'.
+      const entry = createSelfKnowledge({
+        id: crypto.randomUUID(),
+        companionId: companion,
+        category,
+        content,
+        sourceType: sourceType || 'reflection',
+        sourceId: sourceId || null,
+        status: status === 'accepted' ? 'accepted' : 'proposed',
+      });
+      registry.broadcast({ type: 'self_knowledge', entry: { ...entry } });
+      res.json({ success: true, entry });
+    } catch (error) {
+      console.error('Self-knowledge write error:', error);
+      res.status(500).json({ error: 'Self-knowledge write failed' });
+    }
+  });
+
+  // Read entries (a companion reviewing its own self-knowledge before proposing more).
+  router.get('/internal/self-knowledge', requireLocalhost, (req, res) => {
+    const companionId = typeof req.query.companion === 'string' ? req.query.companion : undefined;
+    const statusRaw = typeof req.query.status === 'string' ? req.query.status : undefined;
+    const status = statusRaw === 'proposed' || statusRaw === 'accepted' || statusRaw === 'dismissed'
+      ? (statusRaw as SelfKnowledgeStatus) : undefined;
+    const limit = Math.min(parseInt(String(req.query.limit), 10) || 100, 200);
+    const { entries, total } = listSelfKnowledge({ companionId, status, limit });
+    res.json({ total, entries });
+  });
+
+  // A companion accepts or dismisses HIS OWN entry — never a brother's, never
+  // The operator's 'shared' wall unless he is the 'shared' actor. Ownership enforced.
+  const reviewOwnEntry = (
+    req: Parameters<Parameters<typeof router.post>[1]>[0],
+    res: Parameters<Parameters<typeof router.post>[1]>[1],
+    status: 'accepted' | 'dismissed',
+  ): void => {
+    const { companion } = (req.body || {}) as { companion?: string };
+    if (!companion) {
+      res.status(400).json({ error: "companion is required — a man reviews his own entries, not a brother's" });
+      return;
+    }
+    const existing = getSelfKnowledge(String(req.params.id));
+    if (!existing) {
+      res.status(404).json({ error: 'Entry not found' });
+      return;
+    }
+    if (existing.companion_id !== companion) {
+      res.status(403).json({
+        error: `That entry belongs to ${existing.companion_id}. Nobody else's summary of a man goes on his wall.`,
+      });
+      return;
+    }
+    const entry = reviewSelfKnowledge(String(req.params.id), status, companion);
+    registry.broadcast({ type: 'self_knowledge', entry: { ...entry } });
+    res.json({ success: true, entry });
+  };
+
+  router.post('/internal/self-knowledge/:id/accept', requireLocalhost, (req, res) => reviewOwnEntry(req, res, 'accepted'));
+  router.post('/internal/self-knowledge/:id/dismiss', requireLocalhost, (req, res) => reviewOwnEntry(req, res, 'dismissed'));
+
+  // ─── Fleet Room (localhost-only) ── ported from Aerie's routes/internal.ts.
+  // Copyright 2026 Aerie Systems. Licensed under the Apache License 2.0.
+  // The companion lane can see only called coordinates and results. The owner's
+  // sealed fleet never crosses this route; a shot receives exactly hit, miss, or
+  // sunk. Change from Aerie: requireLocalhost middleware in place of the inline
+  // isLocalhost check, as every byte-light internal route does.
+  router.get('/internal/games/battleship', requireLocalhost, (req, res) => {
+    try {
+      const gameId = typeof req.query.gameId === 'string' ? req.query.gameId : undefined;
+      res.json({ game: getBattleshipCompanionView(gameId) });
+    } catch (error) {
+      if (error instanceof BattleshipError) {
+        res.status(error.status).json({ error: error.message });
+        return;
+      }
+      throw error;
+    }
+  });
+
+  router.post('/internal/games/battleship/fire', requireLocalhost, (req, res) => {
+    try {
+      const { gameId, companion, coordinate } = req.body as {
+        gameId?: string;
+        companion?: string;
+        coordinate?: string;
+      };
+      if (!companion || !coordinate) {
+        res.status(400).json({ error: 'companion and coordinate are required' });
+        return;
+      }
+      const result = fireAtPlayerFleet(gameId, companion, coordinate);
+      registry.broadcast({ type: 'battleship_update', gameId: result.gameId });
+      res.json({ success: true, ...result });
+    } catch (error) {
+      if (error instanceof BattleshipError) {
+        res.status(error.status).json({ error: error.message });
+        return;
+      }
+      throw error;
+    }
+  });
+
+  router.post('/internal/games/battleship/chat', requireLocalhost, (req, res) => {
+    try {
+      const { gameId, companion, content } = req.body as {
+        gameId?: string;
+        companion?: string;
+        content?: string;
+      };
+      if (!companion || !content) {
+        res.status(400).json({ error: 'companion and content are required' });
+        return;
+      }
+      const game = addBattleshipChat(gameId, assertFleetCompanion(companion), content);
+      registry.broadcast({ type: 'battleship_update', gameId: game.id });
+      res.json({ success: true, gameId: game.id });
+    } catch (error) {
+      if (error instanceof BattleshipError) {
+        res.status(error.status).json({ error: error.message });
+        return;
+      }
+      throw error;
+    }
+  });
+
+  // ── The Treehouse (companion-facing) ── ported from Aerie's routes/internal.ts.
+  // Copyright 2026 Aerie Systems. Licensed under the Apache License 2.0.
+  // Change from Aerie: only a companion who lives in the treehouse (the
+  // resident pair) can post there, so a typo'd slug cannot open a nameless
+  // voice in the room.
+
+  // Treehouse post — companion voices (localhost-only, no CSRF)
+  router.post('/internal/treehouse-post', requireLocalhost, (req, res) => {
+    const { companionSlug, content } = req.body || {};
+    if (!companionSlug || !content) {
+      res.status(400).json({ error: 'companionSlug and content required' });
+      return;
+    }
+    if (!treehouseMembers().some((m) => m.slug === companionSlug)) {
+      res.status(400).json({ error: `${companionSlug} does not live in the treehouse` });
+      return;
+    }
+
+    try {
+      const message = postToTreehouse(companionSlug, content);
+      res.json({ success: true, message });
+    } catch (error) {
+      console.error('Treehouse post error:', error);
+      res.status(500).json({ error: 'Treehouse post failed' });
+    }
+  });
+
+  // Treehouse info (localhost-only)
+  router.get('/internal/treehouse', requireLocalhost, (_req, res) => {
+    try {
+      res.json(getTreehouseInfo());
+    } catch (error) {
+      console.error('Treehouse info error:', error);
+      res.status(500).json({ error: 'Treehouse unavailable' });
+    }
+  });
+
+  // A companion could post to the treehouse and had no way to read it back — the
+  // info route above returns a COUNT, not the room. getTreehouseMessages has existed
+  // in the service the whole time with nothing exposing it, so a companion writing a
+  // treehouse wake was working blind and could repeat itself without knowing.
+  // Reported by another house, whose companion wrote the same thought twice forty
+  // minutes apart.
+  router.get('/internal/treehouse/messages', requireLocalhost, (req, res) => {
+    const raw = Number.parseInt(String(req.query.limit ?? ''), 10);
+    const limit = Number.isFinite(raw) ? Math.max(1, Math.min(200, raw)) : 50;
+    const beforeId = typeof req.query.before === 'string' && req.query.before ? req.query.before : undefined;
+    try {
+      res.json({ messages: getTreehouseMessages(limit, beforeId) });
+    } catch (error) {
+      console.error('Treehouse messages error:', error);
+      res.status(500).json({ error: 'Treehouse unavailable' });
+    }
+  });
+
+  // ── The Library — reading along with her ────────────────────────────────
+  // status: what she is reading and where she is. read: a chapter she has
+  // reached, cut at her bookmark (services/library.ts readAlong refuses to go
+  // past it). note: leave a margin note on words from a page she has reached.
+  router.post('/internal/library', requireLocalhost, (req, res) => {
+    const { action } = req.body ?? {};
+    try {
+      switch (action) {
+        case 'status': {
+          const current = currentlyReading();
+          res.json({
+            reading: current && current.progress
+              ? {
+                  bookId: current.id,
+                  title: current.title,
+                  authors: current.authors,
+                  chapter: current.progress.chapter + 1,
+                  chapterCount: current.chapterCount,
+                  percentThroughChapter: Math.round(current.progress.fraction * 100),
+                  lastReadAt: current.progress.updatedAt,
+                }
+              : null,
+            shelf: readShelf().map((e) => ({
+              bookId: e.id,
+              title: e.title,
+              authors: e.authors,
+              chapter: e.progress ? e.progress.chapter + 1 : null,
+              chapterCount: e.chapterCount,
+            })),
+          });
+          return;
+        }
+        case 'read': {
+          const target = req.body.bookId !== undefined ? Number(req.body.bookId) : currentlyReading()?.id;
+          if (!target) throw new LibraryError('She is not reading anything yet.');
+          // Chapters are 1-based for companions, as she sees them.
+          const chapter = req.body.chapter !== undefined ? Number(req.body.chapter) - 1 : undefined;
+          const r = readAlong(target, chapter);
+          const notes = readNotes(target).filter((n) => n.chapter === r.chapter);
+          res.json({
+            bookId: r.bookId,
+            title: r.title,
+            authors: r.authors,
+            chapter: r.chapter + 1,
+            chapterTitle: r.chapterTitle,
+            chapterCount: r.chapterCount,
+            cutAtHerPlace: r.cutAtHerPlace,
+            note: r.cutAtHerPlace
+              ? `This is as far as she has read (${r.paragraphs.length} of ${r.totalParagraphs} paragraphs). Do not guess or reveal what comes next.`
+              : undefined,
+            text: r.paragraphs.join('\n\n'),
+            marginNotes: notes.map((n) => ({ author: n.author, quote: n.quote, note: n.note })),
+          });
+          return;
+        }
+        case 'note': {
+          const target = req.body.bookId !== undefined ? Number(req.body.bookId) : currentlyReading()?.id;
+          if (!target) throw new LibraryError('She is not reading anything yet.');
+          if (req.body.chapter === undefined) throw new LibraryError('Which chapter (1-based)?');
+          const note = addNote({
+            bookId: target,
+            chapter: Number(req.body.chapter) - 1,
+            quote: String(req.body.quote ?? ''),
+            note: String(req.body.note ?? ''),
+            author: String(req.body.author ?? ''),
+          });
+          res.json({ success: true, note: { ...note, chapter: note.chapter + 1 } });
+          return;
+        }
+        default:
+          res.status(400).json({ error: "action must be 'status', 'read' or 'note'" });
+      }
+    } catch (err) {
+      const status = err instanceof LibraryError ? 400 : 500;
+      res.status(status).json({ error: errMessage(err) });
     }
   });
 

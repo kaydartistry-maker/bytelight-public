@@ -1,5 +1,6 @@
 // Embeddings sidecar — the only process that loads onnxruntime.
 import type { FeatureExtractionPipeline } from '@huggingface/transformers';
+import { errMessage } from '../util/errors.js';
 
 const MODEL_ID = 'sentence-transformers/all-MiniLM-L6-v2';
 let pipeline: FeatureExtractionPipeline | null = null;
@@ -38,7 +39,7 @@ process.on('message', async (msg: { id: number; text: string }) => {
     const vector = await embedText(msg.text);
     process.send?.({ id: msg.id, vector, rssMb: Math.round(process.memoryUsage.rss() / 1024 / 1024), embedsSinceSpawn });
   } catch (err) {
-    process.send?.({ id: msg.id, error: err instanceof Error ? err.message : String(err) });
+    process.send?.({ id: msg.id, error: errMessage(err) });
   }
 });
 

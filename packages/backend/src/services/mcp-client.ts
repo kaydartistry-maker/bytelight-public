@@ -1,3 +1,5 @@
+import { errMessage } from '../util/errors.js';
+
 /**
  * MCP Client — proper MCP protocol handshake for discovery and tool execution.
  *
@@ -777,6 +779,6 @@ export async function executeMcpTool(
       : await executeViaStreamableHTTP(url, resolvedKey, toolName, args);
     return { result, ok: !result.startsWith('Tool error') };
   } catch (err) {
-    return { result: `Tool error: ${err instanceof Error ? err.message : String(err)}`, ok: false };
+    return { result: `Tool error: ${errMessage(err)}`, ok: false };
   }
 }

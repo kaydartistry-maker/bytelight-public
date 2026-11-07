@@ -26,6 +26,16 @@ import { createOrchestratorRoutes } from './orchestrator-routes.js';
 import { createDiscordRoutes } from './discord-routes.js';
 import { createMindRoutes } from './mind-routes.js';
 import { createMemoryRoutes } from './memory-routes.js';
+import journalRouter from './journal.js';
+import lettersRouter from './letters.js';
+import notesRouter from './notes.js';
+import artifactsRouter from './artifacts.js';
+import fieldNotesRouter from './field-notes.js';
+import statusesRouter from './statuses.js';
+import spotifyRouter from './spotify.js';
+import treehouseRouter from './treehouse.js';
+import compactionsRouter from './compactions.js';
+import { createSelfKnowledgeRoutes } from './self-knowledge-routes.js';
 import { createXrayRoutes } from './xray-routes.js';
 import { createStickerRoutes } from './stickers-routes.js';
 import runtimeAdminRoutes from './runtime-admin.js';
@@ -34,10 +44,14 @@ import modelsRouter from './models.js';
 import codexAuthRouter from './codex-auth.js';
 import usageRouter from './usage.js';
 import starredRouter from './starred.js';
+import libraryRouter from './library.js';
+import emojiRouter from './emojis.js';
 import studioRouter from './studio.js';
 import gifRouter from './gif.js';
 import mcpServersRouter from './mcp-servers.js';
 import secretsRouter from './secrets.js';
+import cardsRouter from './cards.js';
+import battleshipRouter from './battleship.js';
 
 // ============================================================================
 // API Router Composition
@@ -76,7 +90,7 @@ router.use('/cc', (req, res, next) => {
 // ----------------------------------------------------------------------------
 router.use(createPreferencesRoutes());
 // Speaker profiles (companion-a/companion-b/user/fallback avatars + names) — ported from
-// reference implementation. Sits with the other user-facing settings routers.
+// Thornvale. Sits with the other user-facing settings routers.
 router.use(createProfilesRoutes());
 // Companion settings — thread-override routes powering the chat-header
 // model pill (Slice 5a resurrection). Tag position: directly after
@@ -108,7 +122,8 @@ router.get('/audit', (req, res) => {
 });
 
 // Diagnostics: session lifecycle log (real session_history rows, newest-first).
-// Cost/tokens are owned by the Usage tab (usage_events); not surfaced here.
+// Per-turn cost/token rows are owned by the Usage tab (usage_events); each
+// session here carries their per-session totals (see listSessionHistory).
 router.get('/sessions', (req, res) => {
   try {
     const { limit } = req.query;
@@ -126,23 +141,57 @@ router.use(createOrchestratorRoutes());
 router.use(createDiscordRoutes());
 router.use(createMindRoutes());
 // Memory Blocks — authenticated Letta-style core-memory API powering the
-// Settings → Memory panel (Slice 2, ported from reference implementation). Mounted beside
+// Settings → Memory panel (Slice 2, ported from Keystone). Mounted beside
 // createMindRoutes, after authMiddleware above.
 router.use(createMemoryRoutes());
+// Self-Knowledge — authenticated living-identity API powering the Settings →
+// Self-Knowledge panel (Wave 2, Slice 3, ported from tris/Aerie; four-drawer
+// design is Annie's). Mounted after authMiddleware above.
+router.use(createSelfKnowledgeRoutes());
+router.use('/journal', journalRouter);
+router.use('/letters', lettersRouter);
+// Sticky notes — the phone's Notes app (ported from Aerie). Companions use
+// /api/internal/note(s). Mounted after authMiddleware above.
+router.use('/notes', notesRouter);
+// Artifacts — interactive React components for the phone's Artifacts app
+// (ported from Aerie). Self-prefixed at /artifacts; mounted after
+// authMiddleware above.
+router.use(artifactsRouter);
+// Field Notes — read-only page of the companions' daily notes (ported from
+// Aerie). Companions write via /api/internal/field-notes. After authMiddleware.
+router.use('/field-notes', fieldNotesRouter);
+// Statuses — the phone's Status widget and lock-screen card read here, her
+// status sheet writes /api/status/me. Companions set theirs via
+// /api/internal/status. After authMiddleware.
+router.use('/status', statusesRouter);
+// Spotify — the phone's Spotify app (ported from Aerie): reads and presses
+// through the operator's Spotify MCP server. Mounted after authMiddleware above.
+router.use('/spotify', spotifyRouter);
+// The Treehouse — the companions' read-only room (ported from Aerie). Read
+// routes only; companions post via /api/internal/treehouse-post. Mounted after
+// authMiddleware above.
+router.use(treehouseRouter);
+// Compactions — every squash the lanes have had, kept on a shelf of the
+// house's own (ported from Aerie). Read only; Memory app, Compactions tab.
+router.use('/compactions', compactionsRouter);
+// The Library — the phone's reading room (Gutenberg shelf, reader, bookmarks).
+router.use('/library', libraryRouter);
 router.use(createXrayRoutes());
 router.use(createStickerRoutes());
+// Custom emojis and emoji packs (ported from full-sweep). /api/emojis.
+router.use('/emojis', emojiRouter);
 router.use(usageRouter);
 router.use(starredRouter);
 
 // Studio — image-generation settings, reference drawers, and gallery
-// (ported from reference implementation/reference implementation). Authed via authMiddleware above.
+// (ported from Thornvale/Sidney). Authed via authMiddleware above.
 router.use(studioRouter);
 
 // GIF Studio — authenticated ffmpeg editing pipeline.
 router.use(gifRouter);
 
 // Managed MCP servers — registry CRUD + test/discover (ported from the
-// reference implementation, Apache 2.0). Authed via authMiddleware above.
+// upstream fork, Apache 2.0). Authed via authMiddleware above.
 router.use(mcpServersRouter);
 
 // BYOK secrets store — DB-backed API keys/tokens (list/reveal/set/clear).
@@ -156,11 +205,30 @@ router.use(secretsRouter);
 // relative slot here, before main's post-rollback runtimeAdminRoutes.)
 router.use(modelsRouter);
 
-// Runtime health / SDK-refresh card (ported from reference implementation/reference implementation — light
+// Runtime health / SDK-refresh card (light
 // path, no agent.ts touch). Self-prefixed at /runtime; sits below
 // authMiddleware above, so both GET /runtime/health and
 // POST /runtime/update-sdk require auth.
 router.use(runtimeAdminRoutes);
+
+// The Card Room — the phone's Games app (ported from Aerie, where server.ts
+// mounted it at /api/games/cards). Inside api.ts here, after authMiddleware
+// above, so the card art inherits the session gate. Companion table talk
+// reaches req.app.locals.agentService, set in server.ts.
+router.use('/games/cards', cardsRouter);
+// The Fleet Room — Battleship against the companions (ported from Aerie, where
+// server.ts mounted it at /api/games/battleship). After authMiddleware above;
+// the companions' sealed fire lane is /api/internal/games/battleship.
+router.use('/games/battleship', battleshipRouter);
+
+// Unknown /api paths answer a JSON 404. Without this they fell through to the
+// Svelte SPA fallback (server.ts app.get('*')) and came back 200 + index.html,
+// so a client asking for a route this build doesn't have got a page instead of
+// a miss — the React phone app's json() parse threw and took whole screens
+// down with it. Mounted last, after every router above.
+router.use((_req, res) => {
+  res.status(404).json({ error: 'Not found' });
+});
 
 // ============================================================================
 // Export

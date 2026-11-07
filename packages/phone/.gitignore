@@ -1,0 +1,14 @@
+node_modules/
+build/
+dist/
+coverage/
+.DS_Store
+*.log
+.env*
+!.env.example
+
+# Native platforms (android/ is committed — generated dirs excluded in android/.gitignore)
+ios/
+
+# Deployment-specific served URL (see server-url.local.example)
+server-url.local

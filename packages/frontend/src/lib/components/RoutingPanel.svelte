@@ -142,7 +142,7 @@
     font-size: 0.8125rem;
     color: var(--text-muted);
   }
-  .error { color: #ef4444; }
+  .error { color: var(--color-error); }
   .rows {
     display: flex;
     flex-direction: column;

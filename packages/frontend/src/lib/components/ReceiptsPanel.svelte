@@ -6,7 +6,7 @@
   the whisper writes a receipt here — this panel makes that trail readable.
 
   Built against byte-light's Settings design language (matches MemoryPanel).
-  All fetches go through apiFetch (CSRF-safe). Read-only view: actor, action,
+  All fetches go through apiFetch (session cookie included). Read-only view: actor, action,
   detail, time.
 -->
 <script lang="ts">

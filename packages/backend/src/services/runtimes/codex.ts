@@ -87,6 +87,9 @@ import {
   redactedImageMarker,
   splitToolResultForCodex,
 } from './codex-images.js';
+import { errMessage } from '../../util/errors.js';
+import { getBytelightConfig } from '../../config.js';
+import { holdCodex, holdFromText, passCodexBrake, CODEX_DEFAULT_HOLD_MS } from '../codex-breaker.js';
 
 // ─────────────────────────────────────────────────────────────────────────
 // Capabilities descriptor
@@ -386,7 +389,7 @@ interface ClassifiedCodexError {
 }
 
 function classifyCodexError(raw: unknown): ClassifiedCodexError {
-  const message = raw instanceof Error ? raw.message : String(raw);
+  const message = errMessage(raw);
   const lower = message.toLowerCase();
 
   // Abort signal (DOMException-like) — exposed by fetch / WHATWG AbortController.
@@ -452,6 +455,23 @@ function classifyCodexError(raw: unknown): ClassifiedCodexError {
     safeMessage: 'Codex provider failure.',
     recoverable: false,
   };
+}
+
+/**
+ * The first thing to hear a Codex limit sets the brake for every Codex
+ * request (codex-breaker.ts, Aerie). The reset time is read from the
+ * upstream words; the reason kept on the hold is the classified safe text,
+ * never the raw upstream message (BYTE-LIGHT ADAPTATION: Aerie keeps the raw
+ * text, byte-light never echoes it).
+ */
+function brakeOnRateLimit(classified: ClassifiedCodexError, rawText: string): void {
+  if (classified.kind !== 'rate_limit') return;
+  holdCodex(holdFromText(rawText, Date.now(), houseTimezone()) ?? Date.now() + CODEX_DEFAULT_HOLD_MS, classified.safeMessage);
+}
+
+/** The owner's timezone, for reading a reset time said as a clock time. */
+function houseTimezone(): string {
+  try { return getBytelightConfig().identity.timezone || 'UTC'; } catch { return 'UTC'; }
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -686,6 +706,14 @@ export class CodexAgentRuntime implements AgentRuntime {
   async *runTurn(input: AgentTurnInput): AsyncIterable<AgentRuntimeEvent> {
     // ── Canonical contract: emit `start` first ─────────────────────────
     yield { type: 'start', runtimeId: this.id, modelRef: input.modelRef };
+
+    // Nothing leaves while Codex has asked us to wait (codex-breaker.ts, Aerie).
+    const held = await passCodexBrake(houseTimezone());
+    if (held) {
+      yield { type: 'error', message: held, recoverable: true };
+      yield { type: 'done', finishReason: 'error' };
+      return;
+    }
 
     // ── Auth gate ─────────────────────────────────────────────────────
     // Check before we touch pi-ai at all. If the user isn't logged in,
@@ -1185,7 +1213,7 @@ export class CodexAgentRuntime implements AgentRuntime {
                 // through `safeToolErrorResult`'s JSON envelope so
                 // it can't break out of its quoting.
                 const message =
-                  err instanceof Error ? err.message : String(err);
+                  errMessage(err);
                 return {
                   call,
                   outputText: applyOutputBudget(
@@ -1295,7 +1323,7 @@ export class CodexAgentRuntime implements AgentRuntime {
               collectedToolImages.push(...split.images);
             } catch (err) {
               const message =
-                err instanceof Error ? err.message : String(err);
+                errMessage(err);
               yield {
                 type: 'provider_diagnostic',
                 code: 'image_extraction_failed',
@@ -1373,6 +1401,7 @@ export class CodexAgentRuntime implements AgentRuntime {
         return;
       }
       const classified = classifyCodexError(err);
+      brakeOnRateLimit(classified, errMessage(err));
       if (classified.kind === 'aborted') {
         yield { type: 'done', finishReason: 'aborted' };
         return;
@@ -1502,6 +1531,7 @@ export class CodexAgentRuntime implements AgentRuntime {
           const classified = classifyCodexError(
             new Error(ev.error.errorMessage ?? 'Codex provider failure'),
           );
+          brakeOnRateLimit(classified, ev.error.errorMessage ?? '');
           if (classified.kind === 'auth') {
             return { kind: 'auth_required', classifiedError: classified };
           }

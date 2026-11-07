@@ -87,7 +87,12 @@ describe('official MCP belt transport', () => {
     const { client } = await connect(url);
     assert.equal(belt.sessionCount(), 1);
     await client.close();
-    await new Promise((resolve) => setTimeout(resolve, 80));
+    // Wait for the sweep rather than a fixed 80ms: under a full parallel test
+    // run the 10ms sweep timer can fire late, and the fixed wait lost the race.
+    const deadline = Date.now() + 2000;
+    while (belt.sessionCount() > 0 && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
     assert.equal(belt.sessionCount(), 0);
   });
 

@@ -72,6 +72,7 @@ import type {
   NormalizedImage,
 } from './types.js';
 import type { ProviderId, RuntimeId } from '@bytelight/shared';
+import { errMessage } from '../../util/errors.js';
 
 // ─── Image conversion ────────────────────────────────────────────────
 
@@ -512,7 +513,7 @@ export class ApiRouterRuntime implements AgentRuntime {
         yield { type: 'done', finishReason: 'aborted' };
         return;
       }
-      const message = err instanceof Error ? err.message : String(err);
+      const message = errMessage(err);
       yield {
         type: 'error',
         message,

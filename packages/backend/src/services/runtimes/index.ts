@@ -93,6 +93,22 @@ const codexRuntime = new CodexAgentRuntime({
 const claudeCliRuntime = new InteractiveCliRuntime();
 
 /**
+ * A companion's own Claude CLI lane — one warm session per companion slug,
+ * used when The Room runs "A Lane Each". Same runtime class as the shared
+ * lane, keyed by the companion instead of 'primary'; identity is layered in
+ * that session's own CLAUDE.md (heartbeat/lane-identity.ts).
+ */
+const claudeCliLaneRuntimes = new Map<string, InteractiveCliRuntime>();
+export function getClaudeCliLaneRuntime(companionSlug: string): InteractiveCliRuntime {
+  let runtime = claudeCliLaneRuntimes.get(companionSlug);
+  if (!runtime) {
+    runtime = new InteractiveCliRuntime({ sessionKey: companionSlug });
+    claudeCliLaneRuntimes.set(companionSlug, runtime);
+  }
+  return runtime;
+}
+
+/**
  * Codex-CLI (warm daemon) runtime singleton — the ChatGPT/Codex subscription
  * lane (H2). Wraps a warm Codex app-server daemon kept alive by
  * `codexSupervisor`, holding a daemon-resident thread as its session. Module-
@@ -106,6 +122,21 @@ const claudeCliRuntime = new InteractiveCliRuntime();
  * factory map (mirroring `apiRouterRuntimes`) can replace this.
  */
 const codexCliRuntime = new InteractiveCodexRuntime();
+
+/**
+ * A companion's own Codex CLI lane — one runtime (its own daemon connection
+ * and app-server thread binding) per companion slug, used when The Room runs
+ * "A Lane Each". Session cards for it are filed under his lane.
+ */
+const codexCliLaneRuntimes = new Map<string, InteractiveCodexRuntime>();
+export function getCodexCliLaneRuntime(companionSlug: string): InteractiveCodexRuntime {
+  let runtime = codexCliLaneRuntimes.get(companionSlug);
+  if (!runtime) {
+    runtime = new InteractiveCodexRuntime({ laneKey: companionSlug });
+    codexCliLaneRuntimes.set(companionSlug, runtime);
+  }
+  return runtime;
+}
 
 /**
  * ApiRouter runtime singletons — one per (runtimeId, providerId) pair.

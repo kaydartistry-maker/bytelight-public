@@ -3,7 +3,15 @@ import { readdirSync, readFileSync, writeFileSync, existsSync } from 'fs';
 import { join, resolve } from 'path';
 import yaml from 'js-yaml';
 import { getBytelightConfig, reloadConfig } from '../config.js';
-import { getAllConfig, setConfig } from '../services/db.js';
+import { getAllConfig, setConfig, getConfig, getConfigBool } from '../services/db.js';
+import { roomBiosReady } from '../services/heartbeat/lane-identity.js';
+import { getArchivistSettings } from '../services/memory-extraction.js';
+
+// The Archivist knobs the phone's ArchivistSettings saves. Kept in the settings
+// table (read live by every sweep, no restart), never YAML — the same place
+// Aerie keeps them. Before this the PUT dropped them silently.
+const ARCHIVIST_EFFORTS = new Set(['adaptive', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra']);
+const ARCHIVIST_THINKING = new Set(['adaptive', 'enabled', 'disabled']);
 
 function findConfigPath(): string | null {
   for (const name of ['bytelight.yaml', 'bytelight.yml']) {
@@ -43,6 +51,24 @@ export function createPreferencesRoutes(): Router {
           // unset so the frontend distinguishes "match chat" from explicit
           // value. Falls through to thinking_effort at resolution time.
           thinking_effort_autonomous: (parsed as any)?.agent?.thinking_effort_autonomous,
+          // The Room ("A Lane Each"). Kept in the settings table and read live
+          // on every turn, so flipping it needs no restart. It stays off until
+          // every resident companion has a bio — his lane reads it.
+          multi_lane: getConfig('agent.multi_lane') === 'true',
+          multi_lane_ready: roomBiosReady().ready,
+          multi_lane_waiting_on: roomBiosReady().missing,
+          // The Archivist. Provider/effort/thinking as each sweep will run
+          // them (defaults filled in); the model only as saved, so an unset
+          // model shows the provider's placeholder instead of a stale id.
+          ...(() => {
+            const a = getArchivistSettings();
+            return {
+              archivist_provider: a.provider,
+              archivist_model: getConfig('agent.archivist_model') || '',
+              archivist_effort: a.effort,
+              archivist_thinking: a.thinking,
+            };
+          })(),
         },
         orchestrator: {
           enabled: (parsed as any)?.orchestrator?.enabled ?? config.orchestrator.enabled,
@@ -51,10 +77,10 @@ export function createPreferencesRoutes(): Router {
           enabled: (parsed as any)?.voice?.enabled ?? config.voice.enabled,
         },
         discord: {
-          enabled: (parsed as any)?.discord?.enabled ?? config.discord.enabled,
+          enabled: getConfigBool('discord.enabled', (parsed as any)?.discord?.enabled ?? config.discord.enabled),
         },
         telegram: {
-          enabled: (parsed as any)?.telegram?.enabled ?? config.telegram.enabled,
+          enabled: getConfigBool('telegram.enabled', (parsed as any)?.telegram?.enabled ?? config.telegram.enabled),
         },
         auth: {
           has_password: !!config.auth.password,
@@ -133,6 +159,39 @@ export function createPreferencesRoutes(): Router {
             parsed.agent.thinking_effort_autonomous = v;
           }
         }
+      }
+      // The Room: written to the settings table (live, no restart), never YAML.
+      if (updates.agent?.multi_lane !== undefined) {
+        const on = updates.agent.multi_lane === true || String(updates.agent.multi_lane) === 'true';
+        const bios = roomBiosReady();
+        if (on && !bios.ready) {
+          res.status(400).json({ error: `A Lane Each waits on a bio for ${bios.missing.join(' and ') || 'each companion'} — his lane reads it.` });
+          return;
+        }
+        setConfig('agent.multi_lane', on ? 'true' : 'false');
+      }
+      // The Archivist: settings table (live, no restart), never YAML.
+      if (updates.agent && typeof updates.agent === 'object') {
+        const a = updates.agent as Record<string, unknown>;
+        for (const key of ['archivist_provider', 'archivist_model'] as const) {
+          if (a[key] !== undefined && typeof a[key] !== 'string') {
+            res.status(400).json({ error: `agent.${key} must be a string` });
+            return;
+          }
+        }
+        if (a.archivist_effort !== undefined && !ARCHIVIST_EFFORTS.has(String(a.archivist_effort))) {
+          res.status(400).json({ error: `agent.archivist_effort must be one of ${[...ARCHIVIST_EFFORTS].join(', ')}` });
+          return;
+        }
+        if (a.archivist_thinking !== undefined && !ARCHIVIST_THINKING.has(String(a.archivist_thinking))) {
+          res.status(400).json({ error: `agent.archivist_thinking must be one of ${[...ARCHIVIST_THINKING].join(', ')}` });
+          return;
+        }
+        // An empty model clears back to the provider's default.
+        if (a.archivist_provider !== undefined) setConfig('agent.archivist_provider', String(a.archivist_provider).trim());
+        if (a.archivist_model !== undefined) setConfig('agent.archivist_model', String(a.archivist_model).trim());
+        if (a.archivist_effort !== undefined) setConfig('agent.archivist_effort', String(a.archivist_effort));
+        if (a.archivist_thinking !== undefined) setConfig('agent.archivist_thinking', String(a.archivist_thinking));
       }
       if (updates.orchestrator) {
         if (!parsed.orchestrator) parsed.orchestrator = {};

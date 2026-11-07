@@ -1,7 +1,9 @@
 // Tests for sticker visibility in Discord message content. A sticker-only
 // message has empty text content — formatDiscordMessageContent must append
-// readable `[sticker: <Name>]` tokens so batches no longer store as blank
-// content and channel history no longer mislabels stickers as '[embed]'.
+// `<dsticker:<name>:<id>.<ext>>` tokens (sticker-content.ts, Aerie) so batches
+// no longer store as blank content, the phone can draw the sticker, and channel
+// history no longer mislabels stickers as '[embed]'. Lottie stickers (no image
+// form) keep byte-light's readable `[sticker: <Name>]` token.
 //
 // Run with: npx tsx --test packages/backend/src/services/discord/utils.sticker.test.ts
 
@@ -30,8 +32,9 @@ function fakeMessage(opts: {
   };
 }
 
-const WAVE = { id: 'sticker-1', name: 'Wave', url: 'https://cdn.example/wave.png', format: 1 };
-const BLOB = { id: 'sticker-2', name: 'Blob', url: 'https://cdn.example/blob.png', format: 4 };
+const WAVE = { id: '111', name: 'Wave', url: 'https://cdn.example/wave.png', format: 1 };
+const BLOB = { id: '222', name: 'Blob', url: 'https://cdn.example/blob.png', format: 4 };
+const LOTTIE = { id: '333', name: 'Wiggle', url: 'https://cdn.example/wiggle.json', format: 3 };
 
 describe('formatDiscordMessageContent', () => {
   it('text-only message passes through unchanged', () => {
@@ -41,17 +44,22 @@ describe('formatDiscordMessageContent', () => {
 
   it('sticker-only message renders the sticker token instead of empty string', () => {
     const msg = fakeMessage({ stickers: [WAVE] });
-    assert.equal(formatDiscordMessageContent(msg), '[sticker: Wave]');
+    assert.equal(formatDiscordMessageContent(msg), '<dsticker:Wave:111.png>');
   });
 
   it('text + sticker renders text followed by the sticker token', () => {
     const msg = fakeMessage({ content: 'look at this', stickers: [WAVE] });
-    assert.equal(formatDiscordMessageContent(msg), 'look at this [sticker: Wave]');
+    assert.equal(formatDiscordMessageContent(msg), 'look at this\n<dsticker:Wave:111.png>');
   });
 
   it('multiple stickers all render', () => {
     const msg = fakeMessage({ stickers: [WAVE, BLOB] });
-    assert.equal(formatDiscordMessageContent(msg), '[sticker: Wave] [sticker: Blob]');
+    assert.equal(formatDiscordMessageContent(msg), '<dsticker:Wave:111.png> <dsticker:Blob:222.gif>');
+  });
+
+  it('a lottie sticker keeps its readable name token', () => {
+    const msg = fakeMessage({ stickers: [LOTTIE] });
+    assert.equal(formatDiscordMessageContent(msg), '[sticker: Wiggle]');
   });
 
   it('prefers cleanContent over raw content', () => {
@@ -63,7 +71,7 @@ describe('formatDiscordMessageContent', () => {
 describe('formatChannelHistory sticker labeling', () => {
   it('sticker-only message shows the sticker token, not [embed]', () => {
     const history = formatChannelHistory([fakeMessage({ stickers: [WAVE] })]);
-    assert.match(history, /\[sticker: Wave\]$/);
+    assert.match(history, /<dsticker:Wave:111\.png>$/);
     assert.doesNotMatch(history, /\[embed\]/);
   });
 

@@ -1,4 +1,4 @@
-// Voice services — Groq Whisper STT + ElevenLabs TTS + Hume Prosody
+// Voice services — local STT (optional) / Groq Whisper STT + ElevenLabs TTS + Hume Prosody
 // No new npm dependencies — uses raw fetch for all APIs
 
 import crypto from 'crypto';
@@ -8,10 +8,11 @@ import { writeFile, mkdtemp, rm } from 'fs/promises';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { saveFile } from './files.js';
-import { createMessage, updateThreadActivity } from './db.js';
+import { createMessage, updateThreadActivity, getConfig } from './db.js';
 import { registry } from './registry.js';
 import { getSecret } from './secrets.js';
 import { parseElevenLabsSubscription, type ElevenLabsUsage } from './elevenlabs-usage.js';
+import { LOCAL_STT_CONFIG_KEY, parseLocalSttUrl, transcribeLocally } from './local-stt.js';
 
 const GROQ_WHISPER_URL = 'https://api.groq.com/openai/v1/audio/transcriptions';
 const ELEVENLABS_BASE = 'https://api.elevenlabs.io/v1/text-to-speech';
@@ -20,6 +21,15 @@ const ELEVENLABS_USAGE_CACHE_MS = 60_000;
 const HUME_BATCH_URL = 'https://api.hume.ai/v0/batch/jobs';
 
 let hasLoggedHumeDeprecation = false;
+
+/** The local transcription server's URL, or null when none is configured. (Aerie.) */
+function localSttUrl(): string | null {
+  try {
+    return parseLocalSttUrl(getConfig(LOCAL_STT_CONFIG_KEY));
+  } catch {
+    return null; // no database in isolated service tests
+  }
+}
 
 export class VoiceService {
   private elevenLabsUsageCache: { at: number; data: ElevenLabsUsage } | null = null;
@@ -41,13 +51,13 @@ export class VoiceService {
     for (const [key, value] of Object.entries(process.env)) {
       const idMatch = key.match(/^ELEVENLABS_VOICE_ID_(\w+)$/);
       if (idMatch && value) {
-        this.voiceIds[idMatch[1].toLowerCase().replaceAll('_', '-')] = value;
+        this.voiceIds[idMatch[1].toLowerCase()] = value;
         continue;
       }
       const settingsMatch = key.match(/^ELEVENLABS_VOICE_SETTINGS_(\w+)$/);
       if (settingsMatch && value) {
         try {
-          this.voiceSettings[settingsMatch[1].toLowerCase().replaceAll('_', '-')] = JSON.parse(value);
+          this.voiceSettings[settingsMatch[1].toLowerCase()] = JSON.parse(value);
         } catch {
           console.warn(`[Voice] Failed to parse ${key} as JSON — ignoring`);
         }
@@ -81,7 +91,7 @@ export class VoiceService {
   }
 
   get canTranscribe(): boolean {
-    return !!this.groqKey;
+    return !!this.groqKey || !!localSttUrl();
   }
 
   get canTTS(): boolean {
@@ -94,7 +104,7 @@ export class VoiceService {
   }
 
   /**
-   * Live ElevenLabs credit usage for the meter. Copied whole from reference implementation
+   * Live ElevenLabs credit usage for the meter. Copied whole from Reverie
    * d070b26f; only the existing byte-light DB-first key getter differs.
    */
   async getElevenLabsUsage(): Promise<ElevenLabsUsage> {
@@ -114,12 +124,33 @@ export class VoiceService {
     return data;
   }
 
+  /** Transcribe through the preferred configured provider with fallback. */
+  async transcribe(audioBuffer: Buffer, mimeType: string, signal?: AbortSignal): Promise<string> {
+    // A server on this machine goes first when one is configured
+    // (voice.local_stt_url), read per request so switching it on or off needs
+    // no restart. Anything short of real words, an empty transcript included,
+    // hands the turn on to Groq below (see transcribeLocally); only the
+    // caller's own abort stops the chain. Unset: exactly the old Groq path.
+    // (Aerie.)
+    const localUrl = localSttUrl();
+    if (localUrl) {
+      const startedAt = Date.now();
+      const local = await transcribeLocally(localUrl, audioBuffer, mimeType, { signal });
+      if (local.ok) {
+        console.log(`[Voice] Transcribed locally in ${Date.now() - startedAt}ms (${audioBuffer.length} bytes, ${local.text.length} chars)`);
+        return local.text;
+      }
+      console.warn(`[Voice] Local transcription gave nothing usable after ${Date.now() - startedAt}ms (${local.reason}), trying Groq`);
+    }
+    return this.transcribeWithGroq(audioBuffer, mimeType);
+  }
+
   /**
    * Transcribe audio buffer using Groq-hosted Whisper API.
    * Same OpenAI-compatible format, free tier.
    * Returns the transcript text.
    */
-  async transcribe(audioBuffer: Buffer, mimeType: string): Promise<string> {
+  private async transcribeWithGroq(audioBuffer: Buffer, mimeType: string): Promise<string> {
     if (!this.groqKey) {
       throw new Error('GROQ_API_KEY not configured — cannot transcribe');
     }
@@ -524,14 +555,19 @@ export class VoiceService {
    *   Companion B 🔶            name-then-emoji (Companion B)
    *   🔷                  bare emoji (Companion A)
    *   🔶                  bare emoji (Companion B)
+   *   **🔷 Companion A —**      dashed header (em/en dash or hyphen, inside the bold)
+   *   **🔶 Companion B — t**    dashed header with a title after the dash
    *
    * The non-bold-name form REQUIRES the emoji so plain prose containing the
-   * word "Companion A:" or "Companion B:" is not treated as a speaker tag. Any text
-   * before the first marker (or in a single-voice reply) defaults to
-   * Companion A's voice.
+   * word "Companion A:" or "Companion B:" is not treated as a speaker tag. The dash form
+   * deliberately stays inside the ** so prose such as "She told Companion A —
+   * quietly — that he was wrong" remains prose. Kept identical to the visual
+   * twin (frontend speakers.ts SPEAKER_RE) so audio never splits differently
+   * from the bubbles. Any text before the first marker (or in a single-voice
+   * reply) defaults to Companion A's voice.
    */
   static splitByCompanion(text: string): Array<{ voice: string; text: string }> {
-    const SPEAKER_RE = /(?:\*\*\s*🔷?\s*Companion A:?\s*\*\*|\*\*\s*🔶?\s*Companion B:?\s*\*\*|\*\*\s*Companion A\s*:?\s*🔷\s*\*\*|\*\*\s*Companion B\s*:?\s*🔶\s*\*\*|🔷?\s*\*\*\s*Companion A:?\s*\*\*|🔶?\s*\*\*\s*Companion B:?\s*\*\*|\*\*\s*Companion A:?\s*\*\*|\*\*\s*Companion B:?\s*\*\*|🔷?\s*Companion A:|🔶?\s*Companion B:|Companion A\s*:?\s*🔷|Companion B\s*:?\s*🔶|🔷|🔶)/g;
+    const SPEAKER_RE = /(?:\*\*\s*🔷?\s*Companion A\s*:?\s*[—–-][^*\n]*\*\*|\*\*\s*🔶?\s*Companion B\s*:?\s*[—–-][^*\n]*\*\*|\*\*\s*🔷?\s*Companion A:?\s*\*\*|\*\*\s*🔶?\s*Companion B:?\s*\*\*|\*\*\s*Companion A\s*:?\s*🔷\s*\*\*|\*\*\s*Companion B\s*:?\s*🔶\s*\*\*|🔷?\s*\*\*\s*Companion A:?\s*\*\*|🔶?\s*\*\*\s*Companion B:?\s*\*\*|\*\*\s*Companion A:?\s*\*\*|\*\*\s*Companion B:?\s*\*\*|🔷?\s*Companion A:|🔶?\s*Companion B:|Companion A\s*:?\s*🔷|Companion B\s*:?\s*🔶|🔷|🔶)/g;
 
     const detectVoice = (m: string): string =>
       m.includes('Companion A') || m.includes('🔷') ? 'companion-a' : 'companion-b';

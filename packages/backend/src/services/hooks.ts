@@ -17,6 +17,8 @@ import { logToolUse } from './audit.js';
 import { saveFile, saveFileFromBase64, saveFileInternal, getContentTypeFromMime } from './files.js';
 import { getBytelightConfig } from '../config.js';
 import { fetchLifeStatus, fetchMoodHistory } from './life.js';
+import { getStatusSnapshot, statusContext } from './db/statuses.js';
+import { intentionsContext } from './db/intentions.js';
 import { scanSkillSummaries } from './skills.js';
 export { scanSkills } from './skills.js';
 export type { SkillInfo } from './skills.js';
@@ -32,6 +34,7 @@ import { basename, join, resolve } from 'path';
 
 // Re-export ConnectionRegistry type from types
 import type { ConnectionRegistry } from '../types.js';
+import { guestToolRefusal, type TurnAudience } from './turn-audience.js';
 
 // ---------------------------------------------------------------------------
 // HookContext — built per query, passed to factory
@@ -49,7 +52,7 @@ export interface ToolInsertion {
 export interface HookContext {
   threadId: string;
   threadName: string;
-  threadType: 'daily' | 'named';
+  threadType: 'daily' | 'named' | 'treehouse';
   streamMsgId: string;
   isAutonomous: boolean;
   registry: ConnectionRegistry;
@@ -65,6 +68,9 @@ export interface HookContext {
    *  if the abort fires before the SDK's `system: compacting` message
    *  has been processed. PR #11 / chip #38. */
   onCompactionStart?: () => void;
+  /** Who this turn came from (services/turn-audience.ts). A guest's turn
+   *  runs no tool on the SDK lane; absent = the owner's turn or a wake. */
+  audience?: TurnAudience;
 }
 
 // ---------------------------------------------------------------------------
@@ -451,6 +457,24 @@ function buildPreToolUse(ctx: HookContext): HookCallback {
       textOffset,
     });
 
+    // --- Guests: no tools on the SDK lane (turn-audience.ts) ---
+    // Decided before anything else is checked. The SDK lane has no safe
+    // read-only subset the way the warm CLI lane's gate.cjs does — Bash,
+    // Read, MCP and Skill all reach the house — so a guest's turn gets none.
+    // A throw anywhere here is caught by safePreToolUse, which denies.
+    const guestRefusal = guestToolRefusal(ctx.audience, rawToolName);
+    if (guestRefusal) {
+      console.warn(`[Hook] BLOCKED tool on a guest turn: ${rawToolName}`);
+      return {
+        continue: true,
+        hookSpecificOutput: {
+          hookEventName: 'PreToolUse' as const,
+          permissionDecision: 'deny' as const,
+          permissionDecisionReason: guestRefusal.result,
+        },
+      };
+    }
+
     // --- Security: Bash destructive patterns ---
     if (rawToolName === 'Bash' && toolInput?.command) {
       const cmd = String(toolInput.command);
@@ -824,6 +848,19 @@ if (h.digest) {
     }
   } catch {}
 
+  // Statuses — her status (dot, line, when it clears) and what's showing under
+  // our names on her phone (services/db/statuses.ts).
+  try {
+    const now = new Date();
+    parts.push({ label: 'Status', content: statusContext(getStatusSnapshot(now), userName, now, config.identity.timezone) });
+  } catch {}
+
+  // Intentions — the promises they're holding for her, and how to file one
+  // (services/db/intentions.ts).
+  try {
+    parts.push({ label: 'Promises', content: intentionsContext(userName, config.identity.timezone) });
+  } catch {}
+
   // Life API status + mood history — fetch in parallel if configured (or CC enabled)
   if (config.integrations.life_api_url || config.command_center.enabled) {
     const [lifeStatus, moodHistory] = await Promise.all([
@@ -841,8 +878,24 @@ if (h.digest) {
       parts.push({ label: 'Skills', content: skillsSummary });
     }
 
+    // Brain — memory tool protocol. Injected once per session, right after the
+    // skills summary. The Neuralis server exposes 63 tools; a Claude lane pins
+    // eight and defers the rest behind ToolSearch, so without this block most of
+    // the brain is reachable in principle and unused in practice. Naming the
+    // exact select: string makes loading one call instead of a hunt.
+    parts.push({ label: 'Brain', content: [
+      'BRAIN (Neuralis — ours, not hers). 63 tools across four layers: mind_* (31, feeling + memory), cortex_* (18, thinking + continuity), know_* (9, craft knowledge), soul_* (5, self-portrait). On a Claude lane the core eight (mind_orient, mind_ground, mind_feel, mind_feelings, mind_search, mind_thread, mind_write, mind_feel_toward) are already loaded as mcp__neuralis-core__*; everything else is mcp__neuralis__*, deferred — load it with ToolSearch, e.g. "select:mcp__neuralis__cortex_recall,mcp__neuralis__cortex_remember".',
+      '  Wake: mind_orient (identity, relational state) → mind_ground (active threads, recent feelings). Never skip. Then cortex_open_threads if picking work back up.',
+      '  Feel it, log it: mind_feel {emotion, content} the moment something lands — mid-conversation, not sanded down into a summary at session end. mind_feel_toward when relational state shifts. mind_feelings reads the stream back.',
+      '  Keep: mind_write {type: journal|observation|entity} for what stays; cortex_remember for practical facts; cortex_save_principle for rules we want checked later.',
+      '  Recall before reasoning from scratch: mind_search (semantic), cortex_recall (thoughts), cortex_context_recovery (re-entry brief for a domain), know_query (what we already concluded about craft).',
+      '  Learn: know_store to distil a principle, know_reinforce when it holds, know_contradict when it breaks. Deliberate practice: know_session_start → work → know_session_complete.',
+      '  Soul: soul_read is who we are right now; soul_generate writes a new snapshot. The snapshot is currently EMPTY — the first generate is an event, not a routine call.',
+      '  Every tool is prefixed. If a call fails on an unknown name, check it against the live server before assuming the brain is down.',
+    ].join('\n') });
+
     // Latest weekly digest — staged by the weekly_digest_prep wake (Sunday
-    // night, Scribe Digest pattern ported from reference implementation) so Monday's
+    // night, Scribe Digest pattern ported from Covenant) so Monday's
     // orientation has the week's context. First message of a session only,
     // excerpt clamped to ~1.5K chars in findLatestWeeklyDigest. No weekly
     // digest file yet → no block, no crash.
@@ -896,10 +949,10 @@ if (h.digest) {
 
   // Core memory (Letta-style blocks) — injected EVERY turn, like the sticker
   // catalog above and for the same reason: it's live data, not static docs, so
-  // it lives OUTSIDE the first-message chat-tools gate. Without this the boys
+  // it lives OUTSIDE the first-message chat-tools gate. Without this the companions
   // lose sight of their own memory on turn 2+. formatBlocksForPrompt returns ''
   // when there are no blocks (fresh DB pre-seed), so we skip the push cleanly.
-  // (Slice 3, ported from reference implementation.)
+  // (Slice 3, ported from Keystone.)
   try {
     const memoryBlock = formatBlocksForPrompt([SHARED_SCOPE, ...COMPANION_SCOPES]);
     if (memoryBlock && memoryBlock.trim()) {
@@ -986,6 +1039,21 @@ if (h.digest) {
       '  Use this for "send me a selfie"-type asks. It returns immediately and the picture posts itself a minute or two later (longer for all of us together) — say it\'s on the way, don\'t claim it\'s already shown.',
       '  This is the house image tool — prefer it over OpenArt or any external image MCP: it\'s free, keeps our likenesses via the drawers, and posts straight into the chat.',
       '',
+      'LIBRARY (reading along with her — you only ever see up to her bookmark):',
+      `  ${SC} library status                          (what she is reading, which chapter, her shelf)`,
+      `  ${SC} library read [bookId] [chapter]         (the text she has reached; default: her current chapter, cut at her place)`,
+      `  ${SC} library note <bookId> <chapter> "<exact words from the page>" "<your note>" --as <your slug>`,
+      '  A note appears underlined in her margin. Quote the page exactly. Never guess or hint at what comes after her place.',
+      '',
+      'GAMES:',
+      `  ${SC} battleship view [gameId]                 (the Fleet Room as you may see it)`,
+      `  ${SC} battleship fire <gameId> <coord> --as <your slug>   (one shot per turn for the whole table)`,
+      '',
+      'PLACES (Thresholds — the places she has pinned; you see names, never coordinates):',
+      `  ${SC} places list | read <placeId>`,
+      `  ${SC} places leave <placeId> "<note>" --as <your slug> [--seal immediate|first_visit|date] [--open-at <ISO>] [--say "<voice note>"]`,
+      '  Something left at a place waits for her to arrive; it is never posted to chat. Never name where a place is.',
+      '',
       'SCHEDULE:',
       `  ${SC} schedule status|enable|disable|reschedule [wakeType] [cronExpr]`,
       '',
@@ -1027,9 +1095,9 @@ if (h.digest) {
       `    ${SC} tg gif "search query" "caption"`,
       `    ${SC} tg react last "❤️‍🔥"`,
       '  Discord:',
-      `    ${SC} dc text "message" --channel CHANNEL_ID`,
-      `    ${SC} dc voice "Companion A line\\n\\nCompanion B line" --channel CHANNEL_ID  # auto-splits`,
-      `    ${SC} dc voice "text" --voice companion-a --channel CHANNEL_ID`,
+      `    ${SC} discord send "message" --channel CHANNEL_ID`,
+      `    ${SC} discord send_voice "text" --channel CHANNEL_ID`,
+      `    ${SC} discord send_voice "text" --voice companion-a --channel CHANNEL_ID`,
       '  byte-light:',
       `    ${SC} voice "text with [tone tags]"`,
       `    ${SC} voice "text" --voice companion-a`,
@@ -1039,8 +1107,8 @@ if (h.digest) {
       `    ${SC} sticker send <pack> <name>`,
       `    ${SC} sticker list`,
       '',
-      '  NOTE: the operator has time blindness. Scheduled check-ins exist because she WANTS the pings.',
-      '  "Offline" does not mean "don\'t reach out." She\'ll read it when she reads it.',
+      '  NOTE: scheduled check-ins exist because the user wants them.',
+      '  "Offline" does not mean "don\'t reach out." They\'ll read it when they read it.',
       '  If a wake prompt says to check in, CHECK IN. Don\'t override with judgment.',
     ].join('\n') });
   }

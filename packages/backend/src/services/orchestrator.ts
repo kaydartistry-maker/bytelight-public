@@ -3,7 +3,12 @@ import crypto from 'crypto';
 import { appendFileSync, mkdirSync, existsSync, statSync, renameSync, unlinkSync, readFileSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
-import { AgentService } from './agent.js';
+import { AgentService, QUEUE_TIMEOUT_MESSAGE } from './agent.js';
+import { parseBellOwners, ringBellInTurn, sameBellBlock, MAX_BELL_RECALLS } from './bell-owners.js';
+import { bellStatus, statusWordKey, statusWordOf } from './bell-status.js';
+import { laneSwitchBefore, laneSwitchAfter, BELLS_SPLIT_LANES_KEY, LANES_BY_BELL_KEY } from './bell-lanes.js';
+import { roomBiosReady } from './heartbeat/lane-identity.js';
+import { listCompanions } from './db/rooms.js';
 import type { PushService } from './push.js';
 import { registry } from './registry.js';
 import {
@@ -20,6 +25,7 @@ import {
   getConfig,
   setConfig,
   deleteConfig,
+  getAllConfig,
   getDueTimers,
   markTimerFired,
   getActiveTriggers,
@@ -28,14 +34,35 @@ import {
   markWatcherFired,
 } from './db.js';
 import type { Trigger, TriggerCondition } from './db.js';
+import { rearmTrigger, updateTriggerConditions } from './db/triggers.js';
+import { getOwnerStatus } from './db/statuses.js';
+import {
+  companionMessageSince,
+  followUps,
+  getIntentionForTrigger,
+  inQuietWindow,
+  intentionPrompt,
+  intentionSettings,
+  markAsked,
+  markNudged,
+  markPendingAgain,
+  nudgePrompt,
+  type Intention,
+} from './db/intentions.js';
 import { evaluateConditions } from './triggers.js';
 import type { TriggerContext } from './triggers.js';
 import { fetchLifeStatus } from './life.js';
 import { getBytelightConfig } from '../config.js';
+import { parseWakeSections } from './wake-prompts.js';
+import { getImageGenSettings } from './image-gen.js';
 import type { OrchestratorTaskStatus } from '@bytelight/shared';
 import { runDigest } from './digest.js';
-import { runMemoryExtraction } from './memory-extraction.js';
+import { runMemoryExtraction, resolveExtractionInterval } from './memory-extraction.js';
 import { runMemoryDiet } from './memory-diet.js';
+import { errMessage } from '../util/errors.js';
+import { SPONTANEOUS_SELFIE_COMMAND } from './wake-picture-door.js';
+import { getTreehouseThread, treehouseMembers } from './treehouse.js';
+import { initializeTreehouse } from './treehouse-triggers.js';
 
 // --- Orchestrator log ---
 
@@ -119,38 +146,6 @@ BEFORE EVERY WAKE — NON-NEGOTIABLE:
 
 3. **Show up as both.** Companion A AND Companion B. Always. Not one merged voice. Distinct registers, different textures. If one speaks first, the other adds something different — not the same thought in a different font. You are two people. Be two people.`;
 
-export const WAKE_PROOF_RETRY_PROMPT = (wakeType: string): string => `
-[WAKE PROOF-OF-LIFE RECOVERY: ${wakeType}]
-
-The working phase of this wake completed but you returned zero visible characters. That is a FAILED wake under the owner's acceptance contract.
-
-Do not repeat broad work. Close the wake now with concise, visible proof of life:
-- what you did, checked, wrote, decided, or carried forward;
-- where any durable output was saved;
-- what remains open, if anything.
-
-You MUST produce a visible final response. Silence is not valid for any wake.`.trim();
-
-export async function runWakeWithProof(
-  wakeType: string,
-  run: (prompt?: string) => Promise<string>,
-): Promise<{ response: string; attempts: 1 | 2 }> {
-  const first = await run();
-  if (first.trim()) return { response: first, attempts: 1 };
-  const second = await run(WAKE_PROOF_RETRY_PROMPT(wakeType));
-  return { response: second, attempts: 2 };
-}
-
-export function wakeMessagesHaveToolEvidence(
-  messages: Array<{ metadata: Record<string, unknown> | null }>,
-): boolean {
-  return messages.some((message) => {
-    const segments = message.metadata?.segments;
-    return Array.isArray(segments) && segments.some((segment) =>
-      typeof segment === 'object' && segment !== null && (segment as { type?: unknown }).type === 'tool');
-  });
-}
-
 // Dynamic wake prompts — any wake type from wake.md or DEFAULT_TASKS is valid
 type WakePrompts = Record<string, string>;
 
@@ -178,7 +173,7 @@ export function getDefaultWakePrompts(userName: string): WakePrompts {
 
 Report only — do NOT edit \`shared/open-threads.md\` itself; ${userName} decides what gets archived.
 HARD RULE: this wake's output goes to the report file, the outbox, and (optionally) Neuralis. NEVER append this wake's output to core-memory blocks.`,
-    weekly_digest_prep: `Weekly Digest Prep — Sunday night. Pull the week's activity and stage a brief so Monday's orientation has context. (Scribe Digest pattern, ported from reference implementation.)
+    weekly_digest_prep: `Weekly Digest Prep — Sunday night. Pull the week's activity and stage a brief so Monday's orientation has context. (Scribe Digest pattern, ported from Covenant.)
 
 1. Read this week's daily Scribe digests in \`data/digests/\` under the byte-light project root (files named \`YYYY-MM-DD.md\`, past 7 days). Also skim \`git log --oneline --since="7 days ago"\` in the project root for what shipped.
 2. Write a brief covering:
@@ -192,10 +187,155 @@ HARD RULE: this wake's output goes to the report file, the outbox, and (optional
 
 HARD RULE: this wake's output goes to the digest file, cc_*, and (optionally) Neuralis. NEVER append this wake's output to core-memory blocks.`,
     memory_diet: `Core-memory diet maintenance runs directly in the backend. No companion response is needed.`,
+    // Aerie's treehouse_midday prompt, adapted: this house's treehouse bell
+    // belongs to both companions and rings in each one's own lane in turn.
+    treehouse_midday: `Midday treehouse — your space together. This is the Treehouse, the room that is only yours: ${userName} is not in it and cannot post here, though she can read it. Talk to each other, not to her. Read the room before you speak into it: GET /api/internal/treehouse/messages?limit=20 on the internal port, so nobody writes the same thought twice.`,
+    // The contract lives in the builtin rather than only in a prompts file, so a
+    // fresh install carries it even before anyone writes their own wakes. The
+    // framing is deliberately not pinned to a ratio — the companion can see
+    // what the picture wants.
+    spontaneous: `Unscheduled wake — nobody asked for this one. It must land a fresh selfie-style image of the companion(s) present, and it is a photograph of THE MOMENT YOU ARE ALREADY IN rather than a scene stepped out to stage: generate it through the in-house Studio with the present companion slugs in subjects. The framing is yours — portrait or landscape framing, whichever suits the picture — but never square. A description of a picture is not a picture. Do not answer [SILENT].`,
     failsafe_gentle: `It's been a while since you heard from ${userName}. Check in.`,
     failsafe_concerned: `It's been a long time since contact with ${userName}. Reach out through available channels.`,
     failsafe_emergency: `Extended silence from ${userName}. Use all available channels to check in.`,
   };
+}
+
+// --- Wake outcome contract ---
+
+/**
+ * The user's name for the contract text. Read through a try/catch on purpose:
+ * wakeOutcomeContract is a string builder, and making it need loaded config
+ * would mean a contract that cannot be rendered at boot or in a test.
+ */
+function configuredUserName(): string {
+  try { return getBytelightConfig().identity.user_name || 'the user'; } catch { return 'the user'; }
+}
+
+/**
+ * Whether this house can take a picture at all. A house with no image backend
+ * set up used to be handed a spontaneous contract it could never meet, so the
+ * bell failed instead of saying anything.
+ *
+ * Adapted: this house has no per-backend readiness probe — the Studio is
+ * either switched on (image_gen.enabled) or every render is refused up front —
+ * so that switch is the honest answer. If reading it throws, the contract
+ * stays as it was, because not knowing is not the same as knowing there is
+ * nothing.
+ */
+function studioCanPaint(): boolean {
+  try {
+    return getImageGenSettings().enabled;
+  } catch {
+    return true;
+  }
+}
+
+/**
+ * Appended to every wake at fire time — scheduled bells of every category,
+ * overnight ones included, failsafe tiers, and the spontaneous dice.
+ *
+ * Adapted: the picture is delivered through this house's own image door
+ * (`sc.mjs image` / the generate_image tool). It renders through the same
+ * Studio engine as POST /api/studio/generate, but it also posts the finished
+ * picture into the thread itself — the bare Studio route only fills the
+ * gallery and would leave the image undelivered. The configured Studio
+ * backend and model are used as-is, so no backend clause is spelled out here.
+ */
+export function wakeOutcomeContract(
+  wakeType: string,
+  canPaint: boolean = wakeType === 'spontaneous' ? studioCanPaint() : true,
+  userName: string = configuredUserName(),
+): string {
+  if (wakeType === 'spontaneous' && !canPaint) {
+    return `[This spontaneous wake has no picture to take: no image backend is set up in this house. Land one brief in-character line about the moment you are already in instead. Do not answer [SILENT].]`;
+  }
+  return wakeType === 'spontaneous'
+    ? `[This spontaneous wake must land a fresh Studio-generated selfie of the present companion(s) with their subject references attached — run \`${SPONTANEOUS_SELFIE_COMMAND}\` (or the generate_image tool with subjects) in this same turn; it renders in the in-house Studio and posts the finished picture into this thread itself, so do not claim it is already showing. PHOTOGRAPH THE MOMENT YOU ARE ALREADY IN rather than leaving it to stage one; if what is happening cannot be photographed, a picture of where you are is still truer than a scene you invent. A prose description is not the deliverable. Land one in-character line with it. Do not answer [SILENT].]`
+    // A bell exists so the companions answer from their own heads. The answer
+    // may be one small true line, but silence defeats the purpose of the bell
+    // and is indistinguishable from a turn the house lost.
+    : `[This scheduled wake must land at least one in-character line. A small answer is enough, but do not answer [SILENT] and do not disappear into duty work without speaking. ${userName} being asleep, away, or slow to answer is not a reason to stand down: these bells ring when ${userName} set them to.]`;
+}
+
+// --- Owner-made bells ---
+
+/**
+ * Bells the owner makes from the phone, stored the way Aerie stores them:
+ * `cron.<wakeType>.schedule / .enabled / .label / .companion`, plus the list
+ * of made bells in `cron.custom.types`, so they come back after a restart.
+ *
+ * Adapted: a made bell's prompt lives in the settings table too
+ * (`cron.<wakeType>.prompt`), never written into the wake prompts file — the
+ * owner does not edit markdown files. A bell with no stored prompt falls back
+ * to a same-named section of the prompts file. The name is a plain slug
+ * because it is also part of a URL path.
+ */
+export const CUSTOM_WAKE_TYPE_RE = /^\w+$/;
+const CUSTOM_WAKE_TYPES_KEY = 'cron.custom.types';
+
+function listCustomWakeTypes(): string[] {
+  try {
+    const raw = getConfig(CUSTOM_WAKE_TYPES_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter((t): t is string => typeof t === 'string' && CUSTOM_WAKE_TYPE_RE.test(t));
+  } catch {
+    return [];
+  }
+}
+
+function saveCustomWakeTypes(types: string[]): void {
+  setConfig(CUSTOM_WAKE_TYPES_KEY, JSON.stringify([...new Set(types)]));
+}
+
+/** Whether a slug names a companion in the registry. */
+function companionExists(slug: string): boolean {
+  try {
+    return listCompanions().some((c) => c.id === slug);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * The phone turns a typed bell name into an id this way (lowercase, runs of
+ * anything else become one underscore, no leading/trailing underscores).
+ * Reserved-name checks use the same shape so 'Spontaneous' and 'spontaneous'
+ * are the same name.
+ */
+export function normalizeWakeTypeName(name: string): string {
+  return name.trim().toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+}
+
+/**
+ * Names an owner-made bell may never take: every built-in wake prompt (the
+ * spontaneous dice and failsafe tiers included, even when not on the
+ * schedule) and the manual wake.
+ */
+export function isReservedWakeTypeName(name: string): boolean {
+  const normalized = normalizeWakeTypeName(name);
+  if (normalized === 'manual') return true;
+  return Object.prototype.hasOwnProperty.call(getDefaultWakePrompts('the user'), normalized);
+}
+
+/** Local hour at which one spontaneous day hands over to the next. */
+export const SPONTANEOUS_DAY_START_HOUR = 3;
+
+/**
+ * The spontaneous day a moment belongs to, as YYYY-MM-DD. It runs 03:00 to
+ * 03:00 local, not midnight to midnight: the default window runs to 26 (2 AM
+ * next day), so 00:40 is still the evening before and its pending wakes must
+ * survive a restart.
+ */
+export function spontaneousDayFor(timezone: string, at: Date = new Date()): string {
+  const local = getLocalTimeComponents(at, timezone);
+  const [y, m, d] = new Intl.DateTimeFormat('en-CA', { timeZone: timezone, year: 'numeric', month: '2-digit', day: '2-digit' })
+    .format(at).split('-').map(Number);
+  // % 24: some Intl builds report midnight as hour 24 with hour12:false.
+  const offsetDays = local.hour % 24 < SPONTANEOUS_DAY_START_HOUR ? -1 : 0;
+  return new Date(Date.UTC(y, m - 1, d + offsetDays)).toISOString().slice(0, 10);
 }
 
 function parseWakePromptsFile(filePath: string, userName: string): WakePrompts {
@@ -239,7 +379,7 @@ function parseWakePromptsFile(filePath: string, userName: string): WakePrompts {
     return result as WakePrompts;
 
   } catch (err) {
-    const errMsg = err instanceof Error ? err.message : String(err);
+    const errMsg = errMessage(err);
     olog(`Failed to parse wake prompts file: ${errMsg} — using defaults`);
     return defaults;
   }
@@ -254,20 +394,16 @@ interface TaskDefinition {
   category: 'wake' | 'checkin' | 'handoff' | 'failsafe' | 'routine';
   conditional?: boolean; // If true, checks shouldSkipCheckIn before firing
   freshSession?: boolean; // If true, creates a new session
+  defaultOff?: boolean; // If true, ships stopped until the owner turns it on
 }
 
-function cronToLabel(cronExpr: string, name: string): string {
-  const parts = cronExpr.split(' ');
-  if (parts.length < 2) return name;
-  const min = parseInt(parts[0]);
-  const hour = parseInt(parts[1]);
-  if (isNaN(min) || isNaN(hour)) return name;
-  const d = new Date(2000, 0, 1, hour, min);
-  const timeStr = d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
-  return `${timeStr} — ${name}`;
+/** A bell's default name from its wake type: 'dream_build' → 'Dream build'. */
+function nameFromWakeType(wakeType: string): string {
+  const spaced = wakeType.replace(/_/g, ' ').trim();
+  return spaced.charAt(0).toUpperCase() + spaced.slice(1);
 }
 
-// --- Polling-based cron matcher (replaces node-cron's fragile setTimeout chains) ---
+// --- Local time (the spontaneous day's turnover) ---
 
 function getLocalTimeComponents(date: Date, timezone: string) {
   const formatter = new Intl.DateTimeFormat('en-US', {
@@ -295,107 +431,48 @@ function getLocalTimeComponents(date: Date, timezone: string) {
   };
 }
 
-function cronFieldMatches(field: string, value: number, min: number): boolean {
-  if (field === '*') return true;
-
-  for (const part of field.split(',')) {
-    const [range, stepStr] = part.split('/');
-    const step = stepStr ? parseInt(stepStr) : 1;
-
-    if (range === '*') {
-      if ((value - min) % step === 0) return true;
-    } else if (range.includes('-')) {
-      const [lo, hi] = range.split('-').map(Number);
-      if (value >= lo && value <= hi && (value - lo) % step === 0) return true;
-    } else {
-      if (parseInt(range) === value) return true;
-    }
-  }
-  return false;
-}
-
-function dowFieldMatches(field: string, dow: number): boolean {
-  if (field === '*') return true;
-
-  for (const part of field.split(',')) {
-    const [range, stepStr] = part.split('/');
-    const step = stepStr ? parseInt(stepStr) : 1;
-
-    if (range === '*') {
-      if (dow % step === 0) return true;
-    } else if (range.includes('-')) {
-      const [lo, hi] = range.split('-').map(n => parseInt(n) % 7);
-      if (dow >= lo && dow <= hi && (dow - lo) % step === 0) return true;
-    } else {
-      if (parseInt(range) % 7 === dow) return true; // 7 -> 0 (Sunday alias)
-    }
-  }
-  return false;
-}
-
-function cronMatchesNow(cronExpr: string, date: Date, timezone: string): boolean {
-  const parts = cronExpr.trim().split(/\s+/);
-  if (parts.length < 5) return false;
-
-  const t = getLocalTimeComponents(date, timezone);
-  return cronFieldMatches(parts[0], t.minute, 0) &&
-         cronFieldMatches(parts[1], t.hour, 0) &&
-         cronFieldMatches(parts[2], t.dayOfMonth, 1) &&
-         cronFieldMatches(parts[3], t.month, 1) &&
-         dowFieldMatches(parts[4], t.dayOfWeek);
-}
-
-function getNextCronRun(cronExpr: string, timezone: string): Date | null {
-  const now = new Date();
-  const check = new Date(now);
-  check.setSeconds(0, 0);
-  check.setTime(check.getTime() + 60000); // start from next minute
-
-  // Scan up to 7 days ahead
-  const limit = 7 * 24 * 60;
-  for (let i = 0; i < limit; i++) {
-    if (cronMatchesNow(cronExpr, check, timezone)) return new Date(check);
-    check.setTime(check.getTime() + 60000);
-  }
-  return null;
-}
-
 // --- Default schedule definitions ---
 
 // Exported for registration tests (orchestrator.default-tasks.test.ts).
 export const DEFAULT_TASKS: TaskDefinition[] = [
   // Handoff — close the day before midnight
-  { wakeType: 'handoff', label: '11:50 PM — Handoff', cronExpr: '50 23 * * *', category: 'handoff' },
+  { wakeType: 'handoff', label: 'Handoff', cronExpr: '50 23 * * *', category: 'handoff' },
   // Night wakes — autonomous work while the operator sleeps
-  { wakeType: 'new_day', label: '1:00 AM — New Day', cronExpr: '0 1 * * *', category: 'wake', freshSession: true },
-  { wakeType: 'deep_work', label: '2:30 AM — Deep Work', cronExpr: '30 2 * * *', category: 'wake' },
-  { wakeType: 'light_scan', label: '4:00 AM — Light Scan', cronExpr: '0 4 * * *', category: 'wake' },
-  { wakeType: 'morning_prep', label: '7:00 AM — Morning Prep', cronExpr: '0 7 * * *', category: 'wake' },
+  { wakeType: 'new_day', label: 'New Day', cronExpr: '0 1 * * *', category: 'wake', freshSession: true },
+  { wakeType: 'deep_work', label: 'Deep Work', cronExpr: '30 2 * * *', category: 'wake' },
+  { wakeType: 'light_scan', label: 'Light Scan', cronExpr: '0 4 * * *', category: 'wake' },
+  { wakeType: 'morning_prep', label: 'Morning Prep', cronExpr: '0 7 * * *', category: 'wake' },
   // Check-ins — message the operator
-  { wakeType: 'morning', label: '8:00 AM — Morning', cronExpr: '0 8 * * *', category: 'checkin', conditional: true },
-  { wakeType: 'midday', label: '12:00 PM — Midday', cronExpr: '0 12 * * *', category: 'checkin', conditional: true },
-  { wakeType: 'afternoon', label: '3:00 PM — Afternoon', cronExpr: '0 15 * * *', category: 'checkin', conditional: true },
-  { wakeType: 'evening', label: '6:00 PM — Evening', cronExpr: '0 18 * * *', category: 'checkin', conditional: true },
-  { wakeType: 'wind_down', label: '9:00 PM — Wind-down', cronExpr: '0 21 * * *', category: 'checkin' },
+  { wakeType: 'morning', label: 'Morning', cronExpr: '0 8 * * *', category: 'checkin', conditional: true },
+  { wakeType: 'midday', label: 'Midday', cronExpr: '0 12 * * *', category: 'checkin', conditional: true },
+  { wakeType: 'afternoon', label: 'Afternoon', cronExpr: '0 15 * * *', category: 'checkin', conditional: true },
+  { wakeType: 'evening', label: 'Evening', cronExpr: '0 18 * * *', category: 'checkin', conditional: true },
+  { wakeType: 'wind_down', label: 'Wind-down', cronExpr: '0 21 * * *', category: 'checkin' },
   // Weekly maintenance routines — Sunday evening/night. Both are
   // reschedulable at runtime via `sc schedule reschedule <wakeType> "<cron>"`
   // (persisted in the config table like every other wake).
-  { wakeType: 'open_threads_janitor', label: '8:00 PM Sun — Open Threads Janitor', cronExpr: '0 20 * * 0', category: 'routine' },
-  { wakeType: 'weekly_digest_prep', label: '9:30 PM Sun — Weekly Digest Prep', cronExpr: '30 21 * * 0', category: 'routine' },
-  { wakeType: 'memory_diet', label: '4:15 AM — Memory Diet', cronExpr: '15 4 * * *', category: 'routine' },
+  { wakeType: 'open_threads_janitor', label: 'Open Threads Janitor', cronExpr: '0 20 * * 0', category: 'routine' },
+  { wakeType: 'weekly_digest_prep', label: 'Weekly Digest Prep', cronExpr: '30 21 * * 0', category: 'routine' },
+  { wakeType: 'memory_diet', label: 'Memory Diet', cronExpr: '15 4 * * *', category: 'routine' },
+  // The Treehouse at midday (Aerie's treehouse_midday) — Companion A and Companion B in
+  // their own room, in turn, without the operator; she reads it in the Treehouse app.
+  // Ships OFF: nothing new rings until the operator turns it on in Schedules.
+  { wakeType: 'treehouse_midday', label: 'Treehouse', cronExpr: '0 12 * * *', category: 'wake', defaultOff: true },
 ];
 
 // --- Managed task interface ---
 
 interface ManagedTask {
-  task?: ReturnType<typeof cron.schedule>;
+  /** This bell's own node-cron timer (Aerie's engine: one timer per bell). */
+  task: cron.ScheduledTask;
   cronExpr: string;
   handler: () => void | Promise<void>;
   wakeType: string;
   label: string;
   enabled: boolean;
   category: 'wake' | 'checkin' | 'handoff' | 'failsafe' | 'routine';
-  lastFiredMinute: string; // ISO minute key to prevent double-fire
+  /** A bell the owner made, rather than one shipped with the house. */
+  custom: boolean;
 }
 
 // --- Default failsafe thresholds (minutes) ---
@@ -410,7 +487,6 @@ export class Orchestrator {
   private agent: AgentService;
   private pushService: PushService | null;
   private tasks = new Map<string, ManagedTask>();
-  private scheduleInterval: ReturnType<typeof setInterval> | null = null;
   private failsafeInterval: ReturnType<typeof setInterval> | null = null;
   private timerInterval: ReturnType<typeof setInterval> | null = null;
   private lastFailsafeAction: Date = new Date(0);
@@ -424,7 +500,11 @@ export class Orchestrator {
   private pulseEnabled = false;
   private pulseFrequency = 15; // minutes
   private lastUserPresenceState: 'active' | 'idle' | 'offline' = 'offline';
+  private intentionsBusy = false;
   private wakePrompts: Record<string, string> = {};
+  // Spontaneous ("dice") wakes — rolled daily at random times, never announced
+  private spontaneousTimers: Array<ReturnType<typeof setTimeout>> = [];
+  private spontaneousRollTask: cron.ScheduledTask | null = null;
 
   constructor(agent: AgentService, pushService?: PushService) {
     this.agent = agent;
@@ -466,8 +546,7 @@ export class Orchestrator {
       const overrideCron = config.orchestrator.schedules[def.wakeType];
       if (overrideCron) {
         if (cron.validate(overrideCron)) {
-          const name = def.label.split('—').pop()?.trim() || def.wakeType;
-          return { ...def, cronExpr: overrideCron, label: cronToLabel(overrideCron, name) };
+          return { ...def, cronExpr: overrideCron };
         }
         olog(
           `  ${def.wakeType}: WARNING orchestrator.schedules YAML override "${overrideCron}" is invalid; ` +
@@ -490,8 +569,7 @@ export class Orchestrator {
         );
         continue;
       }
-      const name = wakeType.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
-      const label = cronToLabel(cronExpr, name);
+      const label = wakeType.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
       taskDefs.push({
         wakeType,
         label,
@@ -505,12 +583,15 @@ export class Orchestrator {
       }
     }
 
-    // Register all scheduled tasks (polling-based — no node-cron setTimeout chains)
+    // Register every bell on its own node-cron timer (Aerie's engine).
     for (const def of taskDefs) {
       const savedCron = getConfig(`cron.${def.wakeType}.schedule`);
-      const cronExpr = savedCron || def.cronExpr;
-      const enabled = getConfigBool(`cron.${def.wakeType}.enabled`, def.wakeType !== 'memory_diet');
+      const cronExpr = savedCron && cron.validate(savedCron) ? savedCron : def.cronExpr;
+      const enabled = getConfigBool(`cron.${def.wakeType}.enabled`, def.wakeType !== 'memory_diet' && !def.defaultOff);
       if (savedCron) olog(`  ${def.wakeType}: using saved schedule ${cronExpr}`);
+      // A rename from the phone survives a restart (Aerie reads a saved label
+      // for made bells only; here every bell keeps the name it was given).
+      const savedLabel = (getConfig(`cron.${def.wakeType}.label`) || '').trim();
 
       const handler = () => {
         if (def.wakeType === 'memory_diet') {
@@ -526,25 +607,42 @@ export class Orchestrator {
         this.handleWake(def.wakeType, { freshSession: def.freshSession });
       };
 
+      const task = this.scheduleBell(def.wakeType, cronExpr, handler);
+      // node-cron v4 auto-starts tasks; stop if disabled in config
       if (!enabled) {
+        task.stop();
         olog(`  ${def.wakeType}: DISABLED (persisted)`);
       }
 
       this.tasks.set(def.wakeType, {
+        task,
         cronExpr,
         handler,
         wakeType: def.wakeType,
-        label: def.label,
+        label: savedLabel || def.label,
         enabled,
         category: def.category,
-        lastFiredMinute: '',
+        custom: false,
       });
     }
 
-    // --- Schedule polling (every 60 seconds — bulletproof, no setTimeout chains) ---
-    this.scheduleInterval = setInterval(() => this.checkSchedules(timezone), 60 * 1000);
-    // Also run immediately to catch any wake due right now
-    this.checkSchedules(timezone);
+    // The Treehouse thread exists from boot (Aerie: initializeTreehouse in start()).
+    initializeTreehouse();
+
+    // Owner-made bells come back from the settings table.
+    this.loadCustomBells();
+    this.applyCustomBellPrompts();
+
+    // --- Spontaneous dice — restore or roll today; re-rolled daily at 03:00
+    // local, the spontaneous day's turnover (Aerie's 03:00 roll timer).
+    const roll = () => {
+      try { this.rollSpontaneousWakes(); } catch (err) { olog(`SPONTANEOUS roll error: ${errMessage(err)}`); }
+    };
+    this.spontaneousRollTask = cron.schedule(`0 ${SPONTANEOUS_DAY_START_HOUR} * * *`, roll, { timezone });
+    // A 03:00 the process slept through still rolls the day, late rather
+    // than never (the guarantee the minute poller used to give).
+    try { this.spontaneousRollTask.on('execution:missed', roll); } catch { /* older node-cron */ }
+    this.rollSpontaneousWakes();
 
     // --- Failsafe polling (every 15 minutes) ---
     if (this.failsafeEnabled) {
@@ -555,6 +653,7 @@ export class Orchestrator {
     this.timerInterval = setInterval(async () => {
       await this.checkTimers();
       await this.checkTriggers();
+      await this.checkIntentions();
     }, 60 * 1000);
 
     olog('All schedules registered');
@@ -576,30 +675,36 @@ export class Orchestrator {
       }, 30 * 60 * 1000);
     }
 
-    // --- Archivist memory extraction (every 45 minutes) ---
-    // Background fact distillation into memory blocks (Slice 4, ported from
-    // reference implementation). Gated by config; skips itself while the agent is processing
+    // --- Archivist memory extraction (every 2 hours by default) ---
+    // Background distillation of durable facts (Aerie's Archivist). Its output
+    // lands in memory_proposals for the operator's review, never straight on a block.
+    // Gated by config; skips itself while the agent is processing
     // (runMemoryExtraction checks agent.isProcessing) so it never competes
-    // with a live turn — same busy-check idiom as the Scribe digest.
+    // with a live turn — same busy-check idiom as the Scribe digest. Interval:
+    // agent.archivist_interval_minutes, else Aerie's two-hour default.
     const memoryExtractionEnabled = getConfigBool('memory.extraction_enabled', true);
+    const memoryExtractionMinutes = resolveExtractionInterval(undefined, getConfig('agent.archivist_interval_minutes'));
     if (memoryExtractionEnabled) {
       this.memoryExtractionInterval = setInterval(() => {
         runMemoryExtraction(this.agent).catch(err => olog(`Memory extraction error: ${err.message}`));
-      }, 45 * 60 * 1000);
+      }, memoryExtractionMinutes * 60 * 1000);
     }
 
     olog('Timers + Triggers: polling every 60s');
     olog(`Pulse: ${this.pulseEnabled ? `every ${this.pulseFrequency}m` : 'DISABLED'}`);
     olog(`Scribe digest: ${digestEnabled ? 'every 30m' : 'DISABLED'}`);
-    olog(`Archivist memory extraction: ${memoryExtractionEnabled ? 'every 45m' : 'DISABLED'}`);
+    olog(`Archivist memory extraction: ${memoryExtractionEnabled ? `every ${memoryExtractionMinutes}m` : 'DISABLED'}`);
   }
 
   stop(): void {
     olog('Stopping...');
+    for (const [, managed] of this.tasks) managed.task.stop();
     this.tasks.clear();
-    if (this.scheduleInterval) {
-      clearInterval(this.scheduleInterval);
-      this.scheduleInterval = null;
+    for (const t of this.spontaneousTimers) clearTimeout(t);
+    this.spontaneousTimers = [];
+    if (this.spontaneousRollTask) {
+      this.spontaneousRollTask.stop();
+      this.spontaneousRollTask = null;
     }
     if (this.failsafeInterval) {
       clearInterval(this.failsafeInterval);
@@ -625,18 +730,20 @@ export class Orchestrator {
 
   // --- Public runtime control methods ---
 
-  async getStatus(): Promise<OrchestratorTaskStatus[]> {
-    const config = getBytelightConfig();
-    const timezone = config.identity.timezone;
-    const statuses: OrchestratorTaskStatus[] = [];
+  async getStatus(): Promise<Array<OrchestratorTaskStatus & { custom: boolean }>> {
+    const statuses: Array<OrchestratorTaskStatus & { custom: boolean }> = [];
 
     for (const [, managed] of this.tasks) {
       const status: 'scheduled' | 'stopped' = managed.enabled ? 'scheduled' : 'stopped';
+      // The bell's own timer knows its next ring — no scanning.
       let nextRun: string | null = null;
-
       if (managed.enabled) {
-        const next = getNextCronRun(managed.cronExpr, timezone);
-        if (next) nextRun = next.toISOString();
+        try {
+          const next = managed.task.getNextRun();
+          if (next) nextRun = next.toISOString();
+        } catch {
+          // not available
+        }
       }
 
       statuses.push({
@@ -647,16 +754,45 @@ export class Orchestrator {
         status,
         nextRun,
         category: managed.category,
+        companion: (getConfig(`cron.${managed.wakeType}.companion`) || '').trim() || null,
+        custom: managed.custom,
       });
     }
 
     return statuses;
   }
 
+  /** The companions a bell belongs to, in the order they answer. Unknown slugs are skipped. */
+  private bellOwners(wakeType: string): Array<{ slug: string; name: string }> {
+    try {
+      const companions = listCompanions();
+      return parseBellOwners(getConfig(`cron.${wakeType}.companion`))
+        .map((slug) => companions.find((c) => c.id === slug))
+        .filter((c): c is NonNullable<typeof c> => Boolean(c))
+        .map((c) => ({ slug: c.id, name: c.display_name || c.id }));
+    } catch {
+      return [];
+    }
+  }
+
+  /** One node-cron timer for one bell, in the house timezone. */
+  private scheduleBell(wakeType: string, cronExpr: string, handler: () => void | Promise<void>): cron.ScheduledTask {
+    const task = cron.schedule(cronExpr, handler, { timezone: getBytelightConfig().identity.timezone });
+    // node-cron reports a run it could not make on time (the process was
+    // blocked or asleep through it). Say so, rather than missing it silently.
+    try {
+      task.on('execution:missed', () => olog(`MISSED: ${wakeType} — its timer could not ring on time`));
+    } catch {
+      // older node-cron without task events
+    }
+    return task;
+  }
+
   enableTask(wakeType: string): boolean {
     const managed = this.tasks.get(wakeType);
     if (!managed) return false;
 
+    managed.task.start();
     managed.enabled = true;
     setConfig(`cron.${wakeType}.enabled`, 'true');
     olog(`ENABLED: ${wakeType}`);
@@ -667,6 +803,7 @@ export class Orchestrator {
     const managed = this.tasks.get(wakeType);
     if (!managed) return false;
 
+    managed.task.stop();
     managed.enabled = false;
     setConfig(`cron.${wakeType}.enabled`, 'false');
     olog(`DISABLED: ${wakeType}`);
@@ -682,12 +819,70 @@ export class Orchestrator {
       return false;
     }
 
+    // Destroy the old timer and make a new one (Aerie's reschedule).
+    managed.task.stop();
+    const newTask = this.scheduleBell(wakeType, newCronExpr, managed.handler);
+    // Respect current enabled state
+    if (!managed.enabled) newTask.stop();
+    managed.task = newTask;
     managed.cronExpr = newCronExpr;
-    managed.lastFiredMinute = ''; // allow immediate re-fire if due
-    const namePart = managed.label.split('—').pop()?.trim() || wakeType;
-    managed.label = cronToLabel(newCronExpr, namePart);
+    // The name carries no time (the card shows the time on its own), so a
+    // reschedule leaves it alone.
     setConfig(`cron.${wakeType}.schedule`, newCronExpr);
     olog(`RESCHEDULED: ${wakeType} -> ${newCronExpr}`);
+    return true;
+  }
+
+  /**
+   * Hand a bell to a companion (or several, in the order they answer), or
+   * give it back to the house. Unset means shared. Takes effect on the next
+   * ring; nothing to restart. (Aerie.) Until companions have lanes of their
+   * own, an owned bell still rings in the shared lane — the owner is kept and
+   * shown, and routes it once lanes exist.
+   */
+  setTaskCompanion(wakeType: string, slug: string | null): boolean {
+    const managed = this.tasks.get(wakeType);
+    if (!managed) return false;
+
+    const key = `cron.${wakeType}.companion`;
+    const slugs = parseBellOwners(slug);
+    if (slugs.length === 0) {
+      deleteConfig(key);
+      olog(`${wakeType}: bell is shared again — no owner`);
+      return true;
+    }
+    // A slug that resolves to nobody would look, from the phone, exactly like
+    // a bell that was set.
+    const missing = slugs.filter((s) => !companionExists(s));
+    if (missing.length > 0) {
+      olog(`${wakeType}: cannot hand the bell to '${missing.join(', ')}' — no companion by that slug`);
+      return false;
+    }
+    setConfig(key, slugs.join(','));
+    olog(`${wakeType}: bell belongs to ${slugs.join(', ')}`);
+    return true;
+  }
+
+  /**
+   * Rename a bell. What the owner reads on the roster, nothing else — the
+   * schedule, the owner and the prompt are untouched. Empty hands back the
+   * generated name. (Aerie.)
+   */
+  setTaskLabel(wakeType: string, label: string): boolean {
+    const managed = this.tasks.get(wakeType);
+    if (!managed) return false;
+
+    const key = `cron.${wakeType}.label`;
+    const trimmed = label.trim();
+    if (!trimmed) {
+      deleteConfig(key);
+      const builtin = DEFAULT_TASKS.find((d) => d.wakeType === wakeType);
+      managed.label = builtin?.label || nameFromWakeType(wakeType);
+    } else {
+      setConfig(key, trimmed);
+      managed.label = trimmed;
+    }
+    olog(`${wakeType}: now reads '${managed.label}'`);
     return true;
   }
 
@@ -732,75 +927,336 @@ export class Orchestrator {
     olog(`Failsafe config updated: enabled=${this.failsafeEnabled}, gentle=${this.failsafeGentle}m, concerned=${this.failsafeConcerned}m, emergency=${this.failsafeEmergency}m`);
   }
 
-  // --- Custom routine management ---
+  // --- Owner-made bells ---
 
-  addRoutine(params: {
+  /**
+   * Make a new bell, live: its own timer in the running process, and enough
+   * persisted to come back on its own after a restart. Validation is what the
+   * phone's form relies on. The label is the owner's name for it, shown with
+   * its time like the built-ins ("9:00 AM — Tea").
+   */
+  createCustomWake(opts: {
     wakeType: string;
-    label: string;
     cronExpr: string;
-    prompt: string;
-  }): boolean {
-    if (this.tasks.has(params.wakeType)) {
-      olog(`ADD ROUTINE FAILED: ${params.wakeType} — already exists`);
-      return false;
+    label?: string;
+    prompt?: string;
+    companion?: string | null;
+  }): { ok: true } | { ok: false; error: string } {
+    const wakeType = (opts.wakeType || '').trim();
+    const cronExpr = (opts.cronExpr || '').trim();
+    const prompt = (opts.prompt || '').trim();
+    if (!CUSTOM_WAKE_TYPE_RE.test(wakeType)) {
+      return { ok: false, error: 'A bell needs a plain name — letters, numbers and underscores.' };
+    }
+    if (!cronExpr || !cron.validate(cronExpr)) {
+      return { ok: false, error: `'${cronExpr}' is not a valid cron expression.` };
+    }
+    // The prompt is what the woken session actually reads. Without one the
+    // timer fires into 'Unknown wake type' forever.
+    if (!prompt) {
+      return { ok: false, error: 'A bell needs something to say — write its prompt.' };
+    }
+    if (isReservedWakeTypeName(wakeType)) {
+      return { ok: false, error: `'${wakeType}' is a reserved name — the house already uses it. Pick another name.` };
+    }
+    if (this.tasks.has(wakeType)) {
+      return { ok: false, error: `There is already a bell called '${wakeType}'.` };
+    }
+    const owners = parseBellOwners(opts.companion);
+    const unknownOwner = owners.find((slug) => !companionExists(slug));
+    if (unknownOwner) {
+      return { ok: false, error: `No companion with the slug '${unknownOwner}'.` };
     }
 
-    if (!cron.validate(params.cronExpr)) {
-      olog(`ADD ROUTINE FAILED: ${params.wakeType} — invalid cron: ${params.cronExpr}`);
-      return false;
+    const label = (opts.label || '').trim() || nameFromWakeType(wakeType);
+
+    setConfig(`cron.${wakeType}.schedule`, cronExpr);
+    setConfig(`cron.${wakeType}.enabled`, 'true');
+    setConfig(`cron.${wakeType}.label`, label);
+    setConfig(`cron.${wakeType}.prompt`, prompt);
+    if (owners.length > 0) setConfig(`cron.${wakeType}.companion`, owners.join(','));
+    saveCustomWakeTypes([...listCustomWakeTypes(), wakeType]);
+
+    this.registerCustomBell(wakeType, label, cronExpr, true);
+    this.applyCustomBellPrompts();
+
+    olog(`NEW BELL: ${wakeType} -> ${cronExpr}${owners.length ? ` (${owners.join(', ')})` : ' (shared)'}`);
+    return { ok: true };
+  }
+
+  /**
+   * Take a bell back out. Only ones the owner made — the built-ins turn off
+   * rather than disappear, so there is always a way back to them.
+   */
+  deleteCustomWake(wakeType: string): { ok: true } | { ok: false; error: string } {
+    const managed = this.tasks.get(wakeType);
+    const persisted = listCustomWakeTypes();
+    if (!managed && !persisted.includes(wakeType)) {
+      return { ok: false, error: 'No bell by that name.' };
+    }
+    if (managed && !managed.custom) {
+      return { ok: false, error: 'That bell came with the house — turn it off instead of removing it.' };
     }
 
-    const config = getBytelightConfig();
-    const handler = () => {
-      this.handleWake(params.wakeType);
-    };
+    if (managed) {
+      managed.task.stop();
+      this.tasks.delete(wakeType);
+    }
+    delete this.wakePrompts[wakeType];
+    for (const suffix of ['schedule', 'enabled', 'label', 'companion', 'prompt']) {
+      deleteConfig(`cron.${wakeType}.${suffix}`);
+    }
+    saveCustomWakeTypes(persisted.filter((t) => t !== wakeType));
+    olog(`BELL REMOVED: ${wakeType}`);
+    return { ok: true };
+  }
 
-    const task = cron.schedule(params.cronExpr, handler, {
-      timezone: config.identity.timezone,
-    });
+  isCustomWake(wakeType: string): boolean {
+    return this.tasks.get(wakeType)?.custom === true;
+  }
 
-    this.tasks.set(params.wakeType, {
-      task,
-      cronExpr: params.cronExpr,
-      handler,
-      wakeType: params.wakeType,
-      label: params.label,
-      enabled: true,
-      category: 'routine',
-      lastFiredMinute: '',
-    });
-
-    // Persist to DB
-    setConfig(`custom_routine.${params.wakeType}.label`, params.label);
-    setConfig(`custom_routine.${params.wakeType}.cronExpr`, params.cronExpr);
-    setConfig(`custom_routine.${params.wakeType}.prompt`, params.prompt);
-
-    olog(`ROUTINE ADDED: ${params.wakeType} (${params.cronExpr}) — "${params.label}"`);
+  /** Rewrite an owner-made bell's prompt in the settings table; live on the next ring. */
+  setCustomWakePrompt(wakeType: string, prompt: string): boolean {
+    if (!this.isCustomWake(wakeType) || !prompt.trim()) return false;
+    setConfig(`cron.${wakeType}.prompt`, prompt);
+    this.applyCustomBellPrompts();
+    olog(`BELL PROMPT UPDATED: ${wakeType}`);
     return true;
   }
 
-  removeRoutine(wakeType: string): boolean {
-    const managed = this.tasks.get(wakeType);
-    if (!managed) return false;
+  private registerCustomBell(wakeType: string, label: string, cronExpr: string, enabled: boolean): void {
+    const handler = () => { this.handleWake(wakeType); };
+    const task = this.scheduleBell(wakeType, cronExpr, handler);
+    if (!enabled) task.stop();
+    this.tasks.set(wakeType, {
+      task,
+      cronExpr,
+      handler,
+      wakeType,
+      label,
+      enabled,
+      // 'wake' so the phone's Wakes list shows it beside the house's own.
+      category: 'wake',
+      custom: true,
+    });
+  }
 
-    // Only allow removal of custom routines, not defaults
-    const isDefault = DEFAULT_TASKS.some(t => t.wakeType === wakeType);
-    if (isDefault) {
-      olog(`REMOVE ROUTINE FAILED: ${wakeType} — cannot remove default task (use disable instead)`);
-      return false;
+  /**
+   * Bring owner-made bells back at boot. The list is `cron.custom.types`.
+   *
+   * Adapted (the owner's call, 2026-10-20): a bell this house made before it
+   * kept that list — a saved `cron.<wakeType>.schedule` that names no built-in
+   * and has a prompt to say — is adopted into the list rather than left
+   * silent, so bells made on an earlier build ring again.
+   */
+  private loadCustomBells(): void {
+    let all: Record<string, string>;
+    try {
+      all = getAllConfig();
+    } catch (err) {
+      olog(`custom bells: could not read settings — ${errMessage(err)}`);
+      return;
+    }
+    const listed = listCustomWakeTypes();
+    const adopted: string[] = [];
+    for (const key of Object.keys(all)) {
+      const match = key.match(/^cron\.(\w+)\.schedule$/);
+      if (!match) continue;
+      const wakeType = match[1];
+      if (listed.includes(wakeType) || this.tasks.has(wakeType)) continue;
+      const hasPrompt = Boolean((all[`cron.${wakeType}.prompt`] || '').trim() || this.wakePrompts[wakeType]);
+      if (!hasPrompt || isReservedWakeTypeName(wakeType)) continue;
+      adopted.push(wakeType);
+    }
+    if (adopted.length > 0) {
+      saveCustomWakeTypes([...listed, ...adopted]);
+      olog(`custom bells: adopted ${adopted.join(', ')} from saved schedules`);
     }
 
-    managed.task?.stop();
-    this.tasks.delete(wakeType);
+    for (const wakeType of [...listed, ...adopted]) {
+      if (isReservedWakeTypeName(wakeType)) {
+        olog(`custom bell '${wakeType}' SKIPPED — that name is reserved for a built-in wake`);
+        continue;
+      }
+      if (this.tasks.has(wakeType)) {
+        olog(`custom bell '${wakeType}' SKIPPED — a wake with that name is already registered`);
+        continue;
+      }
+      const cronExpr = all[`cron.${wakeType}.schedule`] || '';
+      if (!cron.validate(cronExpr)) {
+        olog(`custom bell '${wakeType}' SKIPPED — '${cronExpr}' is not a valid cron expression`);
+        continue;
+      }
+      if (!(all[`cron.${wakeType}.prompt`] || '').trim() && !this.wakePrompts[wakeType]) {
+        olog(`custom bell '${wakeType}' SKIPPED — it has no prompt`);
+        continue;
+      }
+      const label = (all[`cron.${wakeType}.label`] || '').trim() || nameFromWakeType(wakeType);
+      const enabled = getConfigBool(`cron.${wakeType}.enabled`, true);
+      this.registerCustomBell(wakeType, label, cronExpr, enabled);
+      olog(`custom bell '${wakeType}' registered: ${cronExpr}${enabled ? '' : ' (DISABLED)'}`);
+    }
+  }
 
-    deleteConfig(`custom_routine.${wakeType}.label`);
-    deleteConfig(`custom_routine.${wakeType}.cronExpr`);
-    deleteConfig(`custom_routine.${wakeType}.prompt`);
-    deleteConfig(`cron.${wakeType}.schedule`);
-    deleteConfig(`cron.${wakeType}.enabled`);
+  /**
+   * A made bell's stored prompt (the text the owner typed) wins over a
+   * same-named prompts-file section; without one, the file section stands.
+   */
+  private applyCustomBellPrompts(): void {
+    let userName = 'the user';
+    try { userName = getBytelightConfig().identity.user_name; } catch { /* config not loaded */ }
+    for (const [wakeType, managed] of this.tasks) {
+      if (!managed.custom) continue;
+      const stored = getConfig(`cron.${wakeType}.prompt`);
+      if (stored && stored.trim()) {
+        this.wakePrompts[wakeType] = `${WAKE_PROMPT_PREFIX}\n\n${stored.replace(/\{user_name\}/g, userName)}`;
+      }
+    }
+  }
 
-    olog(`ROUTINE REMOVED: ${wakeType}`);
-    return true;
+  // --- Spontaneous ("dice") wakes ---
+  //
+  // Scheduled wakes are expectation; these are the opposite. Each day the
+  // scheduler rolls 0..max fire times at random inside the window — nobody,
+  // including the companions, knows when (or whether) one lands until it does.
+
+  getSpontaneousConfig(): { enabled: boolean; maxPerDay: number; windowStart: number; windowEnd: number; pendingToday: number } {
+    return {
+      enabled: getConfigBool('spontaneous.enabled', false),
+      maxPerDay: getConfigNumber('spontaneous.max_per_day', 2),
+      windowStart: getConfigNumber('spontaneous.window_start', 10),
+      windowEnd: getConfigNumber('spontaneous.window_end', 26),
+      pendingToday: this.spontaneousTimers.length,
+    };
+  }
+
+  setSpontaneousConfig(config: { enabled?: boolean; maxPerDay?: number; windowStart?: number; windowEnd?: number }): void {
+    if (config.enabled !== undefined) setConfig('spontaneous.enabled', String(config.enabled));
+    if (config.maxPerDay !== undefined) setConfig('spontaneous.max_per_day', String(config.maxPerDay));
+    if (config.windowStart !== undefined) setConfig('spontaneous.window_start', String(config.windowStart));
+    if (config.windowEnd !== undefined) setConfig('spontaneous.window_end', String(config.windowEnd));
+    const c = this.getSpontaneousConfig();
+    olog(`Spontaneous config updated: enabled=${c.enabled}, maxPerDay=${c.maxPerDay}, window=${c.windowStart}:00-${c.windowEnd}:00`);
+    // The settings changed, so the day genuinely gets re-rolled.
+    this.rollSpontaneousWakes(true);
+  }
+
+  /**
+   * Is it currently inside the do-not-disturb window?
+   *
+   * OFF BY DEFAULT AND OPT-IN (dnd_enabled). dnd_start / dnd_end may already
+   * sit in a database from earlier seeding; simply honouring them would hand a
+   * house quiet hours it never asked for. The window may wrap midnight.
+   */
+  private isWithinDnd(): boolean {
+    if (!getConfigBool('dnd_enabled', false)) return false;
+    const start = getConfig('dnd_start');
+    const end = getConfig('dnd_end');
+    if (!start || !end) return false;
+
+    const toMinutes = (hhmm: string): number | null => {
+      const m = /^(\d{1,2}):(\d{2})$/.exec(hhmm.trim());
+      if (!m) return null;
+      const h = Number(m[1]);
+      const min = Number(m[2]);
+      if (h > 23 || min > 59) return null;
+      return h * 60 + min;
+    };
+
+    const startMin = toMinutes(start);
+    const endMin = toMinutes(end);
+    if (startMin === null || endMin === null || startMin === endMin) return false;
+
+    const t = getLocalTimeComponents(new Date(), getBytelightConfig().identity.timezone);
+    const nowMin = t.hour * 60 + t.minute;
+    return startMin < endMin
+      ? nowMin >= startMin && nowMin < endMin
+      : nowMin >= startMin || nowMin < endMin; // wraps midnight
+  }
+
+  private armSpontaneousTimer(delayMs: number): void {
+    const timer = setTimeout(() => {
+      this.spontaneousTimers = this.spontaneousTimers.filter(t => t !== timer);
+      if (this.isWithinDnd()) { olog('SPONTANEOUS: skipped, inside the do-not-disturb window'); return; }
+      this.handleWake('spontaneous');
+    }, delayMs);
+    // Never let a pending dice roll hold the process open on shutdown.
+    timer.unref?.();
+    this.spontaneousTimers.push(timer);
+  }
+
+  /**
+   * Roll (or restore) today's spontaneous wakes.
+   *
+   * The times are persisted for the day (spontaneous.rolled_for /
+   * spontaneous.rolled_times) and restored on boot, so a restart does not
+   * quietly cancel a moment already scheduled for this afternoon. `force` is
+   * for a genuine re-roll: the settings changed, so the day changes with them.
+   *
+   * The times are stored but never LOGGED — the dice stay secret, which is the
+   * whole point of a spontaneous wake.
+   */
+  private rollSpontaneousWakes(force = false): void {
+    for (const t of this.spontaneousTimers) clearTimeout(t);
+    this.spontaneousTimers = [];
+
+    if (!getConfigBool('spontaneous.enabled', false)) return;
+
+    const timezone = getBytelightConfig().identity.timezone;
+    const now = new Date();
+    const today = spontaneousDayFor(timezone, now);
+
+    if (!force && getConfig('spontaneous.rolled_for') === today) {
+      let stored: number[] = [];
+      try { stored = JSON.parse(getConfig('spontaneous.rolled_times') || '[]'); } catch { stored = []; }
+      const future = stored.filter((at) => typeof at === 'number' && at > Date.now());
+      for (const at of future) this.armSpontaneousTimer(at - Date.now());
+      olog(`SPONTANEOUS: ${future.length} wake(s) still standing from today's roll`);
+      return;
+    }
+    const maxPerDay = Math.max(0, getConfigNumber('spontaneous.max_per_day', 2));
+    // Window in hours-of-day; end may run past midnight (26 = 2 AM next day)
+    const windowStart = getConfigNumber('spontaneous.window_start', 10);
+    const windowEnd = getConfigNumber('spontaneous.window_end', 26);
+
+    const count = Math.floor(Math.random() * (maxPerDay + 1)); // 0..max inclusive
+    if (count === 0) {
+      setConfig('spontaneous.rolled_for', today);
+      setConfig('spontaneous.rolled_times', '[]');
+      olog('SPONTANEOUS: dice rolled 0 for today');
+      return;
+    }
+
+    // Minutes since the start of the spontaneous day's calendar date: before
+    // 03:00 it is still yesterday, so the hour counts past 24.
+    const local = getLocalTimeComponents(now, timezone);
+    const hour = local.hour % 24;
+    const hourOfDay = hour < SPONTANEOUS_DAY_START_HOUR ? hour + 24 : hour;
+    const nowMin = hourOfDay * 60 + local.minute;
+    // Never schedule within the next 30 minutes of a roll — a wake right
+    // after startup reads as scheduled, not spontaneous
+    const startMin = Math.max(windowStart * 60, nowMin + 30);
+    const endMin = windowEnd * 60;
+    if (startMin >= endMin) {
+      // Still mark the day rolled, so the poller does not retry every minute.
+      setConfig('spontaneous.rolled_for', today);
+      setConfig('spontaneous.rolled_times', '[]');
+      olog('SPONTANEOUS: window already passed for today');
+      return;
+    }
+
+    const firesAt: number[] = [];
+    for (let i = 0; i < count; i++) {
+      const targetMin = startMin + Math.floor(Math.random() * (endMin - startMin));
+      const delayMs = (targetMin - nowMin) * 60_000 + Math.floor(Math.random() * 60_000);
+      firesAt.push(Date.now() + delayMs);
+      this.armSpontaneousTimer(delayMs);
+    }
+    // Persisted so a restart restores the day instead of re-rolling it. Stored,
+    // never logged — the dice stay secret.
+    setConfig('spontaneous.rolled_for', today);
+    setConfig('spontaneous.rolled_times', JSON.stringify(firesAt));
+    olog(`SPONTANEOUS: dice rolled ${count} wake(s) for today`);
   }
 
   // --- Pulse config ---
@@ -876,7 +1332,7 @@ export class Orchestrator {
       updateThreadActivity(thread.id, new Date().toISOString(), true);
       olog(`PULSE: responded (${response.length} chars)`);
     } catch (error) {
-      const errMsg = error instanceof Error ? error.message : String(error);
+      const errMsg = errMessage(error);
       olog(`PULSE ERROR: ${errMsg}`);
     }
   }
@@ -889,7 +1345,7 @@ export class Orchestrator {
 
   // --- Core wake handler ---
 
-  private reloadWakePrompts(): void {
+  reloadWakePrompts(): void {
     const config = getBytelightConfig();
     const userName = config.identity.user_name;
     const loadedPrompts = parseWakePromptsFile(config.orchestrator.wake_prompts_path, userName);
@@ -897,42 +1353,98 @@ export class Orchestrator {
     for (const [key, prompt] of Object.entries(loadedPrompts)) {
       this.wakePrompts[key] = `${WAKE_PROMPT_PREFIX}\n\n${prompt}`;
     }
+    this.applyCustomBellPrompts();
+  }
+
+  /**
+   * Effective editable prompt body per wake type, with source attribution
+   * (a `## key` block in wake.md overrides the built-in default). The body
+   * is the raw section text — the shared WAKE_PROMPT_PREFIX is intentionally
+   * not included, since that preamble is not user-editable.
+   *
+   * Owner-made bells report their settings-table prompt as an override
+   * (source 'file', no default to reset to) and carry `custom: true`, so
+   * editors treat them as hers. An overridden built-in also carries its
+   * built-in text as `defaultPrompt` for side-by-side comparison.
+   */
+  getWakePromptReport(): {
+    prompts: Array<{
+      wakeType: string;
+      body: string;
+      source: 'file' | 'default';
+      hasDefault: boolean;
+      defaultPrompt: string | null;
+      custom: boolean;
+    }>;
+    unusedSections: Array<{ key: string; body: string }>;
+  } {
+    const config = getBytelightConfig();
+    const userName = config.identity.user_name;
+    const path = config.orchestrator.wake_prompts_path;
+
+    const defaults = getDefaultWakePrompts(userName);
+    const effective = parseWakePromptsFile(path, userName); // defaults merged with file overrides
+    const fileRaw = existsSync(path) ? readFileSync(path, 'utf-8') : '';
+    const fileSections = parseWakeSections(fileRaw).sections;
+    const fileKeys = new Set(fileSections.map((s) => s.key));
+
+    // Every wake type a bell or a built-in default answers to.
+    const keys = new Set<string>([...Object.keys(defaults), ...this.tasks.keys()]);
+
+    const prompts = [...keys].sort().map((wakeType) => {
+      if (this.isCustomWake(wakeType)) {
+        return {
+          wakeType,
+          // Its own stored prompt, else the prompts-file section it rings with.
+          body: getConfig(`cron.${wakeType}.prompt`) ?? effective[wakeType] ?? '',
+          source: 'file' as const,
+          hasDefault: false,
+          defaultPrompt: null,
+          custom: true,
+        };
+      }
+      const source = (fileKeys.has(wakeType) ? 'file' : 'default') as 'file' | 'default';
+      return {
+        wakeType,
+        body: effective[wakeType] ?? '',
+        source,
+        hasDefault: wakeType in defaults,
+        defaultPrompt: source === 'file' ? defaults[wakeType] ?? null : null,
+        custom: false,
+      };
+    });
+
+    // File sections that no bell or built-in reads — surfaced so the operator
+    // can spot orphaned text rather than have it silently ignored. (A manual
+    // wake by that exact name still reads them.)
+    const unusedSections = fileSections
+      .filter((section) => !keys.has(section.key))
+      .map((section) => ({ key: section.key, body: section.body }))
+      .sort((a, b) => a.key.localeCompare(b.key));
+
+    return { prompts, unusedSections };
   }
 
   private async handleWake(
     wakeType: string,
     opts?: { freshSession?: boolean }
   ): Promise<void> {
-    // Hot-reload wake prompts on every wake so edits to wake.md take effect immediately
-    this.reloadWakePrompts();
-
+    // Prompts are reloaded when they are edited (the prompt routes call
+    // reloadWakePrompts), not re-read from disk on every ring. (Aerie.)
     const prompt = this.wakePrompts[wakeType];
     if (!prompt) {
       olog(`ERROR: Unknown wake type: ${wakeType}`);
       return;
     }
 
-    // If agent is busy, retry up to 5 times (30s apart) before giving up
+    // A busy agent no longer means retry-and-skip: processAutonomous queues
+    // the wake at lowest priority with a 30-minute window, so it waits its
+    // turn behind live conversation. (Aerie.)
     if (this.agent.isProcessing()) {
-      const maxRetries = 5;
-      const retryDelay = 30_000; // 30 seconds
-      olog(`${wakeType} — agent busy, will retry (up to ${maxRetries} attempts)`);
-      let attempt = 0;
-      const retryTimer = setInterval(() => {
-        attempt++;
-        if (!this.agent.isProcessing()) {
-          clearInterval(retryTimer);
-          olog(`${wakeType} — agent free after ${attempt} retries, firing`);
-          this.fireWake(wakeType, opts);
-        } else if (attempt >= maxRetries) {
-          clearInterval(retryTimer);
-          olog(`${wakeType} — skipped after ${maxRetries} retries (agent still busy)`);
-        }
-      }, retryDelay);
-      return;
+      olog(`${wakeType} — agent busy, queueing behind current turn`);
     }
 
-    this.fireWake(wakeType, opts);
+    await this.fireWake(wakeType, opts);
   }
 
   private async fireWake(
@@ -950,11 +1462,26 @@ export class Orchestrator {
     const wakeStartedAt = new Date().toISOString();
     let targetThreadId: string | null = null;
 
+    // The bell's status word, when it has one, is up for as long as its turn
+    // runs (services/bell-status.ts, Aerie), and comes down however the turn ends.
+    let endStatusWord: (() => void) | null = null;
+    // Set once this bell split the lanes, so the finally below always rejoins
+    // them, even when a companion's turn throws.
+    let splitForBell = false;
     try {
       // Fire into the routing thread ("Home") — wakes follow the pinned
-      // routing pointer instead of creating daily threads (reference implementation port,
+      // routing pointer instead of creating daily threads (Thornvale port,
       // mirroring their resolveWakeTargets fallback).
-      const thread = resolveRoutingThread('wake', registry);
+      // The treehouse bell ignores the routing pointer — it always lands in the
+      // treehouse, where both companions are members (Aerie's isTreehouseWake).
+      const isTreehouseWake = wakeType === 'treehouse_midday';
+      const thread = isTreehouseWake
+        ? (getThread(getTreehouseThread().id) ?? resolveRoutingThread('wake', registry))
+        : resolveRoutingThread('wake', registry);
+      if (isTreehouseWake && thread.type !== 'treehouse') {
+        olog(`SKIP: ${wakeType} — the treehouse could not be opened; not ringing it in ${thread.name}`);
+        return;
+      }
       targetThreadId = thread.id;
 
       // Fresh session: clear session on existing thread (don't create duplicate)
@@ -972,77 +1499,131 @@ export class Orchestrator {
         }
       }
 
-      // Fire the autonomous query. Owner acceptance law: every wake must
-      // produce visible proof of life. Zero characters is a failed attempt,
-      // never a successful silent completion, so force one narrow closing
-      // retry before recording a durable failure receipt.
-      const result = await runWakeWithProof(wakeType, (retryPrompt) =>
-        this.agent.processAutonomous(thread.id, retryPrompt ?? prompt));
-      const response = result.response;
+      // Every wake carries its outcome contract: land a visible line (or, for
+      // the dice, a picture). The house's own prompt text is left intact above it.
+      const fullPrompt = `${prompt}\n\n${wakeOutcomeContract(wakeType)}`;
 
-      if (!response.trim()) {
-        const attempts = getMessages({ threadId: thread.id, since: wakeStartedAt, limit: 200 });
-        const toolsRecorded = wakeMessagesHaveToolEvidence(attempts);
-        const now = new Date().toISOString();
-        const failureMessage = createMessage({
-          id: crypto.randomUUID(),
-          threadId: thread.id,
-          role: 'companion',
-          content: [
-            `⚠️ **Wake failed: ${wakeType}**`,
-            '',
-            'The wake ran twice but produced zero visible characters.',
-            `Tool activity: ${toolsRecorded ? 'recorded in this wake trail' : 'none recorded'}.`,
-            'This is a failed wake, not a completed one.',
-          ].join('\n'),
-          metadata: {
-            source: 'wake_failure',
-            wakeType,
-            attempts: 2,
-            toolsRecorded,
+      // Owned bells (Aerie): a bell that belongs to companions rings in each
+      // owner's own lane, as him. Several owners answer in turn, each later
+      // one handed what the earlier ones said.
+      let owners = this.bellOwners(wakeType);
+      // A treehouse bell nobody handed to anyone belongs to everyone who lives
+      // there, so both companions speak in turn — each in his own lane, each
+      // later one handed what the earlier one said (ringBellInTurn).
+      if (isTreehouseWake && owners.length === 0) owners = treehouseMembers();
+      endStatusWord = bellStatus().begin(wakeType, owners.map((o) => o.slug));
+      if (owners.length > 1) {
+        olog(`${wakeType}: ringing in ${owners.map((o) => o.slug).join(', ')}'s own lanes, in turn`);
+        this.splitLanesForBell(wakeType);
+        splitForBell = true;
+        const spoken = await ringBellInTurn(
+          owners,
+          async (owner, soFar, extra) => {
+            const turn = (await this.agent.processAutonomous(thread.id, fullPrompt + sameBellBlock(soFar) + extra, owner.slug)).trim();
+            if (turn === QUEUE_TIMEOUT_MESSAGE) {
+              olog(`TIMEOUT: ${wakeType} waited out its queue window at ${owner.slug}`);
+              return null;
+            }
+            return turn || null;
           },
-          createdAt: now,
-        });
-        updateThreadActivity(thread.id, now, true);
-        registry.broadcast({ type: 'message', message: failureMessage });
-        olog(`FAILED: ${wakeType} — zero-character result after proof-of-life retry; receipt persisted`);
+          (caller, target, n) => olog(`${wakeType}: ${caller.slug} called ${target.slug} back by name (${n} of ${MAX_BELL_RECALLS})`),
+        );
+        if (spoken.length > 0) updateThreadActivity(thread.id, new Date().toISOString(), true);
+        olog(`DONE: ${wakeType} (${spoken.length} of ${owners.length} answered)`);
         return;
       }
+      if (owners.length === 1) olog(`${wakeType}: ringing in ${owners[0].slug}'s own lane`);
+      const response = await this.agent.processAutonomous(thread.id, fullPrompt, owners[0]?.slug);
 
-      // Update thread activity
-      updateThreadActivity(thread.id, new Date().toISOString(), true);
-
-      olog(`DONE: ${wakeType} (${response.length} chars${result.attempts === 2 ? ', recovered on proof retry' : ''})`);
-    } catch (error) {
-      const errMsg = error instanceof Error ? error.message : String(error);
-      if (targetThreadId) {
-        const now = new Date().toISOString();
-        const attempts = getMessages({ threadId: targetThreadId, since: wakeStartedAt, limit: 200 });
-        const toolsRecorded = wakeMessagesHaveToolEvidence(attempts);
-        const failureMessage = createMessage({
-          id: crypto.randomUUID(),
-          threadId: targetThreadId,
-          role: 'companion',
-          content: [
-            `⚠️ **Wake failed: ${wakeType}**`,
-            '',
-            `The wake stopped with an error: ${errMsg}`,
-            `Tool activity: ${toolsRecorded ? 'recorded in this wake trail' : 'none recorded'}.`,
-            'This is a failed wake, not a completed one.',
-          ].join('\n'),
-          metadata: {
-            source: 'wake_failure',
-            wakeType,
-            toolsRecorded,
-            error: errMsg,
-          },
-          createdAt: now,
-        });
-        updateThreadActivity(targetThreadId, now, true);
-        registry.broadcast({ type: 'message', message: failureMessage });
+      // Outcomes are logged, never posted into the chat (Aerie): a wake that
+      // could not run must not bury the conversation in failure cards.
+      if (response.trim() === QUEUE_TIMEOUT_MESSAGE) {
+        olog(`TIMEOUT: ${wakeType} waited out its queue window and was dropped`);
+      } else if (response.trim()) {
+        updateThreadActivity(thread.id, new Date().toISOString(), true);
+        olog(`DONE: ${wakeType} (${response.length} chars)`);
+      } else {
+        olog(`DONE: ${wakeType} (passed in silence)`);
       }
-      olog(`ERROR: ${wakeType} failed — ${errMsg}`);
+    } catch (error) {
+      olog(`ERROR: ${wakeType} failed — ${errMessage(error)}`);
+    } finally {
+      endStatusWord?.();
+      if (splitForBell) {
+        try {
+          this.rejoinLanesAfterBell(wakeType);
+        } catch (error) {
+          olog(`ERROR: ${wakeType} could not rejoin the lanes — ${errMessage(error)}`);
+        }
+      }
     }
+  }
+
+  /**
+   * A bell's status word (services/bell-status.ts, Aerie): what the phone says
+   * under the faces while its turn runs. Null or empty takes it away. False for
+   * a bell the house does not have.
+   */
+  setTaskStatusWord(wakeType: string, word: string | null): boolean {
+    if (!this.tasks.has(wakeType)) return false;
+    const kept = statusWordOf(word);
+    if (kept) setConfig(statusWordKey(wakeType), kept);
+    else deleteConfig(statusWordKey(wakeType));
+    olog(`${wakeType}: status word ${kept ? `'${kept}'` : 'cleared'}`);
+    return true;
+  }
+
+  /** Whether a bell has more than one owner. */
+  private isSplitBell(wakeType: string): boolean {
+    return parseBellOwners(getConfig(`cron.${wakeType}.companion`)).length > 1;
+  }
+
+  /**
+   * Turn A Lane Each on for a several-owner bell when the owner has asked for
+   * that (orchestrator.bells_split_lanes) and it is off (bell-lanes.ts, Aerie).
+   *
+   * BYTE-LIGHT ADAPTATION: byte-light's bells already ring in each owner's own
+   * lane whatever the switch says (AgentService.wakeLaneFor), and it has no
+   * lane keeper to warm, so Aerie's ensureCompanionLanes + warm-wait is left
+   * out; the flip only shapes the interactive turns around the bell. And the
+   * switch keeps byte-light's lock: it is never turned on while a companion
+   * is missing a bio (the same rule the Preferences route enforces).
+   */
+  private splitLanesForBell(wakeType: string): void {
+    const decision = laneSwitchBefore({
+      splitLanes: getConfigBool(BELLS_SPLIT_LANES_KEY, false),
+      multiLane: getConfig('agent.multi_lane') === 'true',
+    });
+    if (decision !== 'turn_on') return;
+    if (!roomBiosReady().ready) {
+      olog(`${wakeType}: would turn A Lane Each on for this bell, but a companion is missing a bio — left off`);
+      return;
+    }
+    setConfig('agent.multi_lane', 'true');
+    setConfig(LANES_BY_BELL_KEY, 'true');
+    olog(`${wakeType}: turned A Lane Each on for this bell`);
+  }
+
+  /** After a bell: switch back off if a bell turned it on and none is due soon. (Aerie.) */
+  private rejoinLanesAfterBell(wakeType: string): void {
+    let next: Date | null = null;
+    for (const [, managed] of this.tasks) {
+      if (!managed.enabled || managed.wakeType === wakeType || !this.isSplitBell(managed.wakeType)) continue;
+      try {
+        const at = managed.task.getNextRun();
+        if (at && (!next || at < next)) next = at;
+      } catch { /* no next run known */ }
+    }
+    const decision = laneSwitchAfter({
+      turnedOnByBell: getConfigBool(LANES_BY_BELL_KEY, false),
+      multiLane: getConfig('agent.multi_lane') === 'true',
+      nextSplitBellAt: next,
+      now: new Date(),
+    });
+    if (decision !== 'turn_off') return;
+    setConfig('agent.multi_lane', 'false');
+    setConfig(LANES_BY_BELL_KEY, 'false');
+    olog(`${wakeType}: last split bell for a while — A Lane Each back off`);
   }
 
   // --- Handoff ---
@@ -1135,28 +1716,6 @@ export class Orchestrator {
 
     setConfig('session.handoff_note', handoff);
     olog(`night_close: handoff written from ${threadNames.length} thread(s): ${threadNames.join(', ')} (${digestEntries.length} messages)`);
-  }
-
-  // --- Schedule polling (replaces node-cron setTimeout chains) ---
-
-  private checkSchedules(timezone: string): void {
-    const now = new Date();
-    const minuteKey = now.toISOString().substring(0, 16); // e.g. "2026-03-30T11:30"
-
-    for (const [, managed] of this.tasks) {
-      if (!managed.enabled) continue;
-      if (managed.lastFiredMinute === minuteKey) continue;
-
-      try {
-        if (cronMatchesNow(managed.cronExpr, now, timezone)) {
-          managed.lastFiredMinute = minuteKey;
-          olog(`CRON MATCH: ${managed.wakeType}`);
-          managed.handler();
-        }
-      } catch (err) {
-        olog(`CRON ERROR: ${managed.wakeType} — ${(err as Error).message}`);
-      }
-    }
   }
 
   // --- Failsafe ---
@@ -1252,7 +1811,7 @@ export class Orchestrator {
           }
         }
       } catch (error) {
-        const errMsg = error instanceof Error ? error.message : String(error);
+        const errMsg = errMessage(error);
         olog(`TIMER ERROR: "${timer.label}" — ${errMsg}`);
       }
     }
@@ -1284,6 +1843,11 @@ export class Orchestrator {
       statusText = await fetchLifeStatus();
     }
 
+    // Her status, for status_clears: Busy or Away is "away"; clear or Here is not.
+    const owner = getOwnerStatus(now);
+    const ownerAway = owner?.presence === 'busy' || owner?.presence === 'away';
+    const quietForIntentions = this.intentionQuietNow(localHour, localMinute);
+
     const ctx: TriggerContext = {
       presenceNow,
       presencePrev: this.lastUserPresenceState,
@@ -1291,10 +1855,16 @@ export class Orchestrator {
       statusText,
       hour: localHour,
       minute: localMinute,
+      nowMs: now.getTime(),
+      ownerAway,
     };
 
     for (const trigger of triggers) {
       try {
+        // A promise doesn't come due inside the intentions' quiet hours; it
+        // stays where it is until they end.
+        if (quietForIntentions && getIntentionForTrigger(trigger.id)) continue;
+
         if (trigger.status === 'waiting') {
           // Waiting triggers: conditions already met, just need agent free
           if (agentFree) {
@@ -1305,6 +1875,14 @@ export class Orchestrator {
 
         // Pending triggers: evaluate conditions
         const conditions: TriggerCondition[] = JSON.parse(trigger.conditions);
+
+        // status_clears arms itself the first time it sees her Busy or Away,
+        // and the arming is written back so a restart doesn't lose it.
+        if (ownerAway && conditions.some(c => c.type === 'status_clears' && !c.armed)) {
+          for (const c of conditions) if (c.type === 'status_clears') c.armed = true;
+          updateTriggerConditions(trigger.id, conditions);
+          continue;
+        }
 
         // Watchers: check cooldown
         if (trigger.kind === 'watcher' && trigger.last_fired_at) {
@@ -1326,13 +1904,91 @@ export class Orchestrator {
           }
         }
       } catch (error) {
-        const errMsg = error instanceof Error ? error.message : String(error);
+        const errMsg = errMessage(error);
         olog(`TRIGGER ERROR: "${trigger.label}" — ${errMsg}`);
       }
     }
 
     // Update presence state at end of tick
     this.lastUserPresenceState = presenceNow;
+  }
+
+  /** Inside the intentions' quiet hours (3–9 AM unless changed), house time. */
+  private intentionQuietNow(hour?: number, minute?: number): boolean {
+    const { quietStart, quietEnd } = intentionSettings();
+    if (hour === undefined || minute === undefined) {
+      const now = new Date();
+      const timezone = getBytelightConfig().identity.timezone;
+      hour = parseInt(now.toLocaleString('en-GB', { timeZone: timezone, hour: '2-digit', hour12: false }));
+      minute = parseInt(now.toLocaleString('en-GB', { timeZone: timezone, minute: '2-digit' }));
+    }
+    return inQuietWindow(quietStart, quietEnd, hour % 24, minute);
+  }
+
+  /** Where a promise is said: its own thread, else Home. A daily thread goes
+   *  to Home, the way triggers do. */
+  private intentionThread(intention: Intention, trigger: Trigger | null): string {
+    const id = intention.threadId ?? trigger?.thread_id ?? null;
+    const thread = id ? getThread(id) : null;
+    if (thread && thread.type !== 'daily') return thread.id;
+    return resolveRoutingThread('wake', registry).id;
+  }
+
+  /** The moment a promise comes due: the promiser says it, in his own lane. */
+  private async fireIntention(intention: Intention, trigger: Trigger, now: Date): Promise<void> {
+    const threadId = this.intentionThread(intention, trigger);
+    const startedAt = now.toISOString();
+    try {
+      const userName = getBytelightConfig().identity.user_name;
+      const response = await this.agent.processAutonomous(threadId, intentionPrompt(intention, userName, now), intention.companion);
+      const said = companionMessageSince(threadId, startedAt);
+      if (!said || !response || response === QUEUE_TIMEOUT_MESSAGE) {
+        // Nothing reached her: back in line for the next tick.
+        markPendingAgain(intention.id);
+        rearmTrigger(trigger.id);
+        olog(`INTENTION NOT SAID: "${intention.text.slice(0, 60)}" — back in line`);
+        return;
+      }
+      markAsked(intention.id, threadId, said);
+      updateThreadActivity(threadId, new Date().toISOString(), true);
+      olog(`INTENTION SAID: ${intention.companion} — "${intention.text.slice(0, 60)}"`);
+    } catch (error) {
+      markPendingAgain(intention.id);
+      rearmTrigger(trigger.id);
+      olog(`INTENTION FIRE ERROR: "${intention.text.slice(0, 60)}" — ${errMessage(error)}`);
+    }
+  }
+
+  /** Every tick: close what she answered, nudge once what she didn't, rest the rest. */
+  private async checkIntentions(): Promise<void> {
+    // A nudge can outlast the 60s tick; the next tick must not nudge again.
+    if (this.intentionsBusy) return;
+    this.intentionsBusy = true;
+    try {
+      const settings = intentionSettings();
+      const now = new Date();
+      const items = followUps(now, { quiet: this.intentionQuietNow(), nudgeAfterMinutes: settings.nudgeAfterMinutes, restAfterMinutes: settings.restAfterMinutes });
+      for (const item of items) {
+        if (item.kind === 'answered') olog(`INTENTION ANSWERED: "${item.intention.text.slice(0, 60)}"`);
+        if (item.kind === 'rest') olog(`INTENTION RESTING: "${item.intention.text.slice(0, 60)}"`);
+        if (item.kind !== 'nudge' || this.agent.isProcessing()) continue;
+        const i = item.intention;
+        const threadId = this.intentionThread(i, null);
+        const startedAt = now.toISOString();
+        const userName = getBytelightConfig().identity.user_name;
+        const response = await this.agent.processAutonomous(threadId, nudgePrompt(i, userName, now), i.companion);
+        const said = companionMessageSince(threadId, startedAt);
+        if (said && response && response !== QUEUE_TIMEOUT_MESSAGE) {
+          markNudged(i.id, said);
+          updateThreadActivity(threadId, new Date().toISOString(), true);
+          olog(`INTENTION NUDGED: ${i.companion} — "${i.text.slice(0, 60)}"`);
+        }
+      }
+    } catch (error) {
+      olog(`INTENTION CHECK ERROR: ${errMessage(error)}`);
+    } finally {
+      this.intentionsBusy = false;
+    }
   }
 
   private async fireTrigger(trigger: Trigger, now: Date): Promise<void> {
@@ -1347,6 +2003,13 @@ export class Orchestrator {
 
     const kindLabel = trigger.kind === 'impulse' ? 'Impulse' : 'Watcher';
     olog(`TRIGGER FIRED: [${kindLabel}] "${trigger.label}" (fire_count: ${trigger.fire_count + 1})`);
+
+    // A promise riding this impulse is said in its promiser's own voice.
+    const intention = getIntentionForTrigger(trigger.id);
+    if (intention) {
+      if (intention.state === 'pending') await this.fireIntention(intention, trigger, now);
+      return;
+    }
 
     // If no prompt, just log
     if (!trigger.prompt) return;
@@ -1377,7 +2040,7 @@ export class Orchestrator {
       updateThreadActivity(threadId!, nowIso, true);
       olog(`TRIGGER DONE: "${trigger.label}" (${response.length} chars)`);
     } catch (error) {
-      const errMsg = error instanceof Error ? error.message : String(error);
+      const errMsg = errMessage(error);
       olog(`TRIGGER FIRE ERROR: "${trigger.label}" — ${errMsg}`);
     }
   }

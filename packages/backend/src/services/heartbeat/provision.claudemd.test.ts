@@ -36,8 +36,8 @@ const { setBlock, formatBlocksForPrompt, SHARED_SCOPE, COMPANION_SCOPES } =
 const { provisionSessionDir } = await import('./provision.js');
 const { stripCoreMemoryFromOrientation } = await import('./runtime.js');
 
-const SENTINEL_V1 = 'SENTINEL-BLOCK-CONTENT-v1: the operator bartends Thu-Sun.';
-const SENTINEL_V2 = 'SENTINEL-BLOCK-CONTENT-v2: glam call overrides the bar shift.';
+const SENTINEL_V1 = 'SENTINEL-BLOCK-CONTENT-v1: the operator likes tea.';
+const SENTINEL_V2 = 'SENTINEL-BLOCK-CONTENT-v2: the operator prefers mornings.';
 
 const sessionDir = join(tmpRoot, 'session');
 

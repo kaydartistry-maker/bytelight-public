@@ -59,6 +59,29 @@ async function post(endpoint, body, timeoutMs = 10000) {
   }
 }
 
+async function get(endpoint, transform = (j) => j, timeoutMs = 10000) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(`${BASE}/${endpoint}`, { signal: controller.signal });
+    clearTimeout(timer);
+    const text = await res.text();
+    try { console.log(JSON.stringify(transform(JSON.parse(text)), null, 2)); }
+    catch { console.log(text); }
+  } catch (e) {
+    clearTimeout(timer);
+    console.error(e.name === 'AbortError' ? 'Error: request timed out' : `Error: ${e.message}`);
+    process.exit(1);
+  }
+}
+
+// What a place is, never where: her coordinates stay on the house.
+function withoutCoordinates(place) {
+  if (!place || typeof place !== 'object') return place;
+  const { lat, lng, radius_m, ...rest } = place;
+  return rest;
+}
+
 const [,, cmd, ...args] = process.argv;
 const thread = getThread();
 
@@ -420,9 +443,133 @@ switch (cmd) {
     break;
   }
 
+  case 'library': {
+    // Reading along with her. read never goes past her bookmark; notes hang
+    // on exact words from a page she has reached. Chapters are 1-based.
+    const sub = args[0];
+    if (sub === 'status') {
+      await post('library', { action: 'status' });
+    } else if (sub === 'read') {
+      const body = { action: 'read' };
+      if (args[1]) body.bookId = Number(args[1]);
+      if (args[2]) body.chapter = Number(args[2]);
+      await post('library', body);
+    } else if (sub === 'note') {
+      if (!args[1] || !args[2] || !args[3] || !args[4]) {
+        console.log('Usage: sc library note <bookId> <chapter> "<exact quote>" "<your note>" --as <slug>');
+        break;
+      }
+      await post('library', {
+        action: 'note', bookId: Number(args[1]), chapter: Number(args[2]),
+        quote: args[3], note: args[4], author: flagValue(args, '--as') || '',
+      });
+    } else {
+      console.log('Usage: sc library status | read [bookId] [chapter] | note <bookId> <chapter> "<quote>" "<note>" --as <slug>');
+    }
+    break;
+  }
+
+  case 'battleship': {
+    // The Fleet Room. One shot per turn for the whole table.
+    const sub = args[0];
+    if (sub === 'fire') {
+      if (!args[1] || !args[2]) {
+        console.log('Usage: sc battleship fire <gameId> <coordinate> --as <slug>');
+        break;
+      }
+      await post('games/battleship/fire', { gameId: args[1], coordinate: args[2], companion: flagValue(args, '--as') || '' });
+    } else if (sub === 'view') {
+      await get(`games/battleship${args[1] ? `?gameId=${encodeURIComponent(args[1])}` : ''}`);
+    } else {
+      console.log('Usage: sc battleship view [gameId] | fire <gameId> <coordinate> --as <slug>');
+    }
+    break;
+  }
+
+  case 'places': {
+    // Thresholds: her pinned places and what waits at them.
+    const sub = args[0];
+    if (sub === 'list') {
+      await get('thresholds/places', (j) => ({ places: (j.places ?? []).map(withoutCoordinates) }));
+    } else if (sub === 'read') {
+      if (!args[1]) { console.log('Usage: sc places read <placeId>'); break; }
+      await get(`thresholds/${encodeURIComponent(args[1])}`, (j) => ({ ...j, place: withoutCoordinates(j.place) }));
+    } else if (sub === 'leave') {
+      if (!args[1] || !args[2]) {
+        console.log('Usage: sc places leave <placeId> "<note>" --as <slug> [--seal immediate|first_visit|date] [--open-at <ISO>] [--say "<voice note words>"]');
+        break;
+      }
+      const body = { place_id: args[1], content: args[2], author: flagValue(args, '--as') || '' };
+      const seal = flagValue(args, '--seal');
+      const openAt = flagValue(args, '--open-at');
+      const say = flagValue(args, '--say');
+      if (seal) body.seal = seal;
+      if (openAt) body.open_at = openAt;
+      if (say) body.say = say;
+      await post('thresholds', body, 60000);
+    } else {
+      console.log('Usage: sc places list | read <placeId> | leave <placeId> "<note>" --as <slug> [--seal ...] [--say "..."]');
+    }
+    break;
+  }
+
+  case 'intention': {
+    // A promise with a when. It comes back to you when it's due.
+    const sub = args[0];
+    if (sub === 'create') {
+      const text = args[1];
+      const as = flagValue(args, '--as');
+      const at = flagValue(args, '--at');
+      const onStatusClears = args.includes('--when-status-clears');
+      if (!text || !as || (!at && !onStatusClears)) {
+        console.log('Usage: sc intention create "<what you promised>" --as <slug> [--at <ISO time>] [--when-status-clears]');
+        break;
+      }
+      const body = { action: 'create', companion: as, text, threadId: thread || undefined };
+      if (at) body.at = at;
+      if (onStatusClears) body.onStatusClears = true;
+      await post('intention', body);
+    } else if (sub === 'list') {
+      await post('intention', { action: 'list' });
+    } else if (sub === 'cancel') {
+      if (!args[1]) { console.log('Usage: sc intention cancel <id>'); break; }
+      await post('intention', { action: 'cancel', id: args[1] });
+    } else {
+      console.log('Usage: sc intention create "<what you promised>" --as <slug> [--at <ISO time>] [--when-status-clears] | list | cancel <id>');
+    }
+    break;
+  }
+
+  case 'status': {
+    // What shows under your name on her Status widget. No flags = read
+    // everyone's (hers included). An empty value clears that one.
+    const line = flagValue(args, '--line');
+    const mood = flagValue(args, '--mood');
+    if (line === undefined && mood === undefined) {
+      try {
+        const res = await fetch(`${BASE}/status`);
+        console.log(JSON.stringify(await res.json(), null, 2));
+      } catch (e) {
+        console.error(`Error: ${e.message}`);
+        process.exit(1);
+      }
+      break;
+    }
+    const as = flagValue(args, '--as');
+    if (!as) {
+      console.log('Usage: sc status | sc status [--line "<what you\'re up to>"] [--mood "<1-3 words>"] --as <slug>');
+      break;
+    }
+    const body = { companion: as };
+    if (line !== undefined) body.line = line;
+    if (mood !== undefined) body.mood = mood;
+    await post('status', body);
+    break;
+  }
+
   default:
     console.log('sc — bytelight internal API CLI');
-    console.log('Commands: share, canvas, voice, discord, image, schedule, timer, react, star, impulse, watch, tg, search, backfill, memory');
+    console.log('Commands: share, canvas, voice, discord, image, schedule, timer, react, star, impulse, watch, tg, search, backfill, memory, library, battleship, places, status, intention');
     break;
 }
 

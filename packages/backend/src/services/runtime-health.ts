@@ -57,6 +57,12 @@ const SDK_PACKAGE_JSON_PATH = join(
 export const MODEL_MIN_CC: ReadonlyMap<string, string> = new Map<string, string>([
   ['claude-opus-4-7', '2.1.111'],
   ['claude-opus-4-7[1m]', '2.1.111'],
+  // Current generation — the API rejects these below Claude Code 2.1.251
+  // ("version 2.1.251 or newer is required", observed live 2026-10-11).
+  ['claude-fable-5-1', '2.1.251'],
+  ['claude-opus-5-5', '2.1.251'],
+  ['claude-sonnet-5-5', '2.1.251'],
+  ['claude-haiku-5-5', '2.1.251'],
 ]);
 
 /**

@@ -1,19 +1,23 @@
 import 'dotenv/config';
-import { readFileSync } from 'fs';
-import { join, dirname } from 'path';
-import { fileURLToPath } from 'url';
+import { dirname } from 'path';
 import { existsSync, mkdirSync } from 'fs';
-import Database from 'better-sqlite3';
 import { loadConfig } from './config.js';
+import { initDb } from './services/db.js';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
+// Standalone database bootstrap for a fresh install (`npm run db:init`).
+//
+// This MUST go through initDb() — the same runner the server boots with —
+// not read migration files itself. A previous version executed only
+// 001_init.sql and built a database twenty migrations behind: every table
+// added since (stickers, usage, memory, companions, delivery...) was
+// missing, and the first real boot met a half-schema'd file it believed
+// was initialized. Aerie hit the identical trap (her f69b7c7e removed the
+// file outright); we keep the convenience script but route it through the
+// one true runner so it cannot drift again.
 
-// Load config to get DB path
 const config = loadConfig();
 const DB_PATH = config.server.db_path;
 
-// Ensure data directory exists
 const dataDir = dirname(DB_PATH);
 if (!existsSync(dataDir)) {
   mkdirSync(dataDir, { recursive: true });
@@ -22,30 +26,16 @@ if (!existsSync(dataDir)) {
 
 console.log(`Initializing database at: ${DB_PATH}`);
 
-// Open database
-const db = new Database(DB_PATH);
-db.pragma('journal_mode = WAL');
+const db = initDb(DB_PATH);
 
-// Read and execute migration
-const migrationPath = join(__dirname, '../migrations/001_init.sql');
-console.log(`Reading migration from: ${migrationPath}`);
-
-const migrationSQL = readFileSync(migrationPath, 'utf-8');
-db.exec(migrationSQL);
-
-console.log('Migration executed successfully');
-
-// Insert default config
+// Default quiet hours — INSERT OR IGNORE, so an existing row wins.
 const stmt = db.prepare('INSERT OR IGNORE INTO config (key, value) VALUES (?, ?)');
 stmt.run('dnd_start', '23:00');
 stmt.run('dnd_end', '07:00');
 
-console.log('Default config inserted');
-
-// Verify tables
-const tables = db.prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name").all();
-console.log('\nCreated tables:');
-tables.forEach((table: any) => {
+const tables = db.prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name").all() as Array<{ name: string }>;
+console.log(`\n${tables.length} tables present:`);
+tables.forEach(table => {
   console.log(`  - ${table.name}`);
 });
 

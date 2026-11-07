@@ -3,14 +3,11 @@
 import crypto from 'crypto';
 import { getDb } from './db.js';
 import { getBytelightConfig } from '../config.js';
+import { today } from '../util/time.js';
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-function today(): string {
-  return new Date().toLocaleDateString('en-CA', { timeZone: getBytelightConfig().identity.timezone });
-}
 
 function uuid(): string {
   return crypto.randomUUID();
@@ -1228,10 +1225,6 @@ export function addScratchpadNote(text: string, created_by?: string): any {
   const by = created_by || getBytelightConfig().command_center.default_person;
   db.prepare('INSERT INTO scratchpad_notes (id, text, date, created_by) VALUES (?, ?, ?, ?)').run(id, text, today(), by);
   return db.prepare('SELECT * FROM scratchpad_notes WHERE id = ?').get(id);
-}
-
-export function listScratchpadNotes(): any[] {
-  return getDb().prepare('SELECT * FROM scratchpad_notes ORDER BY created_at ASC').all() as any[];
 }
 
 export function updateScratchpadNote(id: string, text: string): any {

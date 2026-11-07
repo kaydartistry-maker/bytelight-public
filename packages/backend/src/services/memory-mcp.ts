@@ -19,6 +19,8 @@ import {
   resolveScope,
   validScopesHint,
 } from './memory-blocks.js';
+import { findNeighborsWithin } from './memory-neighbors.js';
+import { errMessage } from '../util/errors.js';
 
 function ok(payload: unknown) {
   return { content: [{ type: 'text' as const, text: JSON.stringify(payload, null, 2) }] };
@@ -69,7 +71,7 @@ const coreMemoryView = tool(
         })),
       });
     } catch (e) {
-      return fail(e instanceof Error ? e.message : String(e));
+      return fail(errMessage(e));
     }
   }
 );
@@ -87,10 +89,13 @@ const coreMemoryAppend = tool(
   async (args) => {
     try {
       const scope = requireScope(args.scope);
+      // Compare before writing so the new line is not its own nearest match.
+      // Embedding failure never blocks durable memory growth.
+      const neighbors = await findNeighborsWithin(scope, args.content);
       const content = appendToBlock(scope, args.label, args.content, MCP_WRITE);
-      return ok({ scope, label: args.label, action: 'appended', block_chars: content.length });
+      return ok({ scope, label: args.label, action: 'appended', block_chars: content.length, neighbors });
     } catch (e) {
-      return fail(e instanceof Error ? e.message : String(e));
+      return fail(errMessage(e));
     }
   }
 );
@@ -112,7 +117,7 @@ const coreMemoryReplace = tool(
       const content = replaceInBlock(scope, args.label, args.old_text, args.new_text, MCP_WRITE);
       return ok({ scope, label: args.label, action: 'replaced', block_chars: content.length });
     } catch (e) {
-      return fail(e instanceof Error ? e.message : String(e));
+      return fail(errMessage(e));
     }
   }
 );
@@ -133,7 +138,7 @@ const coreMemoryRethink = tool(
       const content = rethinkBlock(scope, args.label, args.new_content, MCP_WRITE);
       return ok({ scope, label: args.label, action: 'rewritten', block_chars: content.length });
     } catch (e) {
-      return fail(e instanceof Error ? e.message : String(e));
+      return fail(errMessage(e));
     }
   }
 );

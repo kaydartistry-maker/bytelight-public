@@ -32,20 +32,23 @@ const BELT_NAMES = [
   'discord_get_server_info', 'discord_list_servers', 'discord_list_emojis', 'discord_list_stickers',
   'send_voice_note', 'generate_image', 'search_messages', 'search_web',
   'core_memory_view', 'core_memory_append', 'core_memory_replace', 'core_memory_rethink',
+  'library_status', 'library_read', 'library_note',
+  'set_intention', 'cancel_intention', 'set_status',
+  'battleship_fire',
 ];
 
 // ── fetch mock ───────────────────────────────────────────────────────
 type FetchCall = { url: string; body: unknown };
 let fetchCalls: FetchCall[] = [];
-let fetchImpl: (url: string, init: { body: string }) => { ok: boolean; status: number; text: string };
+let fetchImpl: (url: string, init: { body?: string }) => { ok: boolean; status: number; text: string };
 const realFetch = globalThis.fetch;
 
 function installFetchMock(): void {
   fetchCalls = [];
   // Default: every internal POST succeeds with an empty JSON object.
   fetchImpl = () => ({ ok: true, status: 200, text: '{}' });
-  (globalThis as { fetch: unknown }).fetch = async (url: string, init: { body: string }) => {
-    fetchCalls.push({ url, body: JSON.parse(init.body) });
+  (globalThis as { fetch: unknown }).fetch = async (url: string, init: { body?: string }) => {
+    fetchCalls.push({ url, body: init?.body ? JSON.parse(init.body) : undefined });
     const r = fetchImpl(url, init);
     return { ok: r.ok, status: r.status, text: async () => r.text } as unknown as Response;
   };
@@ -267,4 +270,17 @@ describe('thread-context isolation (concurrent turns)', () => {
     });
     assert.equal(getBeltContext(), undefined);
   });
+});
+
+describe('games and places', () => {
+  beforeEach(() => installFetchMock());
+  afterEach(() => restoreFetch());
+
+  it('battleship_fire posts one shot to the sealed fire route', async () => {
+    const res = await executeBeltTool('battleship_fire', { gameId: 'g1', companion: 'companion-a', coordinate: 'C5' });
+    assert.equal(res?.ok, true);
+    assert.match(fetchCalls[0].url, /\/api\/internal\/games\/battleship\/fire$/);
+    assert.deepEqual(fetchCalls[0].body, { gameId: 'g1', companion: 'companion-a', coordinate: 'C5' });
+  });
+
 });

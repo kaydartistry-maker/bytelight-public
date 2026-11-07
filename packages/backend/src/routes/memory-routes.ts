@@ -19,7 +19,17 @@
 
 import { Router } from 'express';
 import * as memoryBlocks from '../services/memory-blocks.js';
-import { runMemoryExtraction } from '../services/memory-extraction.js';
+import { getMemoryExtractionStatus, runMemoryExtraction } from '../services/memory-extraction.js';
+import {
+  listProposals,
+  listForOwnerReview,
+  countForOwnerReview,
+  countPending,
+  approveProposalForOwner,
+  rejectProposalForOwner,
+  type ProposalStatus,
+} from '../services/memory-proposals.js';
+import { getBytelightConfig } from '../config.js';
 import { listMemoryLedger, markMemoryLedgerSeen } from '../services/memory-ledger.js';
 import { runMemoryDiet } from '../services/memory-diet.js';
 import { registry } from '../services/registry.js';
@@ -189,6 +199,70 @@ export function createMemoryRoutes(): Router {
     }
     markMemoryLedgerSeen(throughId);
     res.json({ success: true });
+  });
+
+  // Archivist health for the banner on the Memory Blocks screen (Aerie's
+  // routes/memory-blocks.ts). The phone already called this; it 404'd before.
+  router.get('/memory/extraction/status', (_req, res) => {
+    try {
+      res.json(getMemoryExtractionStatus());
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // --- The operator's review of the Archivist's proposals --------------------------
+  //
+  // Every Archivist edit lands in memory_proposals (see memory-proposals.ts).
+  // These routes are the operator's gate: list them, approve one (written onto its
+  // block, closed as 'filed' by her), or reject one ('dropped' by her).
+  // ?status=review (default) is everything nobody has chosen yet — pending
+  // AND faded; any other status, or 'all', lists that slice.
+  const PROPOSAL_STATUSES = new Set(['pending', 'filed', 'dropped', 'faded']);
+  const ownerSlug = () => getBytelightConfig().identity.user_name.trim().toLowerCase() || 'owner';
+
+  router.get('/memory/proposals', (req, res) => {
+    try {
+      const status = typeof req.query.status === 'string' ? req.query.status : 'review';
+      let proposals: ReturnType<typeof listProposals>;
+      if (status === 'review') proposals = listForOwnerReview(200);
+      else if (status === 'all') proposals = listProposals(undefined, 200);
+      else if (PROPOSAL_STATUSES.has(status)) proposals = listProposals(status as ProposalStatus, 200);
+      else {
+        res.status(400).json({ error: "status must be review, all, pending, filed, dropped or faded" });
+        return;
+      }
+      res.json({ success: true, proposals, review: countForOwnerReview(), pending: countPending() });
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  router.post('/memory/proposals/:id/:decision', (req, res) => {
+    const id = parseInt(String(req.params.id), 10);
+    const decision = req.params.decision;
+    if (!Number.isFinite(id) || (decision !== 'approve' && decision !== 'reject')) {
+      res.status(404).json({ error: 'Use POST /memory/proposals/<id>/approve or /reject' });
+      return;
+    }
+    try {
+      const result = decision === 'approve'
+        ? approveProposalForOwner(id, ownerSlug())
+        : rejectProposalForOwner(id, ownerSlug());
+      if (!result.ok) {
+        res.status(result.reason === 'not_found' ? 404 : 409).json({
+          error: result.reason === 'not_found' ? 'No such proposal' : 'Already decided',
+          proposal: result.proposal,
+        });
+        return;
+      }
+      if (decision === 'approve') broadcastBlockUpdated(result.proposal.scope, result.proposal.label);
+      res.json({ success: true, proposal: result.proposal });
+    } catch (err) {
+      // A write that could not apply (e.g. replace text no longer on the
+      // block) leaves the proposal open; say why.
+      res.status(400).json({ error: (err as Error).message });
+    }
   });
 
   // Manually trigger the Archivist — whole sweep, or one thread via { threadId }.

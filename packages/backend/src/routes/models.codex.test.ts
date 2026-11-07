@@ -25,6 +25,7 @@ import assert from 'node:assert/strict';
 import {
   computeCodexAvailability,
   buildCodexCatalogEntries,
+  buildCodexCliCatalogEntries,
   type CodexAvailabilityStatus,
   type ModelInfo,
 } from './models.js';
@@ -33,6 +34,24 @@ import type { CodexAuthSnapshot } from '../services/auth/codex-oauth.js';
 // ─── Helpers ──────────────────────────────────────────────────────────────
 
 const FIXED_NOW = 1_730_000_000_000; // arbitrary fixed clock for determinism
+
+describe('buildCodexCliCatalogEntries — subscription catalog', () => {
+  const entries = buildCodexCliCatalogEntries();
+
+  test('surfaces GPT-6 Astra through the warm Codex CLI lane', () => {
+    const astra = entries.find((entry) => entry.id === 'gpt-6-astra');
+    assert.ok(astra, 'GPT-6 Astra should appear in the Codex CLI catalog');
+    assert.equal(astra.provider, 'codex-cli');
+    assert.equal(astra.runtime, 'codex-cli');
+    assert.equal(astra.tier, 'included');
+    assert.equal(astra.ref, 'codex-cli/gpt-6-astra');
+    assert.equal(astra.supports_tools, true);
+  });
+
+  test('does not leak GPT-6 Astra into the OpenAI OAuth/API catalog', () => {
+    assert.equal(buildCodexCatalogEntries().some((entry) => entry.id === 'gpt-6-astra'), false);
+  });
+});
 
 function snapshot(overrides: Partial<CodexAuthSnapshot> = {}): CodexAuthSnapshot {
   return {

@@ -150,7 +150,7 @@ PM2 doesn't source `.bashrc` automatically. Create an ecosystem config that incl
 cat > ecosystem.config.cjs << 'EOF'
 module.exports = {
   apps: [{
-    name: 'resonant',
+    name: 'bytelight',
     script: 'packages/backend/dist/server.js',
     cwd: '/root/resonant',
     env: {
@@ -279,7 +279,7 @@ Access at `http://YOUR_VPS_IP:3002`. **Not secure** — no encryption.
 cd /root/resonant
 git pull
 npm run build
-pm2 restart resonant
+pm2 restart bytelight
 ```
 
 ### View Logs
@@ -292,12 +292,12 @@ pm2 logs resonant --lines 50 --nostream  # Last 50 lines
 ### Restart
 
 ```bash
-pm2 restart resonant
+pm2 restart bytelight
 ```
 
 After changing the OAuth token or `.env`:
 ```bash
-pm2 restart resonant --update-env
+pm2 restart bytelight --update-env
 ```
 
 ### Check Status
@@ -328,7 +328,7 @@ claude -p "hello"
 
 # If PM2 doesn't have it, restart with --update-env
 export CLAUDE_CODE_OAUTH_TOKEN="sk-ant-oat01-..."
-pm2 restart resonant --update-env
+pm2 restart bytelight --update-env
 ```
 
 ### Messages don't send (WebSocket issues)
@@ -363,7 +363,7 @@ Tokens last 1 year. When it expires:
 1. On a machine with a browser: `claude setup-token`
 2. Copy the new token to the VPS
 3. Update `.bashrc`, `.profile`, and `ecosystem.config.cjs`
-4. `pm2 restart resonant --update-env`
+4. `pm2 restart bytelight --update-env`
 
 ### Tunnel not working
 

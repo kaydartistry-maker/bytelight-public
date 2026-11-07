@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { apiFetch } from '$lib/utils/api';
+  import { timeAgo } from '$lib/utils/time';
   import { onMount } from 'svelte';
 
   interface SessionInfo {
@@ -11,23 +13,22 @@
     end_reason: string | null;
     peak_memory_mb: number | null;
     platform: string | null;
+    // Per-session totals summed from usage_events (thread + time window).
+    // Sums are null when usage_turns is 0 — absence, not zero.
+    usage_turns: number;
+    usage_input_tokens: number | null;
+    usage_output_tokens: number | null;
+    usage_cache_read_tokens: number | null;
+    usage_cache_creation_tokens: number | null;
+    usage_cost_usd: number | null;
+    // Context occupancy of the last recorded turn — an endpoint, not a sum.
+    last_context_tokens: number | null;
+    last_context_window: number | null;
   }
 
   let sessions = $state<SessionInfo[]>([]);
   let loading = $state(true);
   let error = $state<string | null>(null);
-
-  // Relative "when" for the start time (used bottom-right).
-  function relativeTime(iso: string): string {
-    const date = new Date(iso);
-    const diff = Date.now() - date.getTime();
-    if (diff < 60000) return 'just now';
-    if (diff < 3600000) return `${Math.round(diff / 60000)}m ago`;
-    if (diff < 86400000) return `${Math.round(diff / 3600000)}h ago`;
-    const days = Math.floor(diff / 86400000);
-    if (days < 7) return `${days}d ago`;
-    return date.toLocaleDateString('en-GB', { month: 'short', day: 'numeric' });
-  }
 
   // Compact elapsed for a live session ("4m", "2h", "1d").
   function shortAge(iso: string): string {
@@ -67,6 +68,20 @@
     }
   }
 
+  // "1.2M" / "45k" / "312" — same shape the Usage tab speaks. The M
+  // threshold sits at 999.5k so rounding never prints "1000k".
+  function fmtTokens(n: number): string {
+    if (n >= 999_500) return `${(n / 1_000_000).toFixed(1)}M`;
+    if (n >= 1_000) return `${Math.round(n / 1_000)}k`;
+    return String(n);
+  }
+
+  // Context endpoint drawn against its window, clamped for the bar.
+  function contextPercent(tokens: number, window: number): number {
+    if (window <= 0) return 0;
+    return Math.max(0, Math.min(100, Math.round((tokens / window) * 100)));
+  }
+
   // Channel badge: label + an rgb triplet that drives its color (border/dot/text).
   function channelMeta(platform: string | null): { label: string; rgb: string } {
     switch ((platform ?? 'web').toLowerCase()) {
@@ -79,7 +94,7 @@
 
   onMount(async () => {
     try {
-      const res = await fetch('/api/sessions?limit=50', { credentials: 'include' });
+      const res = await apiFetch('/api/sessions?limit=50', { credentials: 'include' });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
       sessions = data.sessions || [];
@@ -116,13 +131,41 @@
 
           <div class="session-title">{session.thread_name || 'Untitled thread'}</div>
 
+          {#if session.usage_turns > 0}
+            <div class="session-usage">
+              <div class="usage-line">
+                <span>
+                  <span class="usage-strong">{fmtTokens(session.usage_output_tokens ?? 0)}</span>
+                  written · {session.usage_turns} {session.usage_turns === 1 ? 'turn' : 'turns'}
+                </span>
+                {#if session.last_context_tokens !== null}
+                  <span>
+                    {fmtTokens(session.last_context_tokens)}
+                    {#if session.last_context_window}/ {fmtTokens(session.last_context_window)}{/if}
+                    context
+                  </span>
+                {/if}
+              </div>
+              {#if session.last_context_tokens !== null && session.last_context_window}
+                <div class="usage-bar">
+                  <div
+                    class="usage-bar-fill"
+                    style="width: {contextPercent(session.last_context_tokens, session.last_context_window)}%"
+                  ></div>
+                </div>
+              {/if}
+            </div>
+          {:else}
+            <div class="session-usage none">no usage recorded</div>
+          {/if}
+
           <div class="session-foot">
             {#if session.ended_at}
               <span class="session-dur">{duration(session.started_at, session.ended_at)}</span>
             {:else}
               <span class="session-dur muted">running</span>
             {/if}
-            <span class="session-when">{relativeTime(session.started_at)}</span>
+            <span class="session-when">{timeAgo(session.started_at, { dateAfterDays: 7 })}</span>
           </div>
         </div>
       {/each}
@@ -150,7 +193,7 @@
   }
 
   .error-note {
-    color: var(--status-error, #ef4444);
+    color: var(--status-error, var(--color-error));
     font-size: 0.875rem;
   }
 
@@ -239,6 +282,46 @@
     line-clamp: 2;
     -webkit-box-orient: vertical;
     overflow: hidden;
+  }
+
+  .session-usage {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+    font-family: var(--font-mono);
+    font-size: 0.7rem;
+    color: var(--text-muted);
+  }
+
+  .session-usage.none {
+    font-style: italic;
+    opacity: 0.7;
+  }
+
+  .usage-line {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+  }
+
+  .usage-strong {
+    color: var(--text-secondary);
+    font-weight: 600;
+  }
+
+  .usage-bar {
+    height: 3px;
+    border-radius: 999px;
+    background: var(--border);
+    overflow: hidden;
+  }
+
+  .usage-bar-fill {
+    height: 100%;
+    border-radius: 999px;
+    background: var(--accent, #7c8aff);
+    opacity: 0.85;
   }
 
   .session-foot {

@@ -152,6 +152,9 @@ export function createDiscordRoutes(): Router {
         ownerActiveThresholdMin: 'discord.ownerActiveThresholdMin',
         deferPollIntervalMs: 'discord.deferPollIntervalMs',
         deferMaxAgeMs: 'discord.deferMaxAgeMs',
+        judgeBeatMs: 'discord.judgeBeatMs',
+        judgeMaxWaitMs: 'discord.judgeMaxWaitMs',
+        ownerMentions: 'discord.owner_mentions',
       };
 
       // Set-based settings (stored as comma-separated)

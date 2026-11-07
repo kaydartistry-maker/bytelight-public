@@ -79,6 +79,7 @@
 
 import { relative, sep, basename } from 'path';
 import { getBytelightConfig } from '../../config.js';
+import { errMessage } from '../../util/errors.js';
 
 /**
  * Built-in deny patterns. Each pattern is matched against the
@@ -128,7 +129,7 @@ function compilePatterns(extraPatternStrings?: readonly string[]): RegExp[] {
       extras.push(new RegExp(src));
     } catch (err) {
       console.warn(
-        `[sensitive-paths] dropping invalid deny pattern ${JSON.stringify(src)}: ${err instanceof Error ? err.message : String(err)}`,
+        `[sensitive-paths] dropping invalid deny pattern ${JSON.stringify(src)}: ${errMessage(err)}`,
       );
     }
   }

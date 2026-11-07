@@ -36,6 +36,7 @@ import type {
   NormalizedMessage,
   NormalizedImage,
 } from './types.js';
+import { extractLatestUserPrompt } from './latest-user-prompt.js';
 import { getBytelightConfig } from '../../config.js';
 import { captureCodexRateLimits } from '../subscription-usage.js';
 import { codexSupervisor } from './codex-supervisor.js';
@@ -49,8 +50,15 @@ import {
   isSpokenCodexCommentary,
   mergeAuthoredCodexThoughts,
 } from './codex-thought-card.js';
+import { claimUnsentCodexSpeech, isInterimCodexSpeech } from './codex-interim-speech.js';
+import { CODEX_OPERATING_CONTRACT } from './codex-operating-contract.js';
 import { splitCoreMemoryFromOrientation } from '../memory-blocks.js';
 import { BYTELIGHT_CODEX_SOCKET } from '../codex-app-server-config.js';
+import { errMessage } from '../../util/errors.js';
+import { holdCodex, resetStampToMs, passCodexBrake, CODEX_DEFAULT_HOLD_MS } from '../codex-breaker.js';
+import type { TurnAudience } from '../turn-audience.js';
+import { laneTagFor } from '../heartbeat/constants.js';
+import { selectOtherLaneReplies, nextOtherLaneMark, renderOtherLaneBlock, speakerName } from '../heartbeat/other-lane-net.js';
 
 const SOCKET_PATH = BYTELIGHT_CODEX_SOCKET;
 // BYTE-LIGHT ADAPTATION (was the fork's identity-prefixed temp dir name — upstream codex-daemon.ts:26):
@@ -73,6 +81,41 @@ const EXT_BY_MEDIA: Record<string, string> = {
 // RTM_NEWADDR denied).
 const SANDBOX_POLICY = { type: 'dangerFullAccess' };
 const APPROVAL_POLICY = 'never';
+
+// Guest turns (services/turn-audience.ts). The daemon owns its own tools
+// (shell, patches, its own MCP servers), so there is no tool door here to
+// stand a gate in the way the warm Claude lane has hooks/gate.cjs. A guest's
+// turn is closed three ways instead, each failing closed:
+//   1. the turn runs read-only and asks before anything it does not trust,
+//   2. every approval the daemon asks for on that turn is declined, and
+//   3. the moment the turn starts any item that is not speech (a command, a
+//      patch, an MCP or web call, anything this build does not recognise),
+//      the turn is interrupted and ends unanswered.
+// The house's own belt (/mcp/belt) also refuses a guest's turn on its own
+// (codexActiveTurnAudience below, read by routes/mcp-belt.ts).
+const GUEST_SANDBOX_POLICY = { type: 'readOnly' };
+const GUEST_APPROVAL_POLICY = 'untrusted';
+const CODEX_SPEECH_ITEM_TYPES = new Set(['userMessage', 'agentMessage', 'reasoning', 'plan', 'contextCompaction']);
+
+/** True when a daemon item on a guest's turn must end that turn: anything
+ *  that is not speech. Unknown and missing types count as tools. */
+export function guestCodexItemIsTool(item: unknown): boolean {
+  const type = item && typeof item === 'object' ? (item as { type?: unknown }).type : undefined;
+  return !(typeof type === 'string' && CODEX_SPEECH_ITEM_TYPES.has(type));
+}
+
+/** The audience of the live codex turn, or null between turns. One warm
+ *  daemon means at most one live codex turn (see activeBeltThread). */
+let activeTurnAudience: TurnAudience | null = null;
+export function codexActiveTurnAudience(): TurnAudience | null { return activeTurnAudience; }
+
+/** What the daemon is told to answer a server request with on a guest's
+ *  turn: always no. */
+export function guestServerRequestRefusal(method: string): Record<string, unknown> {
+  if (method === 'mcpServer/elicitation/request') return { action: 'decline' };
+  if (method === 'item/tool/requestUserInput') return { cancelled: true };
+  return { approved: false, decision: 'decline' };
+}
 
 function cleanupOldTempImages(): void {
   try {
@@ -305,6 +348,16 @@ class CodexDaemonConnection {
     // Auto-approve all approval requests (we're using bypass mode)
     let response: any = { jsonrpc: '2.0', id: msg.id };
 
+    // A guest's turn is never approved anything (see GUEST_SANDBOX_POLICY).
+    if (activeTurnAudience?.kind === 'guest') {
+      console.log(`[CodexDaemon] Declining ${msg.method} on a guest turn`);
+      response.result = guestServerRequestRefusal(msg.method);
+      if (this.sock && this.handshakeDone) {
+        this.sock.write(encodeFrame(JSON.stringify(response)));
+      }
+      return;
+    }
+
     switch (msg.method) {
       case 'item/commandExecution/requestApproval':
         console.log(`[CodexDaemon] Auto-approving command: ${msg.params?.command?.slice(0, 100)}...`);
@@ -460,22 +513,12 @@ export interface CodexDaemonRuntimeOptions {
   historyThreadId?: string;
   /** Load message history for recovery (called when stale thread detected) */
   loadHistory?: (threadId: string, limit: number) => Promise<Array<{ role: 'user' | 'assistant'; content: string }>>;
-}
-
-/**
- * Pull the latest user prompt text from byte-light's `input.messages`. The
- * daemon thread already holds prior context while warm; we send only the
- * newest user turn (same pattern as the claude-cli lane's
- * `extractLatestUserPrompt`).
- */
-function extractLatestUserPrompt(messages: NormalizedMessage[]): string {
-  for (let i = messages.length - 1; i >= 0; i--) {
-    const m = messages[i];
-    if (m.role === 'user' && typeof m.content === 'string') {
-      return m.content;
-    }
-  }
-  return '';
+  /** Which lane this runtime is: the companion slug for "A Lane Each", else
+   *  'primary'. Its own rows carry laneTagFor('codex-cli', laneKey) (stamped
+   *  in agent.ts), which is how the other-lane net tells them apart. */
+  laneKey?: string;
+  /** Label for the shared house voice in the other-lane block. */
+  companionName?: string;
 }
 
 /** Build the bounded transcript carried into a replacement daemon thread.
@@ -491,7 +534,7 @@ export function buildCodexRecoveryHistory(
       (message.role === 'user' || message.role === 'assistant')
       && typeof message.content === 'string'
       && message.content.trim().length > 0)
-    .map((message) => ({ role: message.role, content: message.content.trim() }));
+    .map((message) => ({ role: message.role, content: message.content.trim(), companionId: message.companionId }));
 
   const last = history.at(-1);
   if (last?.role === 'user' && last.content === currentPrompt.trim()) history.pop();
@@ -501,7 +544,7 @@ export function buildCodexRecoveryHistory(
 
   return '[Session recovered — recent conversation, oldest first:]\n\n'
     + bounded
-      .map((message) => `${message.role === 'user' ? 'User' : 'Assistant'}: ${message.content}`)
+      .map((message) => `${message.role === 'user' ? 'User' : speakerName(message.companionId, 'Assistant')}: ${message.content}`)
       .join('\n\n')
     + '\n\n[End recovered conversation. The live message follows.]\n\n';
 }
@@ -753,6 +796,19 @@ function normalizeDaemonNotification(
     const isExhausted = typeof utilization === 'number' && utilization >= 100;
     const hasLimitStatus =
       statusRaw === 'rejected' || statusRaw === 'limited' || statusRaw === 'blocked';
+    // The Codex brake (codex-breaker.ts, Aerie): a genuine limit holds every
+    // Codex request until the reset Codex named. Aerie reads
+    // `rateLimitReachedType`; byte-light also takes its own exhausted /
+    // limit-status signals above, never the routine `resetsAt` telemetry alone.
+    const reachedType = typeof rl.rateLimitReachedType === 'string' ? rl.rateLimitReachedType : '';
+    if (reachedType || isExhausted || hasLimitStatus) {
+      const now = Date.now();
+      holdCodex(
+        resetStampToMs(resetsRaw) ?? now + CODEX_DEFAULT_HOLD_MS,
+        `Codex reported its ${reachedType || windowInfo?.limitName || 'usage'} limit reached.`,
+        now,
+      );
+    }
     if (isExhausted || hasLimitStatus) {
       events.push({
         type: 'rate_limit',
@@ -809,6 +865,14 @@ export class InteractiveCodexRuntime implements AgentRuntime {
    *  or adopted from a turn/started notification when rejoining a resumed
    *  thread that was already working; cleared at every terminal. */
   private activeTurnId: string | null = null;
+  /** Set when a guest's turn reached for a tool; the turn is interrupted and
+   *  ends unanswered (see GUEST_SANDBOX_POLICY). Reset every turn. */
+  private guestRefusal: string | null = null;
+  /** Per byte-light thread: the newest row this lane last READ there (see
+   *  nextOtherLaneMark). Bounds the other-lane net. In memory only, like the
+   *  Claude lane's: after a restart the net is blind in a room until this
+   *  lane's first turn there. */
+  private lastReadThreadAt = new Map<string, string>();
   private options: CodexDaemonRuntimeOptions;
 
   constructor(options: CodexDaemonRuntimeOptions = {}) {
@@ -895,6 +959,8 @@ export class InteractiveCodexRuntime implements AgentRuntime {
     // byte-light thread the live codex turn serves (one warm daemon → one
     // live turn); cleared in the dispatch finally below.
     activeBeltThread = input.thread.id;
+    activeTurnAudience = input.audience ?? null;
+    this.guestRefusal = null;
     // A previous turn's daemon turn id must never become this turn's
     // interrupt target; rejoin adoption (turn/started below) re-fills it.
     this.activeTurnId = null;
@@ -903,6 +969,14 @@ export class InteractiveCodexRuntime implements AgentRuntime {
     // event first (types.ts) — the upstream shape had no such event. Mirror the
     // claude-cli lane (heartbeat/runtime.ts:291).
     yield { type: 'start', runtimeId: this.id, modelRef: input.modelRef };
+
+    // Nothing leaves while Codex has asked us to wait (codex-breaker.ts, Aerie).
+    const held = await passCodexBrake(houseTimezone());
+    if (held) {
+      yield { type: 'error', message: held, recoverable: true };
+      yield { type: 'done', finishReason: 'error' };
+      return;
+    }
 
     // Model id comes off the resolved ModelRef, not a constructor option — the
     // dispatcher hands the picked (provider, model) through `input.modelRef`.
@@ -915,7 +989,7 @@ export class InteractiveCodexRuntime implements AgentRuntime {
     } catch (err) {
       yield {
         type: 'error',
-        message: `Failed to start Codex daemon: ${err instanceof Error ? err.message : String(err)}`,
+        message: `Failed to start Codex daemon: ${errMessage(err)}`,
         recoverable: false,
       };
       return;
@@ -933,7 +1007,7 @@ export class InteractiveCodexRuntime implements AgentRuntime {
     } catch (err) {
       yield {
         type: 'error',
-        message: `Failed to connect to Codex daemon: ${err instanceof Error ? err.message : String(err)}`,
+        message: `Failed to connect to Codex daemon: ${errMessage(err)}`,
         recoverable: true,
       };
       return;
@@ -962,6 +1036,11 @@ export class InteractiveCodexRuntime implements AgentRuntime {
     // a commentary item across the live-notification and completed-turn
     // reconciliation paths.
     const commentary: CommentaryState = { authoredThoughts: [], emittedCommentaryIds: new Set() };
+    // Notification and thread/read payloads can describe the same assistant
+    // message under different ids. Keep both protocol-id and spoken-text
+    // ledgers for exactly-once interim delivery.
+    const emittedSpeechIds = new Set<string>();
+    const emittedSpeechTexts = new Set<string>();
     // Per-turn set of daemon item ids that arrived via item/started. Powers
     // the missing-start synthesis in normalizeDaemonNotification (a
     // tool_start is only fabricated on completion when the id is absent here,
@@ -1005,8 +1084,36 @@ export class InteractiveCodexRuntime implements AgentRuntime {
         this.activeTurnId = String(params.turn.id);
       }
 
+      // A guest's turn reached for a tool: stop it here, before whatever the
+      // tool returns can reach a reply (see GUEST_SANDBOX_POLICY). Any item
+      // notice counts, not only item/started, since the daemon does not
+      // always announce a start. Once stopped, nothing more from the turn is
+      // queued, so no word written after the tool can reach the room.
+      if (input.audience?.kind === 'guest') {
+        if (this.guestRefusal) return;
+        const toolItem = method.startsWith('item/') && params?.item && guestCodexItemIsTool(params.item);
+        const toolStream = /^item\/(commandExecution|fileChange|mcpToolCall|dynamicToolCall|webSearch)\//.test(method);
+        if (toolItem || toolStream) {
+          this.guestRefusal = String(params?.item?.type || method);
+          console.warn(`[CodexDaemon] Guest turn tried ${this.guestRefusal} — interrupting the turn`);
+          this.aborted = true;
+          activityQueue.length = 0;
+          this.interruptActiveTurn();
+          return;
+        }
+      }
+
       for (const ev of normalizeDaemonNotification(method, params, openTools, commentary, startedToolIds)) {
         activityQueue.push(ev);
+      }
+      const item = params?.item;
+      if (method === 'item/completed' && isInterimCodexSpeech(item, emittedSpeechIds, emittedSpeechTexts)) {
+        emittedSpeechIds.add(item.id);
+        emittedSpeechTexts.add(item.text.trim());
+        // This tree has no message-break runtime event. A paragraph boundary
+        // keeps the immediately surfaced acknowledgement distinct from the
+        // eventual answer in the one persisted response buffer.
+        activityQueue.push({ type: 'text_delta', text: `${item.text.trim()}\n\n` });
       }
     });
 
@@ -1017,10 +1124,40 @@ export class InteractiveCodexRuntime implements AgentRuntime {
     // the turn; without this, a stale capture handler would keep growing
     // an orphaned queue off late daemon notifications (the 788025b leak
     // shape, re-expressed for byte-light's single-handler connection).
+    // The other-lane mark (same rule as the Claude lane, other-lane-net.ts):
+    // it moves to the newest row this turn read, only when the turn finished.
+    const turnStartedIso = new Date().toISOString();
+    let turnCompleted = false;
     try {
-      yield* this.dispatchTurn(input, modelId, this.connection, activityQueue, openTools, turnState, commentary);
+      for await (const event of this.dispatchTurn(
+        input,
+        modelId,
+        this.connection,
+        activityQueue,
+        openTools,
+        turnState,
+        commentary,
+        emittedSpeechIds,
+        emittedSpeechTexts,
+      )) {
+        if (event.type === 'done' && event.finishReason !== 'aborted' && event.finishReason !== 'error') {
+          turnCompleted = true;
+        }
+        yield event;
+      }
     } finally {
+      // A guest's turn, or one that failed before delivering, does not move
+      // the mark: those replies are still owed to the owner's next turn.
+      const mark = nextOtherLaneMark({
+        prev: this.lastReadThreadAt.get(input.thread.id),
+        read: input.messages,
+        completed: turnCompleted,
+        guest: input.audience?.kind === 'guest',
+        fallback: turnStartedIso,
+      });
+      if (mark) this.lastReadThreadAt.set(input.thread.id, mark);
       if (activeBeltThread === input.thread.id) activeBeltThread = null;
+      if (activeTurnAudience === (input.audience ?? null)) activeTurnAudience = null;
       turnState.live = false;
       activityQueue.length = 0;
       openTools.clear();
@@ -1042,6 +1179,8 @@ export class InteractiveCodexRuntime implements AgentRuntime {
     openTools: Map<string, OpenToolState>,
     turnState: { live: boolean; lastActivityAt: number },
     commentary: CommentaryState,
+    emittedSpeechIds: Set<string>,
+    emittedSpeechTexts: Set<string>,
   ): AsyncGenerator<AgentRuntimeEvent, void, undefined> {
 
     const intentionalRecycle = Boolean(input.sessionRecycle);
@@ -1063,7 +1202,7 @@ export class InteractiveCodexRuntime implements AgentRuntime {
         }
         this.initialized = true;
       } catch (err) {
-        yield { type: 'error', message: `Connection error: ${err instanceof Error ? err.message : String(err)}`, recoverable: true };
+        yield { type: 'error', message: `Connection error: ${errMessage(err)}`, recoverable: true };
         return;
       }
     }
@@ -1083,9 +1222,10 @@ export class InteractiveCodexRuntime implements AgentRuntime {
     // thread is warm across turns; thread/start refreshes base instructions
     // when a thread is (re)created, so every codex-daemon turn's thread was
     // created with this contract in place.
+    const laneContracts = `${CODEX_OPERATING_CONTRACT}\n\n${CODEX_THOUGHT_CARD_INSTRUCTIONS}`;
     const baseInstructionsFromInput = rawBaseInstructions
-      ? `${rawBaseInstructions}\n\n${CODEX_THOUGHT_CARD_INSTRUCTIONS}`
-      : CODEX_THOUGHT_CARD_INSTRUCTIONS;
+      ? `${rawBaseInstructions}\n\n${laneContracts}`
+      : laneContracts;
 
     // Core-memory diet (parity with the Claude CLI lane — heartbeat/provision.ts
     // renderCoreMemorySection + runtime.ts stripCoreMemoryFromOrientation). The
@@ -1214,8 +1354,38 @@ export class InteractiveCodexRuntime implements AgentRuntime {
       ? `[Context]\n${perTurnOrientation}\n[/Context]\n\n`
       : '';
 
+    // A guest's turn (turn-audience.ts) runs read-only, asks before anything
+    // untrusted, and is told so under the message, in the CLI lane's words.
+    const guestAudience = input.audience?.kind === 'guest' ? input.audience : null;
+    const turnSandboxPolicy = guestAudience ? GUEST_SANDBOX_POLICY : SANDBOX_POLICY;
+    const turnApprovalPolicy = guestAudience ? GUEST_APPROVAL_POLICY : APPROVAL_POLICY;
+    const guestBanner = guestAudience
+      ? `\n\n[Guest turn, ${guestAudience.trust} trust: this came from somebody who is not the owner. ` +
+        'Commands, file changes and outside tools are refused for this turn, and reaching for one ends the turn ' +
+        'unanswered. Answer in words only.]'
+      : '';
+
+    // The other-lane net: companion replies another lane (the Claude CLI
+    // lane, a wake, the other companion's lane, a relay) wrote in this room
+    // since this lane last read it. The warm daemon thread only ever hears
+    // the live prompt, so without this it is deaf to its own room. Not on a
+    // guest's turn (household words do not ride into a guest's room) and not
+    // when history is carried in (intentional recycle here; the stale-thread
+    // recovery retry below drops it too).
+    const otherLaneBlock = (guestAudience || intentionalRecycle)
+      ? ''
+      : renderOtherLaneBlock(
+          selectOtherLaneReplies(
+            input.messages,
+            this.lastReadThreadAt.get(input.thread.id),
+            laneTagFor(this.id, this.options.laneKey),
+          ),
+          this.options.companionName || 'Companion',
+        );
+    const otherLaneLead = otherLaneBlock ? `${otherLaneBlock}\n` : '';
+
     const inputBlocks: Array<{ type: string; [key: string]: unknown }> = [
-      { type: 'text', text: orientationBlock + userContent, text_elements: [] },
+      { type: 'text', text: orientationBlock + otherLaneLead + userContent + guestBanner, text_elements: [] },
     ];
     if (intentionalRecycle) {
       const historyContext = buildCodexRecoveryHistory(
@@ -1258,8 +1428,8 @@ export class InteractiveCodexRuntime implements AgentRuntime {
     let turnResult = await connection.send('turn/start', {
       threadId: this.threadId,
       input: inputBlocks,
-      sandboxPolicy: SANDBOX_POLICY,
-      approvalPolicy: APPROVAL_POLICY,
+      sandboxPolicy: turnSandboxPolicy,
+      approvalPolicy: turnApprovalPolicy,
     });
 
     // Handle a stale daemon thread (backend/daemon restart, expired provider
@@ -1301,18 +1471,17 @@ export class InteractiveCodexRuntime implements AgentRuntime {
       if (this.threadId) {
         yield { type: 'session', sessionId: this.threadId };
 
-        // Retry the turn with new thread
-        if (historyContext) {
-          inputBlocks[0] = {
-            ...inputBlocks[0],
-            text: historyContext + String(inputBlocks[0].text ?? ''),
-          };
-        }
+        // Retry the turn with new thread. The recovered history already
+        // carries the other lanes' replies, so the net does not ride again.
+        inputBlocks[0] = {
+          ...inputBlocks[0],
+          text: historyContext + orientationBlock + userContent + guestBanner,
+        };
         turnResult = await connection.send('turn/start', {
           threadId: this.threadId,
           input: inputBlocks,
-          sandboxPolicy: SANDBOX_POLICY,
-          approvalPolicy: APPROVAL_POLICY,
+          sandboxPolicy: turnSandboxPolicy,
+          approvalPolicy: turnApprovalPolicy,
         });
       }
     }
@@ -1362,6 +1531,10 @@ export class InteractiveCodexRuntime implements AgentRuntime {
       if (input.abortSignal?.aborted) this.aborted = true;
       if (this.aborted) {
         this.interruptActiveTurn();
+        if (this.guestRefusal) {
+          yield* this.guestRefusalEnd();
+          return;
+        }
         yield { type: 'done', finishReason: 'aborted' };
         return;
       }
@@ -1419,6 +1592,35 @@ export class InteractiveCodexRuntime implements AgentRuntime {
         continue;
       }
 
+      // A guest's turn is checked again against what the daemon says it did,
+      // in case a tool ran without a notice reaching us: any non-speech item
+      // in the turn stops it before a word of it is handed on.
+      if (input.audience?.kind === 'guest' && !this.guestRefusal) {
+        const used = (lastTurn.items || []).find((item: unknown) => guestCodexItemIsTool(item));
+        if (used) {
+          this.guestRefusal = String((used as { type?: unknown }).type || 'an unknown item');
+          console.warn(`[CodexDaemon] Guest turn used ${this.guestRefusal} (seen on read) — stopping the turn`);
+        }
+      }
+      if (this.guestRefusal) {
+        activityQueue.length = 0;
+        this.aborted = true;
+        this.interruptActiveTurn();
+        yield* this.guestRefusalEnd();
+        return;
+      }
+
+      // Reconcile interim speech from polling as well as notifications. A
+      // missed lifecycle notification may delay an acknowledgement by one
+      // poll, but must not make it disappear.
+      for (const item of lastTurn.items || []) {
+        if (isInterimCodexSpeech(item, emittedSpeechIds, emittedSpeechTexts)) {
+          emittedSpeechIds.add(item.id);
+          emittedSpeechTexts.add(item.text.trim());
+          activityQueue.push({ type: 'text_delta', text: `${item.text.trim()}\n\n` });
+        }
+      }
+
       const threadStatus = read.result?.thread?.status;
 
       // Check thread-level status for stuck approval requests — these happen when
@@ -1467,26 +1669,31 @@ export class InteractiveCodexRuntime implements AgentRuntime {
           yield { type: 'thinking_delta', text: authoredCard, kind: 'authored' };
         }
 
-        // Emit one visible assistant response, not every interim/status message.
-        // Codex app-server turns can contain multiple agentMessage items:
-        // commentary updates emitted before tool calls plus the final_answer.
-        // byte-light stores one companion bubble per turn, so concatenating all
-        // agentMessage text produces jumbled messages in the UI. Prefer the
-        // explicit final_answer phase; fall back to the last non-empty
-        // agentMessage for older/odd daemon payloads.
-        const agentMessages = (lastTurn.items || [])
-          .filter((item: any) => item.type === 'agentMessage' && typeof item.text === 'string' && item.text.trim().length > 0);
-        const finalMessage =
-          agentMessages.find((item: any) => item.phase === 'final_answer') ||
-          agentMessages[agentMessages.length - 1];
-        if (finalMessage?.text) {
-          // Slice 4: the final answer must never carry the thought-card
-          // marker. It should never appear here (the contract keeps it in a
-          // separate commentary item), but strip defensively so a stray
-          // marker can never leak into the companion bubble.
-          const finalText = stripThoughtMarker(finalMessage.text);
-          if (finalText) {
-            yield { type: 'text_delta', text: finalText };
+        // Claim every non-commentary message not already surfaced. This keeps
+        // deliberate multi-message speech in order while deduping the final
+        // answer when notifications and thread/read use different item ids.
+        const completionItems = lastTurn.items || [];
+        const protocolSpeech = completionItems.filter((item: any) =>
+          item?.type === 'agentMessage' && (item.id || item.phase === 'final_answer'),
+        );
+        // Older daemon payloads have neither ids nor phases. They cannot
+        // support safe multi-message delivery, so retain this tree's legacy
+        // last-message fallback for that shape only.
+        const speechToClaim = protocolSpeech.length
+          ? completionItems
+          : [...completionItems].reverse().filter((item: any) =>
+              item?.type === 'agentMessage' && typeof item.text === 'string' && item.text.trim(),
+            ).slice(0, 1);
+        const unsent = claimUnsentCodexSpeech(
+          speechToClaim,
+          emittedSpeechIds,
+          emittedSpeechTexts,
+        );
+        for (let i = 0; i < unsent.length; i++) {
+          // The final answer must never carry the authored-thought marker.
+          const text = stripThoughtMarker(unsent[i].text);
+          if (text) {
+            yield { type: 'text_delta', text: `${i > 0 ? '\n\n' : ''}${text}` };
           }
         }
 
@@ -1500,7 +1707,27 @@ export class InteractiveCodexRuntime implements AgentRuntime {
 
     if (this.aborted) {
       this.interruptActiveTurn();
+      if (this.guestRefusal) {
+        yield* this.guestRefusalEnd();
+        return;
+      }
       yield { type: 'done', finishReason: 'aborted' };
     }
   }
+
+  /** How a guest's turn ends when it reached for a tool: no reply, a plain
+   *  error for the house's log. */
+  private *guestRefusalEnd(): Generator<AgentRuntimeEvent, void, undefined> {
+    yield {
+      type: 'error',
+      message: `A guest's turn tried to use ${this.guestRefusal} on the Codex lane; tools are refused on a guest turn, so the turn was stopped.`,
+      recoverable: false,
+    };
+    yield { type: 'done', finishReason: 'error' };
+  }
+}
+
+/** The owner's timezone, for reading a reset time said as a clock time. (Aerie.) */
+function houseTimezone(): string {
+  try { return getBytelightConfig().identity.timezone || 'UTC'; } catch { return 'UTC'; }
 }

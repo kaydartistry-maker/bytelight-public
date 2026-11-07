@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { onMount } from 'svelte';
   import type { OrchestratorTaskStatus, TriggerStatus } from '@bytelight/shared';
   import {
     toggleTask,
@@ -6,9 +7,14 @@
     updateFailsafe,
     getFailsafe,
     cancelTriggerById,
+    loadWakePrompts,
+    createTriggerApi,
   } from '$lib/stores/settings.svelte';
+  import WakePromptEditor from './WakePromptEditor.svelte';
 
   let { tasks = [], triggers = [] }: { tasks: OrchestratorTaskStatus[]; triggers: TriggerStatus[] } = $props();
+
+  onMount(loadWakePrompts);
 
   let failsafe = $derived(getFailsafe());
   let editingTask = $state<string | null>(null);
@@ -108,6 +114,76 @@
   async function handleCancelTrigger(id: string) {
     await cancelTriggerById(id);
   }
+
+  // --- New trigger form ---
+  type ConditionDraft = {
+    type: 'presence_state' | 'presence_transition' | 'agent_free' | 'time_window' | 'routine_missing';
+    state: string;
+    from: string;
+    to: string;
+    after: string;
+    before: string;
+    routine: string;
+    after_hour: number;
+  };
+
+  const emptyCondition = (): ConditionDraft => ({
+    type: 'presence_state', state: 'active', from: 'offline', to: 'active',
+    after: '09:00', before: '', routine: '', after_hour: 12,
+  });
+
+  let showCreateForm = $state(false);
+  let newKind = $state<'impulse' | 'watcher'>('impulse');
+  let newLabel = $state('');
+  let newPrompt = $state('');
+  let newCooldown = $state(120);
+  let newConditions = $state<ConditionDraft[]>([emptyCondition()]);
+  let createError = $state<string | null>(null);
+  let creating = $state(false);
+
+  function addCondition() {
+    newConditions = [...newConditions, emptyCondition()];
+  }
+
+  function removeCondition(index: number) {
+    newConditions = newConditions.filter((_, i) => i !== index);
+  }
+
+  function serializeConditions(): Array<Record<string, unknown>> {
+    return newConditions.map(c => {
+      switch (c.type) {
+        case 'presence_state': return { type: c.type, state: c.state };
+        case 'presence_transition': return { type: c.type, from: c.from, to: c.to };
+        case 'agent_free': return { type: c.type };
+        case 'time_window': return c.before ? { type: c.type, after: c.after, before: c.before } : { type: c.type, after: c.after };
+        case 'routine_missing': return { type: c.type, routine: c.routine, after_hour: c.after_hour };
+      }
+    });
+  }
+
+  async function handleCreateTrigger() {
+    createError = null;
+    if (!newLabel.trim()) { createError = 'Label is required'; return; }
+    if (newConditions.length === 0) { createError = 'At least one condition is required'; return; }
+    creating = true;
+    const result = await createTriggerApi({
+      kind: newKind,
+      label: newLabel.trim(),
+      conditions: serializeConditions(),
+      prompt: newPrompt.trim() || undefined,
+      cooldownMinutes: newKind === 'watcher' ? newCooldown : undefined,
+    });
+    creating = false;
+    if (result.ok) {
+      showCreateForm = false;
+      newLabel = '';
+      newPrompt = '';
+      newCooldown = 120;
+      newConditions = [emptyCondition()];
+    } else {
+      createError = result.error ?? 'Failed to create trigger';
+    }
+  }
 </script>
 
 <div class="panel">
@@ -138,6 +214,7 @@
                 {cronToTime(task.cronExpr)}
               </button>
             {/if}
+            <WakePromptEditor wakeType={task.wakeType} />
           </div>
           <div class="task-controls">
             <span class="status-dot" class:active={task.enabled}></span>
@@ -181,6 +258,7 @@
                 {cronToTime(task.cronExpr)}
               </button>
             {/if}
+            <WakePromptEditor wakeType={task.wakeType} />
           </div>
           <div class="task-controls">
             <span class="status-dot" class:active={task.enabled}></span>
@@ -223,6 +301,7 @@
                 {cronToTime(task.cronExpr)}
               </button>
             {/if}
+            <WakePromptEditor wakeType={task.wakeType} />
           </div>
           <div class="task-controls">
             <span class="status-dot" class:active={task.enabled}></span>
@@ -300,7 +379,99 @@
 
   <!-- Triggers -->
   <div class="section">
-    <h3 class="section-title">Triggers</h3>
+    <h3 class="section-title">
+      Triggers
+      <button class="res-btn res-btn--ghost res-btn--sm" onclick={() => { showCreateForm = !showCreateForm; createError = null; }}>
+        {showCreateForm ? 'Close' : '+ New'}
+      </button>
+    </h3>
+
+    {#if showCreateForm}
+      <div class="create-form">
+        <div class="form-row">
+          <label class="form-label">
+            <span>Kind</span>
+            <select class="form-select" bind:value={newKind}>
+              <option value="impulse">Impulse — fires once, then done</option>
+              <option value="watcher">Watcher — recurring, with cooldown</option>
+            </select>
+          </label>
+          <label class="form-label">
+            <span>Label</span>
+            <input type="text" class="form-input" bind:value={newLabel} placeholder="e.g. Greet when back online" />
+          </label>
+        </div>
+
+        <div class="conditions-builder">
+          <span class="trigger-group-label">Conditions (all must match)</span>
+          {#each newConditions as cond, i}
+            <div class="condition-row">
+              <select class="form-select" bind:value={cond.type}>
+                <option value="presence_state">Presence is…</option>
+                <option value="presence_transition">Presence changes…</option>
+                <option value="agent_free">Agent is free</option>
+                <option value="time_window">Time window</option>
+                <option value="routine_missing">Routine missing</option>
+              </select>
+              {#if cond.type === 'presence_state'}
+                <select class="form-select" bind:value={cond.state}>
+                  <option value="active">active</option>
+                  <option value="idle">idle</option>
+                  <option value="offline">offline</option>
+                </select>
+              {:else if cond.type === 'presence_transition'}
+                <select class="form-select" bind:value={cond.from}>
+                  <option value="active">from active</option>
+                  <option value="idle">from idle</option>
+                  <option value="offline">from offline</option>
+                </select>
+                <select class="form-select" bind:value={cond.to}>
+                  <option value="active">to active</option>
+                  <option value="idle">to idle</option>
+                  <option value="offline">to offline</option>
+                </select>
+              {:else if cond.type === 'time_window'}
+                <input type="time" class="form-input form-input--time" bind:value={cond.after} title="After" />
+                <input type="time" class="form-input form-input--time" bind:value={cond.before} title="Before (optional)" />
+              {:else if cond.type === 'routine_missing'}
+                <input type="text" class="form-input" bind:value={cond.routine} placeholder="routine name" />
+                <input type="number" class="form-input form-input--num" bind:value={cond.after_hour} min="0" max="23" title="After hour" />
+              {/if}
+              {#if newConditions.length > 1}
+                <button class="cancel-btn" onclick={() => removeCondition(i)} aria-label="Remove condition" title="Remove">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M18 6L6 18M6 6l12 12"/>
+                  </svg>
+                </button>
+              {/if}
+            </div>
+          {/each}
+          <button class="res-btn res-btn--ghost res-btn--sm add-condition-btn" onclick={addCondition}>+ Condition</button>
+        </div>
+
+        <label class="form-label">
+          <span>Prompt (what should happen when it fires)</span>
+          <textarea class="form-input form-textarea" bind:value={newPrompt} rows="2" placeholder="e.g. The operator just came back online — say hi."></textarea>
+        </label>
+
+        {#if newKind === 'watcher'}
+          <label class="form-label form-label--inline">
+            <span>Cooldown</span>
+            <input type="number" class="form-input form-input--num" bind:value={newCooldown} min="1" />
+            <span class="threshold-unit">min</span>
+          </label>
+        {/if}
+
+        {#if createError}
+          <p class="create-error">{createError}</p>
+        {/if}
+
+        <button class="res-btn res-btn--primary res-btn--sm" onclick={handleCreateTrigger} disabled={creating}>
+          {creating ? 'Creating…' : `Create ${newKind}`}
+        </button>
+      </div>
+    {/if}
+
     {#if impulses.length === 0 && watchers.length === 0}
       <p class="empty-text">No active triggers</p>
     {:else}
@@ -615,8 +786,88 @@
     background: var(--color-danger-muted);
   }
 
+  .create-form {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+    padding: 0.875rem;
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+  }
+
+  .form-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.75rem;
+  }
+
+  .form-label {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+  }
+
+  .form-label--inline {
+    flex-direction: row;
+    align-items: center;
+    gap: 0.5rem;
+  }
+
+  .form-input,
+  .form-select {
+    font-size: 0.8125rem;
+    padding: 0.375rem 0.5rem;
+    color: var(--text-primary);
+    background: var(--bg-input, var(--bg-surface));
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+  }
+
+  .form-input--time {
+    width: 6.5rem;
+  }
+
+  .form-input--num {
+    width: 4.5rem;
+  }
+
+  .form-textarea {
+    resize: vertical;
+    font-family: inherit;
+  }
+
+  .conditions-builder {
+    display: flex;
+    flex-direction: column;
+    gap: 0.375rem;
+  }
+
+  .condition-row {
+    display: flex;
+    align-items: center;
+    gap: 0.375rem;
+    flex-wrap: wrap;
+  }
+
+  .add-condition-btn {
+    align-self: flex-start;
+  }
+
+  .create-error {
+    font-size: 0.75rem;
+    color: var(--color-danger, #d04040);
+    margin: 0;
+  }
+
   @media (max-width: 768px) {
     .threshold-grid {
+      grid-template-columns: 1fr;
+    }
+
+    .form-row {
       grid-template-columns: 1fr;
     }
   }

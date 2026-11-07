@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { apiFetch } from '$lib/utils/api';
   import { onMount } from 'svelte';
   import '../../../bytelight.css';
   import CcPageHeader from '$lib/components/CcPageHeader.svelte';
@@ -49,7 +50,7 @@
       const y = currentMonth.getFullYear(), m = currentMonth.getMonth();
       const start = `${y}-${String(m + 1).padStart(2, '0')}-01`;
       const end = `${y}-${String(m + 1).padStart(2, '0')}-${new Date(y, m + 1, 0).getDate()}`;
-      const res = await fetch(`${CC_API}/events?start_date=${start}&end_date=${end}`);
+      const res = await apiFetch(`${CC_API}/events?start_date=${start}&end_date=${end}`);
       const data = await res.json();
       events = data.events || [];
     } catch { /* empty */ }
@@ -58,7 +59,7 @@
 
   async function addEvent() {
     if (!newTitle.trim()) return;
-    await fetch(`${CC_API}/events`, {
+    await apiFetch(`${CC_API}/events`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         title: newTitle.trim(), start_date: selectedDate, start_time: newTime || undefined,
@@ -70,7 +71,7 @@
   }
 
   async function deleteEvent(id: string) {
-    await fetch(`${CC_API}/events/${id}`, { method: 'DELETE' });
+    await apiFetch(`${CC_API}/events/${id}`, { method: 'DELETE' });
     await loadMonth();
   }
 

@@ -3,8 +3,67 @@ import type { McpServerInfo, Message } from '@bytelight/shared';
 import { resolveEffortForModel, normalizeModelRef, type ModelRef } from '@bytelight/shared';
 import { createMessage, updateThreadSession, clearAllThreadSessions, getThread, updateThreadActivity, createSessionRecord, endSessionRecord, recordUsageEvent, getProviderSession, setProviderSession, clearProviderSessionsForThread, hasAnyProviderSessionForThread, getMostRecentProviderSession, getMessages, getConfig as getDbConfig, setConfig as setDbConfig } from './db.js';
 import { buildBridgeBlock, decideBridge, shouldRecycleCodexSession } from './agent-bridge.js';
+import { isTurnAudience, type TurnAudience } from './turn-audience.js';
 // Slice 3b seam: runtime doors + provider-key mapping + canonical-consumer helpers.
-import { resolveRuntimeForRef } from './runtimes/index.js';
+import { resolveRuntimeForRef, getClaudeCliLaneRuntime, getCodexCliLaneRuntime } from './runtimes/index.js';
+import { shuffled, priorVoicesBlock, shouldFanOut } from './room-turns.js';
+import { getThreadRoster } from './db/rooms.js';
+import { isHeartbeatLaneWarm } from './heartbeat/supervisor.js';
+import { laneTagFor } from './heartbeat/constants.js';
+import { roomBiosReady, laneIdentityFor, renderLaneSection } from './heartbeat/lane-identity.js';
+
+/**
+ * The Room's history freeze: leave out companion replies written since the
+ * room started this turn — a later lane is handed those in its prompt, so in
+ * history they would arrive twice. No cutoff = history as it is.
+ */
+export function laneHistory<T extends { role: string; created_at: string }>(messages: T[], historyBefore?: string): T[] {
+  if (!historyBefore) return messages;
+  return messages.filter((m) => !(m.role === 'companion' && m.created_at >= historyBefore));
+}
+
+/**
+ * A later lane's content is the owner's message plus what earlier lanes said.
+ * The warm runtimes read the newest user row in history; without this the
+ * lane content arrives as a SECOND user row after the owner's original
+ * (attachImagesToLatestUserMessage appends it), so the owner's message sits
+ * in that history twice. Handing it over on the original row keeps it once.
+ */
+export function handLaneContentOver<T extends { role: string; content: unknown }>(recent: T[], content: string): T[] {
+  const out = recent.slice();
+  for (let i = out.length - 1; i >= 0; i--) {
+    if (out[i].role === 'user') {
+      if (out[i].content !== content) out[i] = { ...out[i], content };
+      return out;
+    }
+  }
+  return out;
+}
+
+/** The shared lane's name when its reply is handed to the next seat in a round. */
+function roomHouseName(): string {
+  try {
+    return (getBytelightConfig().identity.companion_name || '').trim() || 'Companion';
+  } catch {
+    return 'Companion';
+  }
+}
+
+/** Her name for the room's handoff (identity.user_name); never "owner" or "user". */
+function roomUserName(): string {
+  try {
+    const name = (getBytelightConfig().identity.user_name || '').trim();
+    return name && name !== 'User' ? name : 'her';
+  } catch {
+    return 'her';
+  }
+}
+
+/** A companion's lane section, or '' when there is no lane identity for him. */
+function laneSectionFor(companionId: string): string {
+  const lane = laneIdentityFor(companionId);
+  return lane ? renderLaneSection(lane) : '';
+}
 import type { NormalizedImage, NormalizedMessage, ToolDefinition } from './runtimes/types.js';
 import { sidecarProviderFor } from './agent/sidecar.js';
 // Slice 5a: turn-time model resolution through companion_settings
@@ -17,12 +76,18 @@ import { rewriteCodexSkillInvocation } from './agent/codex-skill-invocation.js';
 import { computeContextUsageUpdate } from './agent/context-usage.js';
 import { buildUsageEventRow } from './agent/usage-event-row.js';
 import { getManagedServerConfigs, getRouterTools, type ToolSchema } from './mcp-bridge.js';
+import { readMcpJson } from './mcp-json.js';
 import { runtimeNeedsRouterToolPayload } from './runtime-tool-delivery.js';
 import { ambientRecall, unfiledNoticings } from './heartbeat/whisper.js';
+import { deliverSideNoteToBusySession } from './heartbeat/supervisor.js';
 import { scanSkills } from './skills.js';
 import { runWithBeltContext } from './chat-tool-belt.js';
 import { estimateCost } from './usage-pricing.js';
 import { registry } from './registry.js';
+import { postCompactionHandoff } from './treehouse-triggers.js';
+import { isDeliberateSilence } from './silence.js';
+import { extractStatusTags, stripStatusTags } from '@bytelight/shared';
+import { applyStatusTagUpdates } from './db/statuses.js';
 import { createHooks, buildOrientationContext, summarizeInput, type HookContext, type ToolInsertion } from './hooks.js';
 import type { MessageSegment, ThoughtKind } from '@bytelight/shared';
 import type { PushService } from './push.js';
@@ -38,6 +103,8 @@ import { recordActivity } from './activity-ring.js';
 // replay stream state to sockets that (re)connect mid-turn.
 import { registerActiveStream, unregisterActiveStream } from './active-streams.js';
 import { getMemoryMcpServer } from './memory-mcp.js';
+import { errMessage } from '../util/errors.js';
+import { extractThinkingSummary } from './thinking-summary.js';
 
 // Lazy-init: config isn't available at import time — defer until first use
 let _initialized = false;
@@ -122,25 +189,15 @@ function ensureInit() {
   }
 
   // Load .mcp.json
-  const mcpJsonPath = config.agent.mcp_json_path;
-  if (existsSync(mcpJsonPath)) {
-    try {
-      const mcpJson = JSON.parse(readFileSync(mcpJsonPath, 'utf-8'));
-      if (mcpJson.mcpServers) {
-        for (const [name, mcpCfg] of Object.entries(mcpJson.mcpServers) as [string, any][]) {
-          if (mcpCfg.type === 'url' || mcpCfg.type === 'http') {
-            mcpServersFromConfig[name] = { type: 'http', url: mcpCfg.url, headers: mcpCfg.headers };
-          } else if (mcpCfg.type === 'sse') {
-            mcpServersFromConfig[name] = { type: 'sse', url: mcpCfg.url, headers: mcpCfg.headers };
-          } else if (!mcpCfg.type || mcpCfg.type === 'stdio') {
-            mcpServersFromConfig[name] = { command: mcpCfg.command, args: mcpCfg.args, env: mcpCfg.env };
-          }
-        }
-        console.log(`Loaded ${Object.keys(mcpServersFromConfig).length} MCP servers from .mcp.json: ${Object.keys(mcpServersFromConfig).join(', ')}`);
-      }
-    } catch (err) {
-      console.warn('Failed to load .mcp.json:', err instanceof Error ? err.message : err);
-    }
+  // Shared reader (services/mcp-json.ts) so the Codex lane sees the same table.
+  const mcpJsonServers = readMcpJson(config.agent.mcp_json_path);
+  for (const [name, server] of Object.entries(mcpJsonServers)) {
+    mcpServersFromConfig[name] = server.type === 'stdio'
+      ? { command: server.command, args: server.args, env: server.env }
+      : { type: server.type, url: server.url, headers: server.headers };
+  }
+  if (Object.keys(mcpJsonServers).length > 0) {
+    console.log(`Loaded ${Object.keys(mcpServersFromConfig).length} MCP servers from .mcp.json: ${Object.keys(mcpServersFromConfig).join(', ')}`);
   }
 
   // In-process core-memory MCP server (Slice 3, ported from reference implementation's
@@ -398,7 +455,7 @@ async function refreshMcpStatusSafely(queryRef: Query, label: string): Promise<v
 // Agent SDK V1 can only run one query at a time, so we queue excess requests
 // ---------------------------------------------------------------------------
 
-const PRIORITIES = {
+export const PRIORITIES = {
   web_interactive: 0,    // Owner typing in UI
   discord_owner: 1,      // Owner on Discord
   discord_other: 2,      // Other users
@@ -407,6 +464,41 @@ const PRIORITIES = {
 
 const MAX_QUEUE_DEPTH = 5;
 const QUEUE_TIMEOUT_MS = 90_000;
+// Wakes queue behind live conversation instead of dying at the 90s interactive
+// timeout — a real turn routinely outlives 90s and the wake should wait it out.
+// (Aerie's agent-query-queue.)
+export const AUTONOMOUS_QUEUE_TIMEOUT_MS = 30 * 60_000;
+export const QUEUE_TIMEOUT_MESSAGE = '[Request timed out in queue]';
+
+/**
+ * How long an entry may wait in the queue before it is pruned. The owner's
+ * own turns (web, owner on Discord) wait at least as long as a wake: a wake or
+ * watcher turn ahead of her routinely outlives 90s, and her message expiring
+ * behind it is a message lost (2026-10-25: "hey...." dropped behind a
+ * watcher). Other Discord users keep the short window.
+ */
+/**
+ * Where a turn sits in the queue. Her Discord turns are hers by who sent them
+ * (the gateway matches her Discord user id and hands over audience 'owner'),
+ * never by a word in the prompt text: the old `platformContext.includes('owner')`
+ * sniff never matched her (her context says her name), so her own Discord
+ * messages queued as a guest's and expired after 90s.
+ */
+export function queuePriorityFor(platform: string, audience?: TurnAudience): number {
+  if (platform === 'telegram') return PRIORITIES.discord_owner; // Telegram is hers alone
+  if (platform === 'discord') {
+    return audience?.kind === 'owner' ? PRIORITIES.discord_owner : PRIORITIES.discord_other;
+  }
+  return PRIORITIES.web_interactive;
+}
+
+export function queueTimeoutFor(priority: number): number {
+  if (priority === PRIORITIES.web_interactive || priority === PRIORITIES.discord_owner) {
+    return AUTONOMOUS_QUEUE_TIMEOUT_MS;
+  }
+  if (priority === PRIORITIES.autonomous) return AUTONOMOUS_QUEUE_TIMEOUT_MS;
+  return QUEUE_TIMEOUT_MS;
+}
 
 // Slice 4A: every turn this service runs belongs to the resident shared brain
 // (Companion A + Companion B are two picker seats over one brain — companions registry).
@@ -414,15 +506,20 @@ const QUEUE_TIMEOUT_MS = 90_000;
 // relayed by the Living Room dispatcher and stamped with their own id there.
 const LOCAL_COMPANION_ID = 'companion-a-b';
 
+// The owner's stop button during a room turn stops the whole room, not just
+// the companion speaking — set by stopGeneration, read between lanes.
+let roomStopRequested = false;
+
 interface QueueEntry {
   priority: number;
   resolve: (value: string) => void;
   reject: (reason: Error) => void;
   execute: () => Promise<string>;
   enqueuedAt: number;
+  timeoutMs: number;
 }
 
-class QueryQueue {
+export class QueryQueue {
   private queue: QueueEntry[] = [];
   private running = false;
 
@@ -434,7 +531,7 @@ class QueryQueue {
     return this.queue.length;
   }
 
-  async enqueue(priority: number, execute: () => Promise<string>): Promise<string> {
+  async enqueue(priority: number, execute: () => Promise<string>, timeoutMs: number = QUEUE_TIMEOUT_MS): Promise<string> {
     // If idle, run immediately
     if (!this.running && this.queue.length === 0) {
       this.running = true;
@@ -454,7 +551,7 @@ class QueryQueue {
 
     // Enqueue with priority
     return new Promise<string>((resolve, reject) => {
-      this.queue.push({ priority, resolve, reject, execute, enqueuedAt: Date.now() });
+      this.queue.push({ priority, resolve, reject, execute, enqueuedAt: Date.now(), timeoutMs });
       // Sort by priority (lower number = higher priority)
       this.queue.sort((a, b) => a.priority - b.priority);
     });
@@ -464,8 +561,8 @@ class QueryQueue {
     // Prune timed-out entries
     const now = Date.now();
     this.queue = this.queue.filter(entry => {
-      if (now - entry.enqueuedAt > QUEUE_TIMEOUT_MS) {
-        entry.resolve('[Request timed out in queue]');
+      if (now - entry.enqueuedAt > entry.timeoutMs) {
+        entry.resolve(QUEUE_TIMEOUT_MESSAGE);
         return false;
       }
       return true;
@@ -490,22 +587,9 @@ class QueryQueue {
 
 const queryQueue = new QueryQueue();
 
-// Extract a short summary from thinking text (first sentence, capped at ~120 chars).
-// Exported for the heartbeat idle outbox watcher (heartbeat/runtime.ts), which
-// builds the same thinking-segment metadata for out-of-turn deliveries.
-export function extractThinkingSummary(text: string): string {
-  const trimmed = text.replace(/^\s+/, '');
-  // Find first sentence boundary
-  const match = trimmed.match(/^(.+?(?:\.\s|!\s|\?\s|\n))/);
-  if (match) {
-    const sentence = match[1].trim();
-    if (sentence.length <= 120) return sentence;
-    return sentence.slice(0, 117) + '...';
-  }
-  // No sentence boundary found — take first 120 chars
-  if (trimmed.length <= 120) return trimmed;
-  return trimmed.slice(0, 117) + '...';
-}
+// Re-exported for the heartbeat idle outbox watcher (heartbeat/runtime.ts),
+// which builds the same thinking-segment metadata for out-of-turn deliveries.
+export { extractThinkingSummary };
 
 // Exported for tests (agent.segments.test.ts) — not part of the service API.
 export interface ThinkingInsertion {
@@ -573,13 +657,32 @@ export function buildSegments(fullResponse: string, toolInsertions: ToolInsertio
   return segments;
 }
 
+export { isDeliberateSilence };
+
+/**
+ * Whether an empty turn left something worth keeping as a message. Tool and
+ * thinking trails count; a surfaced memory card on its own does not — it is
+ * the house remembering, not the companion doing anything, and counting it
+ * left empty wake bubbles holding only a recall card.
+ */
+export function hasDurableTurnArtifacts(input: {
+  toolCount: number;
+  thinkingCount: number;
+  surfacedRecall: unknown;
+}): boolean {
+  return input.toolCount > 0 || input.thinkingCount > 0;
+}
+
 export function shouldDiscardEmptyTurn(input: {
   fullResponse: string;
   stoppedByUser: boolean;
   agentTimedOut: boolean;
   endedSilently: boolean;
   hasDurableArtifacts: boolean;
+  /** The turn answered exactly [SILENT] (isDeliberateSilence). */
+  deliberateSilence?: boolean;
 }): boolean {
+  if (input.deliberateSilence) return true;
   if (input.fullResponse.trim()) return false;
   if (input.stoppedByUser || input.agentTimedOut) return true;
   return input.endedSilently && !input.hasDurableArtifacts;
@@ -697,6 +800,7 @@ export class AgentService {
   }
 
   stopGeneration(): boolean {
+    roomStopRequested = true;
     if (activeAbortController) {
       activeAbortController.abort();
       return true;
@@ -720,7 +824,7 @@ export class AgentService {
         recordTransientAgentSocketError('reconnectMcpServer', err);
         return { success: false, error: 'Claude control stream closed — try again on the next message' };
       }
-      return { success: false, error: err instanceof Error ? err.message : String(err) };
+      return { success: false, error: errMessage(err) };
     }
   }
 
@@ -777,7 +881,7 @@ export class AgentService {
         recordTransientAgentSocketError('toggleMcpServer', err);
         return { success: false, error: 'Claude control stream closed — try again on the next message' };
       }
-      return { success: false, error: err instanceof Error ? err.message : String(err) };
+      return { success: false, error: errMessage(err) };
     }
   }
 
@@ -792,7 +896,7 @@ export class AgentService {
         recordTransientAgentSocketError('rewindFiles', err);
         return { canRewind: false, error: 'Claude control stream closed — try again on the next message' };
       }
-      return { canRewind: false, error: err instanceof Error ? err.message : String(err) };
+      return { canRewind: false, error: errMessage(err) };
     }
   }
 
@@ -807,56 +911,211 @@ export class AgentService {
     }
   }
 
-  async processMessage(threadId: string, content: string, threadMeta?: { name: string; type: 'daily' | 'named' }, opts?: {
+  async processMessage(threadId: string, content: string, threadMeta?: { name: string; type: 'daily' | 'named' | 'treehouse' }, opts?: {
     platform?: 'web' | 'discord' | 'telegram' | 'api';
     platformContext?: string;
+    withdrawn?: string;
     discordChannelId?: string;
     discordGuildId?: string;
     discordMessageId?: string;
     images?: NormalizedImage[];
     /** Slice 4A: dispatch turn id minted by the roster dispatcher (ws.ts). */
     turnId?: string;
+    /** Living Room: who already answered earlier in this round (a remote
+     *  brain like Companion C). The first local lane hears them exactly as a later
+     *  lane hears its brother (priorVoicesBlock). */
+    roomVoices?: ReadonlyArray<{ name: string; text: string }>;
+    /** Living Room: each local voice that answers, so the dispatcher can hand
+     *  it to the seats that speak after this one. */
+    onRoomVoice?: (voice: { name: string; text: string }) => void;
+    /** Who is asking, so a guest's turn can be refused tools on every
+     *  engine (services/turn-audience.ts). Only Discord sets it; the phone,
+     *  Telegram and the house's wakes leave it out and are the owner's. */
+    audience?: TurnAudience;
   }): Promise<string> {
-    // Determine priority based on platform
     const platform = opts?.platform || 'web';
-    let priority: number;
-    if (platform === 'web') {
-      priority = PRIORITIES.web_interactive;
-    } else if (platform === 'telegram') {
-      // Telegram is owner-only — always high priority
-      priority = PRIORITIES.discord_owner;
-    } else if (platform === 'discord') {
-      // Check if it's the owner by inspecting platformContext
-      // Discord messages from the owner get higher priority
-      const isOwner = opts?.platformContext?.includes('owner');
-      priority = isOwner ? PRIORITIES.discord_owner : PRIORITIES.discord_other;
-    } else {
-      priority = PRIORITIES.web_interactive;
+    const priority = queuePriorityFor(platform, opts?.audience);
+
+    // A turn already running on the warm CLI session can be reached directly.
+    // Without this the message parks in the queue behind the very turn it is
+    // trying to answer — so a question asked mid-turn cannot be answered until
+    // that turn gives up. Images and non-web platforms keep the normal path:
+    // a side note is text only. It carries its thread, and only a lane whose
+    // turn is in THIS thread takes it (Aerie) — a message from another thread
+    // queues for its own turn instead of being answered in the wrong room. An
+    // SDK or Codex turn has no lane to take it, and the message queues.
+    if (platform === 'web' && !opts?.images?.length && !opts?.withdrawn) {
+      if (deliverSideNoteToBusySession(content, threadId)) {
+        return '';
+      }
     }
 
     return queryQueue.enqueue(priority, async () => {
       presenceStatus = 'waking';
       registry.broadcast({ type: 'presence', status: 'waking' });
-      return this._processQuery(threadId, content, false, threadMeta, opts);
-    });
+      const room = this.roomLanesFor(threadId);
+      if (room) return this._runRoom(threadId, content, room, threadMeta, opts);
+      return this._sharedLaneTurn(threadId, content, threadMeta, opts);
+    }, queueTimeoutFor(priority));
   }
 
-  async processAutonomous(threadId: string, prompt: string): Promise<string> {
+  /**
+   * The shared lane's turn. In a Living Room round where someone else already
+   * answered, it hears them first, in the same words The Room uses between
+   * lanes; its own reply is handed on to whoever speaks next. With no voices
+   * this is exactly `_processQuery`.
+   */
+  private async _sharedLaneTurn(
+    threadId: string,
+    content: string,
+    threadMeta?: { name: string; type: 'daily' | 'named' | 'treehouse' },
+    opts?: Parameters<AgentService['processMessage']>[3],
+  ): Promise<string> {
+    const voices = opts?.roomVoices ?? [];
+    const withVoices = voices.length ? content + priorVoicesBlock([...voices], roomUserName()) : content;
+    const reply = await this._processQuery(threadId, withVoices, false, threadMeta, opts);
+    if (reply && reply.trim()) {
+      opts?.onRoomVoice?.({ name: roomHouseName(), text: reply });
+    }
+    return reply;
+  }
+
+  /**
+   * The Room ("A Lane Each", agent.multi_lane): which companions get a lane
+   * of their own for this thread's turn, or null for the shared lane.
+   *
+   * Adapted from the sibling fork's dispatch: the room splits only when the
+   * switch is on, every companion of the resident brain seated in the thread
+   * has a bio (the lock), and every one of them resolves to a warm lane —
+   * Claude (CLI, or SDK riding CLI) or Codex CLI. An API model anywhere
+   * keeps the whole turn on the shared lane — never half a room.
+   */
+  private roomLanesFor(threadId: string): Array<{ id: string; name: string }> | null {
+    try {
+      const on = getDbConfig('agent.multi_lane') === 'true';
+      const seats = getThreadRoster(threadId).filter((c) => c.brain === LOCAL_COMPANION_ID);
+      if (!shouldFanOut(on, false, seats.length)) return null;
+      if (!roomBiosReady().ready) return null;
+      for (const seat of seats) {
+        const { modelRef } = resolveModelForTurn({ isAutonomous: false, threadId, companionId: seat.id });
+        if (modelRef.runtime !== 'claude-cli' && modelRef.runtime !== 'claude-sdk' && modelRef.runtime !== 'codex-cli') return null;
+      }
+      return seats.map((c) => ({ id: c.id, name: c.display_name || c.id }));
+    } catch (err) {
+      console.warn('[Agent] Room check failed — shared lane:', err);
+      return null;
+    }
+  }
+
+  /**
+   * Pass one turn between the companions' own lanes in a shuffled order. The
+   * first seat sees only the owner's message; each later seat is handed what
+   * the earlier ones said (priorVoicesBlock — the sibling fork's wording,
+   * whole). Each reply is its own message. One lane failing is not the room
+   * failing; a room where nobody answered falls through to the shared lane.
+   */
+  private async _runRoom(
+    threadId: string,
+    content: string,
+    seats: Array<{ id: string; name: string }>,
+    threadMeta?: { name: string; type: 'daily' | 'named' | 'treehouse' },
+    opts?: Parameters<AgentService['processMessage']>[3],
+  ): Promise<string> {
+    roomStopRequested = false;
+    // History handed to a lane stops here: later lanes get earlier replies
+    // in their prompt, not a second time in history.
+    const historyBefore = new Date().toISOString();
+    const order = shuffled(seats);
+    console.log(`[Agent] Room: ${order.map((s) => s.id).join(' → ')} (thread ${threadId})`);
+    // Anyone who already answered this round (a remote brain in the Living
+    // Room) is in the room before the first lane speaks.
+    const spoken: Array<{ name: string; text: string }> = [...(opts?.roomVoices ?? [])];
+    const replies: string[] = [];
+    for (const seat of order) {
+      if (roomStopRequested) {
+        console.log('[Agent] Room stopped by the owner — remaining lanes skipped');
+        return replies.join('\n\n');
+      }
+      const laneContent = spoken.length === 0 ? content : content + priorVoicesBlock(spoken, roomUserName());
+      try {
+        const reply = await this._processQuery(threadId, laneContent, false, threadMeta, { ...opts, lane: { companionId: seat.id, historyBefore } });
+        if (reply && reply.trim()) {
+          spoken.push({ name: seat.name, text: reply });
+          replies.push(reply);
+          opts?.onRoomVoice?.({ name: seat.name, text: reply });
+        }
+      } catch (err) {
+        console.error(`[Agent] Lane ${seat.id} failed this turn:`, err);
+      }
+    }
+    if (replies.length > 0) return replies.join('\n\n');
+    console.warn('[Agent] Room produced nothing — falling through to the shared lane');
+    return this._sharedLaneTurn(threadId, content, threadMeta, opts);
+  }
+
+  /**
+   * A wake. With `ownerId` (a bell that belongs to a companion), it rings in
+   * his own lane, as him — the sibling fork's owned-bell door — whatever The
+   * Room is set to. See wakeLaneFor for which door.
+   */
+  async processAutonomous(threadId: string, prompt: string, ownerId?: string): Promise<string> {
     return queryQueue.enqueue(PRIORITIES.autonomous, async () => {
-      return this._processQuery(threadId, prompt, true);
-    });
+      const lane = ownerId ? this.wakeLaneFor(ownerId) : null;
+      return this._processQuery(threadId, prompt, true, undefined, lane ? { lane: { companionId: lane } } : undefined);
+    }, AUTONOMOUS_QUEUE_TIMEOUT_MS);
   }
 
-  private async _processQuery(threadId: string, content: string, isAutonomous = false, threadMeta?: { name: string; type: 'daily' | 'named' }, platformOpts?: {
+  /**
+   * Which door an owned bell rings at (the sibling fork's rule): a Codex owner
+   * always rings in his own lane — Codex conversations don't go cold. A Claude
+   * owner rings in his own lane when it is warm, or when the shared lane is
+   * cold too; when his is cold but the shared one is warm, "a lane that was
+   * there beats a lane that is theirs" — the bell rings in the warm shared
+   * lane, its prompt already naming him. An API model rings in the shared lane.
+   * Returns the lane's companion id, or null for the shared lane.
+   */
+  private wakeLaneFor(ownerId: string): string | null {
+    try {
+      const { modelRef } = resolveModelForTurn({ isAutonomous: true, threadId: '', companionId: ownerId });
+      if (modelRef.runtime === 'codex-cli') return ownerId;
+      if (modelRef.runtime !== 'claude-cli' && modelRef.runtime !== 'claude-sdk') return null;
+      const ownWarm = isHeartbeatLaneWarm(ownerId);
+      const sharedWarm = isHeartbeatLaneWarm('primary');
+      if (ownWarm || !sharedWarm) return ownerId;
+      console.log(`[Agent] Wake: ${ownerId}'s lane is cold — ringing in the warm shared lane`);
+      return null;
+    } catch (err) {
+      console.warn(`[Agent] Wake lane for ${ownerId} unresolved — shared lane:`, err);
+      return null;
+    }
+  }
+
+  private async _processQuery(threadId: string, content: string, isAutonomous = false, threadMeta?: { name: string; type: 'daily' | 'named' | 'treehouse' }, platformOpts?: {
     platform?: 'web' | 'discord' | 'telegram' | 'api';
     platformContext?: string;
+    withdrawn?: string;
     discordChannelId?: string;
     discordGuildId?: string;
     discordMessageId?: string;
     images?: NormalizedImage[];
     turnId?: string;
+    /** The Room: run this turn in one companion's own lane, as him.
+     *  historyBefore: the room's start — history handed to a runtime leaves
+     *  out replies written from then on, since a later lane is handed those
+     *  in its prompt (the sibling fork's codexHistoryBeforeTurn freeze). */
+    lane?: { companionId: string; historyBefore?: string };
+    audience?: TurnAudience;
   }, _retryWithoutResume = false): Promise<string> {
     ensureInit();
+    // Read once and handed to every engine below: the SDK lane's PreToolUse
+    // hook, the router/Codex tool bridge (via the belt context), and the
+    // warm CLI lanes (in the turn input). A malformed audience is dropped,
+    // not trusted; only Discord ever sets one (turn-audience.ts).
+    const turnAudience = isTurnAudience(platformOpts?.audience) ? platformOpts.audience : undefined;
+    const guestTurn = turnAudience?.kind === 'guest';
+    // Who this turn is: one companion in his own lane, or the resident pair.
+    const laneCompanionId = platformOpts?.lane?.companionId ?? null;
+    const turnCompanionId = laneCompanionId ?? LOCAL_COMPANION_ID;
     const thread = getThread(threadId);
     if (!thread) throw new Error(`Thread ${threadId} not found`);
 
@@ -935,6 +1194,7 @@ export class AgentService {
       // an abort could fire between the hook and the SDK's first
       // `system: compacting` message and miss the cleanup.
       onCompactionStart: () => { isCompactionInProgress = true; },
+      ...(turnAudience ? { audience: turnAudience } : {}),
     };
 
     // First message of this session — include static orientation content (tools, skills, vault)
@@ -953,10 +1213,17 @@ export class AgentService {
     // with zero applicable rows the resolved model is byte-identical to
     // the pre-5a getConfiguredModel output (parity-pinned by
     // agent.model-resolution-parity.test.ts).
-    const { tierConfig, model, modelRef: resolvedModelRef } = resolveModelForTurn({
+    const { tierConfig, model, modelRef: modelRefForTurn } = resolveModelForTurn({
       isAutonomous,
       threadId,
+      ...(laneCompanionId ? { companionId: laneCompanionId } : {}),
     });
+    // A companion's own lane rides Claude CLI: the SDK lane resumes one
+    // session per thread and cannot hold two heads in it (the sibling fork's
+    // rule — sdk maps to the warm CLI lane for the room).
+    const resolvedModelRef = laneCompanionId && modelRefForTurn.runtime === 'claude-sdk'
+      ? normalizeModelRef(`claude-cli/${modelRefForTurn.model}`)
+      : modelRefForTurn;
     // One descriptor per turn: resolved here, consumed by the sidecar READ
     // (bridge block below) and the sidecar WRITE (finally block). Never
     // re-derive at a call site. The stale-session retry path recurses into
@@ -1040,7 +1307,9 @@ export class AgentService {
       // Explicitly pass MCP servers — SDK isolation mode doesn't auto-discover .mcp.json
       // Dynamically filter Mind MCP when not needed (saves ~8-13k tokens on casual messages)
       // allMcpServers = .mcp.json + DB-managed servers (merged above, .mcp.json wins)
-      ...(Object.keys(allMcpServers).length > 0 && {
+      // A guest's turn is handed no MCP servers at all (turn-audience.ts);
+      // the PreToolUse hook refuses every tool on that turn as well.
+      ...(!guestTurn && Object.keys(allMcpServers).length > 0 && {
         mcpServers: filterMcpServers(allMcpServers, {
           isAutonomous,
           isFirstMessage,
@@ -1070,6 +1339,7 @@ export class AgentService {
         ? null
         : getProviderSession({
             threadId: thread.id,
+            lane: laneCompanionId ?? '',
             runtimeId: runtimeDescriptor.runtimeId,
             // Slice 3b: DB filing key maps 'claude' → 'anthropic' (legacy
             // sidecar spelling; every live row is filed under it). Same
@@ -1081,7 +1351,7 @@ export class AgentService {
       // model) triple carry this thread more recently than the hit row?
       // If so, plain resume would wake this model amnesiac about that era.
       // ISO-8601 strings compare lexicographically, so > is chronological.
-      const newestRow = providerSession ? getMostRecentProviderSession(thread.id) : null;
+      const newestRow = providerSession ? getMostRecentProviderSession(thread.id, laneCompanionId ?? '') : null;
       const newerForeignSessionExists = Boolean(
         providerSession && newestRow &&
         newestRow.last_used_at > providerSession.last_used_at &&
@@ -1092,7 +1362,7 @@ export class AgentService {
       const decision = decideBridge({
         retry: _retryWithoutResume,
         sidecarHitForCurrentModel: providerSession !== null,
-        anyPriorSidecarRow: hasAnyProviderSessionForThread(thread.id),
+        anyPriorSidecarRow: hasAnyProviderSessionForThread(thread.id, laneCompanionId ?? ''),
         newerForeignSessionExists,
       });
       recycleCodexSession = Boolean(
@@ -1128,7 +1398,7 @@ export class AgentService {
       threadId,
       // Slice 4A turn envelope: local turns are always the resident pair's
       // brain; the dispatch turnId rides through when the dispatcher minted one.
-      companionId: LOCAL_COMPANION_ID,
+      companionId: turnCompanionId,
       ...(platformOpts?.turnId ? { turnId: platformOpts.turnId } : {}),
     });
 
@@ -1163,7 +1433,10 @@ export class AgentService {
       // Build orientation context (thread, time, gap, status, vault)
       // Prepended to prompt because SessionStart hooks don't fire in V1 query()
       // Static content (CHAT TOOLS, skills, vault path) only on first message of session
-      const orientation = await buildOrientationContext(hookContext, isFirstMessage, content, resolvedModelRef.canonical);
+      const baseOrientation = await buildOrientationContext(hookContext, isFirstMessage, content, resolvedModelRef.canonical);
+      // Port f1e3727a/8beeee4e: all our lanes retain their session on reroll.
+      const orientation = baseOrientation + (platformOpts?.withdrawn
+        ? `\n[Screen change: ${platformOpts.withdrawn}]\n` : '');
       const bridgeBlock = bridgePrior ? buildBridgeBlock(bridgePrior) : '';
       if (bridgePrior && bridgePrior.length > 0) {
         console.log(`[Agent] Bridge injected: ${bridgePrior.length} prior turns (model swap to ${model})`);
@@ -1245,10 +1518,17 @@ export class AgentService {
       // helpers buildAgentTurnInput / computeContextUsageUpdate /
       // buildUsageEventRow.
       if (runtimeDescriptor.modelRef.runtime !== 'claude-sdk') {
-        const dispatchPacket = resolveRuntimeForRef(runtimeDescriptor.modelRef);
+        const sharedPacket = resolveRuntimeForRef(runtimeDescriptor.modelRef);
+        // In the room, a companion's Claude CLI turn runs in his own session.
+        const dispatchPacket = laneCompanionId && runtimeDescriptor.runtimeId === 'claude-cli'
+          ? { ...sharedPacket, runtime: getClaudeCliLaneRuntime(laneCompanionId) }
+          : laneCompanionId && runtimeDescriptor.runtimeId === 'codex-cli'
+            ? { ...sharedPacket, runtime: getCodexCliLaneRuntime(laneCompanionId) }
+            : sharedPacket;
         // History for runtimes without native resume — June consumer
         // shape: last 50 rows, role-mapped to NormalizedMessage.
-        let recent: NormalizedMessage[] = getMessages({ threadId, limit: 50 }).map((m) => ({
+        let recent: NormalizedMessage[] = laneHistory(getMessages({ threadId, limit: 50 }), platformOpts?.lane?.historyBefore)
+          .map((m) => ({
           role: m.role === 'companion'
             ? ('assistant' as const)
             : m.role === 'system'
@@ -1256,7 +1536,14 @@ export class AgentService {
               : ('user' as const),
           content: m.content,
           createdAt: m.created_at,
+          ...(m.role === 'companion' && typeof (m.metadata as Record<string, unknown> | undefined)?.lane === 'string'
+            ? { lane: (m.metadata as Record<string, unknown>).lane as string }
+            : {}),
+          ...(m.role === 'companion' && m.companion_id ? { companionId: m.companion_id } : {}),
         }));
+        // The Room: a later lane's content (owner's message + priorVoicesBlock)
+        // replaces the owner's row rather than riding as a second copy of it.
+        if (laneCompanionId) recent = handLaneContentOver(recent, content);
         // Autonomous wake prompts are never persisted as messages; without
         // this the CLI runtimes (extractLatestUserPrompt) re-deliver the
         // last stored user message instead of the wake prompt.
@@ -1302,7 +1589,9 @@ export class AgentService {
         // inputSchema). Bridge failure must not kill the turn: on throw
         // OR empty, proceed tool-less exactly as before H1.
         let turnTools: ToolDefinition[] | undefined;
-        if (runtimeNeedsRouterToolPayload(runtimeDescriptor.runtimeId)) {
+        // A guest's turn is offered no router tools (turn-audience.ts); the
+        // tool bridge refuses one if a model calls it anyway.
+        if (!guestTurn && runtimeNeedsRouterToolPayload(runtimeDescriptor.runtimeId)) {
           try {
             const routerTools = await getRouterTools();
             if (routerTools.length > 0) {
@@ -1325,7 +1614,9 @@ export class AgentService {
         // pass — foreign lanes have no 150k delivery cap; the whisper's own
         // internal budget is the bound.
         let foreignRecallBlock = '';
-        try {
+        // Not on a guest's turn, same as the warm CLI lane: the guest's words
+        // would choose which memories surfaced, into a room the guest reads.
+        if (!guestTurn) try {
           const laneKey = `${runtimeDescriptor.runtimeId}:${thread.id}`;
           let unfiledBlock = '';
           try { unfiledBlock = unfiledNoticings(); } catch { /* never delay a turn */ }
@@ -1344,7 +1635,12 @@ export class AgentService {
           platform,
           isAutonomous,
           orientation: foreignRecallBlock ? orientation + '\n' + foreignRecallBlock : orientation,
-          systemPromptText: claudeMdContent,
+          // A Codex lane is handed its identity (it walks no folders): the
+          // shared CLAUDE.md plus his lane note and bio. A Claude CLI lane
+          // gets the same layering from its session folder instead.
+          systemPromptText: laneCompanionId && runtimeDescriptor.runtimeId === 'codex-cli'
+            ? claudeMdContent + laneSectionFor(laneCompanionId)
+            : claudeMdContent,
           messages: recent,
           cwd: AGENT_CWD,
           abortSignal: activeAbortController?.signal,
@@ -1354,6 +1650,10 @@ export class AgentService {
         // Sidecar resume: options.resume was set by the bridge block
         // above from THIS descriptor's sidecar row — same key.
         if (options.resume) turnInput.sessionId = options.resume;
+        // The warm CLI lanes carry it to their own gates (Claude CLI: the
+        // Stop hook writes io/.turn-audience for hooks/gate.cjs; Codex CLI:
+        // a read-only, no-approval turn). Absent = the owner's turn.
+        if (turnAudience) turnInput.audience = turnAudience;
         if (recycleCodexSession) {
           turnInput.sessionRecycle = { reason: 'idle', historyLimit: 30 };
         }
@@ -1384,6 +1684,7 @@ export class AgentService {
         // construction with no per-turn context). See chat-tool-belt.ts.
         await runWithBeltContext({
           threadId,
+          ...(turnAudience ? { audience: turnAudience } : {}),
           discordChannelId: platformOpts?.discordChannelId,
           discordGuildId: platformOpts?.discordGuildId,
           discordMessageId: platformOpts?.discordMessageId,
@@ -1775,6 +2076,14 @@ export class AgentService {
               message: `Context compacted (was ${Math.round(preTokens / 1000)}K tokens)`,
               isComplete: true,
             });
+            // Post handoff note to treehouse (Aerie: agent-sdk-query.ts)
+            postCompactionHandoff({
+              threadId: hookContext.threadId,
+              threadName: hookContext.threadName,
+              preTokens,
+              isAutonomous,
+              platform,
+            });
             // Reset tracking — new context window after compaction
             contextTokensUsed = 0;
             // Reset response buffer — pre-compaction text was incomplete and post-compaction
@@ -1847,7 +2156,7 @@ export class AgentService {
       }
       } // end claude-sdk lane (Slice 3b dual-path — see branch open above)
     } catch (error) {
-      const errMsg = error instanceof Error ? error.message : String(error);
+      const errMsg = errMessage(error);
       console.error('Agent query error:', errMsg, error);
 
       // Stale session recovery: if Claude Code can't find the session, clear it and retry fresh
@@ -1879,12 +2188,17 @@ export class AgentService {
       // Track session transition and update for future resume
       if (sessionId) {
         const previousSessionId = thread.current_session_id;
-        const now = new Date().toISOString();
+        // Boundary stamp is the TURN'S START, not this finally block's clock:
+        // the turn's usage row was already written mid-stream with an earlier
+        // created_at, and session totals attribute rows by half-open
+        // [started_at, ended_at) windows — stamping the boundary at turn end
+        // would file every session's first turn onto its predecessor's card.
+        const boundary = new Date(requestStartMs).toISOString();
 
         // End the previous session record (if tracked)
         if (previousSessionId && previousSessionId !== sessionId) {
           try {
-            endSessionRecord({ sessionId: previousSessionId, endedAt: now, endReason: 'resumed' });
+            endSessionRecord({ sessionId: previousSessionId, endedAt: boundary, endReason: 'resumed' });
           } catch { /* Previous session may not have a record yet */ }
         }
 
@@ -1896,7 +2210,7 @@ export class AgentService {
               threadId,
               sessionId,
               sessionType: (thread.session_type as 'v1' | 'v2') || 'v2',
-              startedAt: now,
+              startedAt: boundary,
             });
           } catch (err) {
             if (!(err instanceof Error && err.message.includes('UNIQUE'))) {
@@ -1913,6 +2227,7 @@ export class AgentService {
         // NOT consulted for resume.
         setProviderSession({
           threadId,
+          lane: laneCompanionId ?? '',
           runtimeId: runtimeDescriptor.runtimeId,
           // Slice 3b: same 'claude' → 'anthropic' filing map as the read
           // site — see sidecarProviderFor (agent/sidecar.ts).
@@ -1925,8 +2240,26 @@ export class AgentService {
       registry.broadcast({ type: 'presence', status: 'dormant' });
     }
 
+    // A deliberate pass ([SILENT], see isDeliberateSilence) posts nothing:
+    // the sentinel is dropped here so no bubble, push or reply carries it.
+    const deliberateSilence = isDeliberateSilence(fullResponse);
+    if (deliberateSilence) fullResponse = '';
+
+    // Status tags ([companion-a mood: playful]) set what shows under their names on
+    // her Status widget, and come out before anything is kept or sent. The
+    // segments are cut from the reply as streamed (their offsets point into
+    // it), then their text loses its tags the same way.
+    const streamedResponse = fullResponse;
+    const tagged = extractStatusTags(fullResponse);
+    if (tagged.updates.length > 0) {
+      fullResponse = tagged.text;
+      applyStatusTagUpdates(tagged.updates);
+    }
+
     // Build segments for interleaved tool/thinking display
-    const segments = buildSegments(fullResponse, toolInsertions, thinkingBlocks);
+    const segments = buildSegments(streamedResponse, toolInsertions, thinkingBlocks)
+      .map(seg => (tagged.updates.length > 0 && seg.type === 'text' ? { ...seg, content: stripStatusTags(seg.content) } : seg))
+      .filter(seg => seg.type !== 'text' || seg.content.length > 0);
     const metadataParts: Record<string, unknown> = {};
     if (segments.length > 0) metadataParts.segments = segments;
     // The shiver rides in message metadata (a JSON column that already flows
@@ -1952,21 +2285,25 @@ export class AgentService {
     // message instead of throwing it away with the transient stream state.
     // Truly empty silent turns remain invisible, as do empty user-stop and
     // safety-timeout corpses.
-    const hasDurableArtifacts =
-      toolInsertions.length > 0 || thinkingBlocks.length > 0 || surfacedRecall !== null;
+    const hasDurableArtifacts = hasDurableTurnArtifacts({
+      toolCount: toolInsertions.length,
+      thinkingCount: thinkingBlocks.length,
+      surfacedRecall,
+    });
     const isEmptyStreamEnd = shouldDiscardEmptyTurn({
       fullResponse,
       stoppedByUser,
       agentTimedOut,
       endedSilently,
       hasDurableArtifacts,
+      deliberateSilence,
     });
 
     if (isEmptyStreamEnd) {
       registry.broadcast({
         type: 'stream_end',
         messageId: streamMsgId,
-        companionId: LOCAL_COMPANION_ID,
+        companionId: turnCompanionId,
         ...(platformOpts?.turnId ? { turnId: platformOpts.turnId } : {}),
       });
     } else {
@@ -1980,9 +2317,11 @@ export class AgentService {
         content: fullResponse || (hasDurableArtifacts ? '' : '[No response]'),
         contentType: 'text',
         platform,
-        metadata: messageMetadata,
+        // Which lane wrote this row, so a warm lane can tell its own words
+        // from another lane's (heartbeat other-lane net).
+        metadata: { ...(messageMetadata ?? {}), lane: laneTagFor(runtimeDescriptor.runtimeId, laneCompanionId) },
         createdAt: new Date().toISOString(),
-        companionId: LOCAL_COMPANION_ID,
+        companionId: turnCompanionId,
       });
 
       // End stream
@@ -1990,7 +2329,7 @@ export class AgentService {
         type: 'stream_end',
         messageId: streamMsgId,
         final: companionMessage,
-        companionId: LOCAL_COMPANION_ID,
+        companionId: turnCompanionId,
         ...(platformOpts?.turnId ? { turnId: platformOpts.turnId } : {}),
       });
     }

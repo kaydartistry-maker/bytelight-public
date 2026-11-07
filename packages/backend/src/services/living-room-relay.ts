@@ -4,6 +4,7 @@ import { registry } from './registry.js';
 import { createMessage, getMessages } from './db.js';
 import { getSecret } from './secrets.js';
 import { getBytelightConfig } from '../config.js';
+import { priorVoicesBlock } from './room-turns.js';
 
 // Living Room remote dispatch (Slice 4C).
 //
@@ -34,6 +35,11 @@ const REMOTE_BRAINS: Record<string, RemoteBrainConfig> = {
 
 export function isRemoteBrain(brain: string): boolean {
   return brain in REMOTE_BRAINS;
+}
+
+/** The name a remote brain goes by in the room ("Companion C"). */
+export function remoteDisplayName(brain: string): string {
+  return REMOTE_BRAINS[brain]?.displayName ?? brain.charAt(0).toUpperCase() + brain.slice(1);
 }
 
 function buildHistory(threadId: string): Array<{ author: string; content: string }> {
@@ -97,18 +103,25 @@ export async function dispatchRemoteTurn(params: {
   turnId: string;
   message: string;
   threadName?: string;
-}): Promise<void> {
-  const { brain, threadId, turnId, message, threadName } = params;
+  /** Who already answered earlier in this same round (the Living Room
+   *  hand-off). The remote seat is told they are right here, in the same
+   *  words the local lanes get (room-turns.ts priorVoicesBlock). */
+  priorVoices?: ReadonlyArray<{ name: string; text: string }>;
+}): Promise<string> {
+  const { brain, threadId, turnId, threadName } = params;
   const remote = REMOTE_BRAINS[brain];
   if (!remote) {
     console.warn(`[dispatch] unknown remote brain '${brain}' — skipping seat`);
-    return;
+    return '';
   }
   const token = getSecret('living_room_token');
   if (!token) {
     console.error(`[dispatch] no living_room_token in secrets store — cannot reach '${brain}'`);
-    return;
+    return '';
   }
+  const message = params.priorVoices?.length
+    ? params.message + priorVoicesBlock([...params.priorVoices], getBytelightConfig().identity.user_name || 'the operator')
+    : params.message;
   const baseUrl = getSecret(`living_room_${brain}_url`) || remote.baseUrl;
 
   const abort = new AbortController();
@@ -143,7 +156,7 @@ export async function dispatchRemoteTurn(params: {
     if (!res.ok || !res.body) {
       const detail = await res.text().catch(() => '');
       console.error(`[dispatch] '${brain}' bridge answered ${res.status}: ${detail.slice(0, 200)}`);
-      return;
+      return '';
     }
 
     for await (const { event, data } of parseSse(res.body)) {
@@ -204,9 +217,15 @@ export async function dispatchRemoteTurn(params: {
               content,
               contentType: 'text',
               platform: 'web',
-              ...(remoteFinal?.metadata && typeof remoteFinal.metadata === 'object'
-                ? { metadata: remoteFinal.metadata as Record<string, unknown> }
-                : {}),
+              // Always our own lane tag, never the remote node's: a remote
+              // row stamped e.g. claude-cli:primary would read as OUR
+              // primary lane's words and be dropped by the other-lane net.
+              metadata: {
+                ...(remoteFinal?.metadata && typeof remoteFinal.metadata === 'object'
+                  ? remoteFinal.metadata as Record<string, unknown>
+                  : {}),
+                lane: `relay:${brain}`,
+              },
               createdAt: new Date().toISOString(),
               companionId: brain,
             });
@@ -214,14 +233,14 @@ export async function dispatchRemoteTurn(params: {
           } else {
             broadcast({ type: 'stream_end', messageId: localMessageId, ...stamp });
           }
-          return;
+          return content.trim() ? content : '';
         }
         case 'error':
           console.error(`[dispatch] '${brain}' turn error: ${String(data.message ?? 'unknown')}`);
           if (streamStarted) {
             broadcast({ type: 'stream_end', messageId: localMessageId, ...stamp });
           }
-          return;
+          return '';
       }
     }
 
@@ -236,10 +255,14 @@ export async function dispatchRemoteTurn(params: {
           content: lastText,
           contentType: 'text',
           platform: 'web',
+          // Same tag as a clean end: an untagged row is not speech to the
+          // other-lane net, so the locals would never hear this reply.
+          metadata: { lane: `relay:${brain}` },
           createdAt: new Date().toISOString(),
           companionId: brain,
         });
         broadcast({ type: 'stream_end', messageId: localMessageId, final: persisted, ...stamp });
+        return lastText;
       } else {
         broadcast({ type: 'stream_end', messageId: localMessageId, ...stamp });
       }
@@ -253,4 +276,5 @@ export async function dispatchRemoteTurn(params: {
   } finally {
     clearTimeout(timeout);
   }
+  return '';
 }

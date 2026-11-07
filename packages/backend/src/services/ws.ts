@@ -39,9 +39,9 @@ import {
   pinThread,
   unpinThread,
 } from './db.js';
-import { AgentService } from './agent.js';
+import { AgentService, QUEUE_TIMEOUT_MESSAGE } from './agent.js';
 import { getThreadRoster, type Companion } from './db/rooms.js';
-import { dispatchRemoteTurn } from './living-room-relay.js';
+import { dispatchRemoteTurn, remoteDisplayName } from './living-room-relay.js';
 import { Orchestrator } from './orchestrator.js';
 import { getFile } from './files.js';
 import { capImageBlocks, MAX_IMAGES_PER_TURN, type ImageBlock } from './visual-blocks.js';
@@ -58,8 +58,11 @@ import {
 import type { DiscordService } from './discord/index.js';
 import type { TelegramService } from './telegram/index.js';
 import { getBytelightConfig, persistVoiceReadAloud } from '../config.js';
+import { cutOffPrompt, leaseTurn, releaseTurn, takeCutOffTurns } from './db/turn-leases.js';
 import { buildCommandRegistry, handleCommand } from './commands.js';
 import { getActiveStreamSnapshots } from './active-streams.js';
+import { errMessage } from '../util/errors.js';
+import { bellStatus } from './bell-status.js';
 
 function getAllowedOrigins(): string[] {
   const config = getBytelightConfig();
@@ -118,7 +121,7 @@ function buildInlineTextAttachmentContext(args: {
 
     return `\n\n--- Begin attached text: ${filename || 'attachment'} ---\n${body}\n--- End attached text: ${filename || 'attachment'} ---`;
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
+    const message = errMessage(err);
     return `\n\n[Could not inline text attachment: ${message}]`;
   }
 }
@@ -156,6 +159,16 @@ function threadsToSummaries(threads: Thread[]): ThreadSummary[] {
     last_message_preview: getLastMessagePreview(t.id),
     pinned_at: t.pinned_at ?? null,
   }));
+}
+
+/**
+ * The owner's message waited out the whole queue window without a turn. It
+ * must never vanish silently — return the notice to show her, or null when
+ * the response is an ordinary reply (or an empty side-note hand-off).
+ */
+export function queueTimeoutNotice(response: string | undefined): string | null {
+  if (typeof response !== 'string' || response.trim() !== QUEUE_TIMEOUT_MESSAGE) return null;
+  return 'Your message waited too long behind another turn and was not answered. It is saved — send it again, or nudge the companions.';
 }
 
 function sendError(ws: WebSocket, code: string, message: string): void {
@@ -286,6 +299,11 @@ export function createWebSocketServer(server: HTTPServer, agentService?: AgentSe
       commands: buildCommandRegistry(),
     };
     extWs.send(JSON.stringify(connectedMsg));
+
+    // The word under the faces as it stands, so a phone that connects in the
+    // middle of a bell shows it (services/bell-status.ts, Aerie).
+    const statusWordMsg: ServerMessage = { type: 'status_word', ...bellStatus().now() };
+    extWs.send(JSON.stringify(statusWordMsg));
 
     // Send canvas list
     const canvases = listCanvases();
@@ -685,6 +703,13 @@ async function handleMessageSend(
     return;
   }
 
+  // The Treehouse is the companions' room: the owner reads it, she does not
+  // post in it. Its app has no composer; this is the same rule at the door.
+  if (thread.type === 'treehouse') {
+    sendError(ws, 'treehouse_read_only', 'The Treehouse is read-only');
+    return;
+  }
+
   // Store user's message
   const userMessage = createMessage({
     id: crypto.randomUUID(),
@@ -726,19 +751,12 @@ async function handleMessageSend(
   }> | undefined;
 
   if (batchAttachments && batchAttachments.length > 0) {
-    // Store each file as its own message in DB so the UI renders them individually
-    for (const att of batchAttachments) {
-      const fileMsg = createMessage({
-        id: crypto.randomUUID(),
-        threadId: thread.id,
-        role: 'user',
-        content: att.url,
-        contentType: att.contentType as 'image' | 'audio' | 'file',
-        metadata: { fileId: att.fileId, filename: att.filename, size: att.size, mimeType: att.mimeType },
-        createdAt: now,
-      });
-      registry.broadcast({ type: 'message', message: fileMsg });
-    }
+    // The user's message stored above already carries metadata.attachments,
+    // and both clients render each one inline in that bubble. We previously
+    // also saved each attachment as its own contentType:'image' message and
+    // broadcast it — that produced a duplicate bubble for every file sent
+    // alongside text. One message, one row: the attachments list on the
+    // user's message is the source of truth.
 
     // Build ONE combined agent prompt for all files
     const images = batchAttachments.filter(a => a.contentType === 'image');
@@ -864,6 +882,7 @@ async function handleMessageSend(
   }
 
   // Process through agent — agent service handles streaming, DB storage, and broadcasting
+  let leaseId: string | null = null;
   try {
     // Slice 4A — roster dispatch. One dispatch turn per user message; the
     // roster's brains answer in a SHUFFLED order every turn (the operator's rule: no
@@ -874,8 +893,15 @@ async function handleMessageSend(
     // brain alone — byte-identical to pre-4A behavior.
     const dispatchTurnId = crypto.randomUUID();
     const brains = planDispatchOrder(getThreadRoster(thread.id));
+    // Written down until the turn ends, so a restart that cuts it off picks
+    // it back up on boot (services/db/turn-leases.ts).
+    leaseId = leaseTurn({ threadId: thread.id, userMessageId: userMessage.id, prompt: agentPrompt, hadImages: !!agentImages?.length });
 
     let agentResponse: string | undefined;
+    // Living Room hand-off: what each seat said this round, handed to every
+    // seat that speaks after it so the room talks to each other, not only to
+    // her. A single-brain roster never fills it — byte-identical to before.
+    const roomVoices: Array<{ name: string; text: string }> = [];
     for (const brain of brains) {
       if (brain === 'companion-a-b') {
         agentResponse = await agentService.processMessage(
@@ -885,6 +911,8 @@ async function handleMessageSend(
           {
             ...(agentImages?.length ? { images: agentImages } : {}),
             turnId: dispatchTurnId,
+            ...(roomVoices.length ? { roomVoices: [...roomVoices] } : {}),
+            ...(brains.length > 1 ? { onRoomVoice: (v: { name: string; text: string }) => { roomVoices.push(v); } } : {}),
           },
         );
       } else {
@@ -894,16 +922,25 @@ async function handleMessageSend(
         // the remote companion's id. Sequential order means this seat sees
         // replies made earlier this turn. dispatchRemoteTurn never throws —
         // a dark remote node logs and the turn moves on.
-        await dispatchRemoteTurn({
+        const remoteReply = await dispatchRemoteTurn({
           brain,
           threadId: thread.id,
           turnId: dispatchTurnId,
           message: agentPrompt,
           threadName: thread.name,
+          ...(roomVoices.length ? { priorVoices: [...roomVoices] } : {}),
         });
+        if (remoteReply.trim()) roomVoices.push({ name: remoteDisplayName(brain), text: remoteReply });
       }
     }
     updateThreadActivity(thread.id, new Date().toISOString(), true);
+
+    const timeoutNotice = queueTimeoutNotice(agentResponse);
+    if (timeoutNotice) {
+      console.warn(`[Agent] Owner message timed out in queue (thread ${thread.id})`);
+      sendError(ws, 'queue_timeout', timeoutNotice);
+      agentResponse = undefined;
+    }
 
     // Auto-TTS: stream voice to any user connection with voice mode enabled
     const hasVoice = voiceServiceInstance?.canTTS;
@@ -931,6 +968,40 @@ async function handleMessageSend(
   } catch (error) {
     console.error('Agent processing error:', error);
     sendError(ws, 'agent_error', `${config.identity.companion_name} encountered an error processing your message`);
+  } finally {
+    if (leaseId) releaseTurn(leaseId);
+  }
+}
+
+/**
+ * Boot: answer the phone messages a restart cut off (services/db/turn-leases.ts).
+ * One at a time, oldest first, each in its own thread, the way her live
+ * messages go. A thread that no longer exists drops its lease.
+ */
+export async function recoverCutOffTurns(agentService: AgentService): Promise<void> {
+  const leases = takeCutOffTurns();
+  if (leases.length === 0) return;
+  const userName = getBytelightConfig().identity.user_name;
+  console.log(`[turn-leases] Picking up ${leases.length} turn${leases.length === 1 ? '' : 's'} a restart cut off`);
+  for (const lease of leases) {
+    const thread = getThread(lease.threadId);
+    if (!thread) {
+      releaseTurn(lease.id);
+      continue;
+    }
+    try {
+      await agentService.processMessage(
+        thread.id,
+        cutOffPrompt(lease, userName),
+        { name: thread.name, type: thread.type },
+        { turnId: crypto.randomUUID() },
+      );
+      updateThreadActivity(thread.id, new Date().toISOString(), true);
+    } catch (error) {
+      console.error('[turn-leases] Retry failed:', error);
+    } finally {
+      releaseTurn(lease.id);
+    }
   }
 }
 

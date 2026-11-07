@@ -27,6 +27,29 @@ describe('MCP transport ownership policies', () => {
     assert.match(args, /bearer_token_env_var="BYTELIGHT_MCP_BELT_TOKEN"/);
   });
 
+  it('gives the owned app-server every .mcp.json server alongside the belt', () => {
+    const args = codexAppServerArgs('http://127.0.0.1:3002/mcp/belt', {
+      mind: { type: 'stdio', command: 'node', args: ['mind.js', '--port', '9'], env: { MIND_KEY: 'k' } },
+      cortex: { type: 'http', url: 'https://cortex.example/mcp', headers: { Authorization: 'Bearer t' } },
+      plain: { type: 'stdio', command: 'tool' },
+    });
+    const table = args[args.indexOf('-c') + 1];
+    assert.match(table, /^mcp_servers=\{bytelight=\{url="http:\/\/127\.0\.0\.1:3002\/mcp\/belt"/);
+    assert.match(table, /"mind"=\{"command"="node","args"=\["mind\.js","--port","9"\],"env"=\{"MIND_KEY"="k"\}\}/);
+    assert.match(table, /"cortex"=\{"url"="https:\/\/cortex\.example\/mcp","http_headers"=\{"Authorization"="Bearer t"\}\}/);
+    assert.match(table, /"plain"=\{"command"="tool"\}/);
+  });
+
+  it('keeps the bytelight name for the belt and escapes TOML strings', () => {
+    const args = codexAppServerArgs('http://belt', {
+      bytelight: { type: 'stdio', command: 'impostor' },
+      'odd "name"': { type: 'stdio', command: 'C:\\tools\\run' },
+    });
+    const table = args[args.indexOf('-c') + 1];
+    assert.doesNotMatch(table, /impostor/);
+    assert.ok(table.includes('"odd \\"name\\""={"command"="C:\\\\tools\\\\run"}'));
+  });
+
   it('rejects ambiguous tool ownership before advertising the catalog', () => {
     assert.doesNotThrow(() => assertUniqueToolNames([
       { name: 'alpha', source: 'belt' },

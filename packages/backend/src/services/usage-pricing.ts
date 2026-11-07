@@ -8,9 +8,16 @@ interface ModelPricing {
 }
 
 const PRICING: Record<string, ModelPricing> = {
+  'claude-fable-5-1': { input: 10, output: 50 },
+  'claude-opus-5-5': { input: 4, output: 20 },
+  'claude-sonnet-5-5': { input: 2, output: 10 },
+  'claude-haiku-5-5': { input: 0.10, output: 0.50 },
+  'claude-fable-5': { input: 10, output: 50 },
+  'claude-opus-4-8': { input: 5, output: 25 },
+  'claude-sonnet-5': { input: 3, output: 15 },
   'claude-opus-5': { input: 5, output: 25 },
-  'claude-opus-4-7': { input: 15, output: 75 },
-  'claude-opus-4-6': { input: 15, output: 75 },
+  'claude-opus-4-7': { input: 5, output: 25 },
+  'claude-opus-4-6': { input: 5, output: 25 },
   'claude-opus-4-5': { input: 15, output: 75 },
   'claude-sonnet-4-6': { input: 3, output: 15 },
   'claude-sonnet-4-5': { input: 3, output: 15 },

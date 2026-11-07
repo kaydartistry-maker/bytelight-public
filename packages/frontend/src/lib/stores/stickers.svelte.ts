@@ -2,6 +2,7 @@
 // Ported from reference implementation (reference implementation-Resonant)
 
 import type { Sticker, StickerPack } from '@bytelight/shared';
+import { apiFetch } from '$lib/utils/api';
 
 let packs = $state<StickerPack[]>([]);
 let stickers = $state<Sticker[]>([]);
@@ -26,8 +27,8 @@ function rebuildRefMap() {
 export async function loadStickers(): Promise<void> {
   try {
     const [packsRes, stickersRes] = await Promise.all([
-      fetch('/api/sticker-packs'),
-      fetch('/api/stickers'),
+      apiFetch('/api/sticker-packs'),
+      apiFetch('/api/stickers'),
     ]);
     if (packsRes.ok) {
       const data = await packsRes.json();

@@ -34,7 +34,10 @@ Most of this is braided through: `agent.ts`, `hooks.ts`, `ws.ts`, `orchestrator.
 Based on web UI connection, tab visibility, and recent activity.
 
 ### Schedules / Wakes
-Fire at known times, skip if the agent is busy.
+Fire at known times on each bell's own timer; a busy agent queues the wake (see Bells wait their turn).
+
+### The Room
+With `agent.multi_lane` on, a conversational turn in a thread seating more than one companion of the resident brain passes between their own lanes (shuffled, each later lane handed what was said — `services/room-turns.ts`). A lane is its own warm Claude CLI session keyed by the companion; its session CLAUDE.md layers a lane note and his bio over the shared identity the root CLAUDE.md gives every session (`heartbeat/lane-identity.ts`). A Codex lane is its own Codex conversation, filed under his `lane` in `thread_provider_sessions` and handed the same layered identity as instructions. Splits when every seat resolves to Claude or Codex; otherwise the shared lane runs the whole turn.
 
 ### Timers
 One-time reminders at a specific future time.
@@ -56,6 +59,9 @@ Local ML embeddings (sentence-transformers/all-MiniLM-L6-v2 via Hugging Face). S
 
 ### Ambient Recall / The Shiver
 Each turn, the heartbeat whisper (`services/heartbeat/whisper.ts`) queries the remote Cortex (Neuralis) via `services/cortex-recall.ts` for memories resembling the message and prepends them as small cards — retrieval instead of re-carrying memory. Every surface leaves a receipt in the memory ledger (`services/memory-ledger.ts`); a scored near-miss becomes a source-veiled déjà-vu line + its own receipt. When recall rides a reply the message metadata carries a `surfacedMemory` blob (flows over the existing `{type:'message'}` ws event — no new event type), rendered as a subtle shimmer chip in `MessageBubble.svelte`. The receipts trail is read via `GET /api/memory/ledger` (authenticated, `routes/memory-routes.ts`) and surfaced in Settings → Receipts (`ReceiptsPanel.svelte`).
+
+### Self-Knowledge
+A living identity layer: attributable observations a companion makes about itself, in four drawers (i_am / i_tend_to / i_believe / i_learned). Storage in the `self_knowledge` table (migration `022_self_knowledge.sql`) via `services/db/self-knowledge.ts`; an embedding sidecar (`self_knowledge_embeddings`) is maintained by `services/self-knowledge-index.ts` on byte-light's existing embeddings worker. Companions propose + review their OWN entries over the localhost lane (`routes/internal-routes.ts` — ownership enforced, non-owner review is a 403); the operator reviews everything from the authenticated `routes/self-knowledge-routes.ts` (`GET/POST/PATCH/DELETE /api/self-knowledge`, plus `GET /api/self-knowledge/search` for keyword/semantic search), surfaced in Settings → Self-Knowledge (`SelfKnowledgePanel.svelte`). Every review writes a memory-ledger receipt naming the actual actor. Writes broadcast a `self_knowledge` ws event so the panel refreshes live. **Auto-retrieval is deliberately OFF** — nothing injects self-knowledge into companion prompts; the future wiring point is Mind Bridge / Cortex integration (the whisper is intentionally untouched). Heat/confidence lifecycle (source fork's `7ab2b980`) is NOT implemented per the operator's ruling. Ported from the tris/Aerie fork; four-drawer design is Annie's.
 
 ### Canvas
 Durable editable artifacts (markdown, code, text, HTML).
@@ -110,8 +116,12 @@ They don't queue — they just wait for next poll.
 ### Impulses can wait
 One-shot triggers that hold until agent is free.
 
-### Schedules skip when busy
-Won't pile up if agent is mid-task.
+### Bells wait their turn
+Each bell rings on its own node-cron timer. If the agent is mid-task, the
+wake queues behind it (up to 30 minutes) instead of retrying or skipping, and
+an outcome it can't deliver — a queue timeout, silence, an error — is logged,
+never posted into the chat. Check-ins still stand down while the owner is
+active in a conversation.
 
 ### life_api not injected into autonomous wakes
 Bug in hooks.ts: `if (!ctx.isAutonomous && config.integrations.life_api_url)` blocks autonomous context.
@@ -251,3 +261,12 @@ Generalize Discord rules into room policy system for constellation.
 6. **Add: Capability inventory / feature field guide** (this document)
 
 > "Understand the existing powers before you add more gods."
+
+
+### Journal backend (Wave 2)
+
+`services/db/journal.ts` is a client of the remote Mind API (`mind_api_url` / `mind_api_key` secrets) — journals and dreams are stored in the Mind, not locally, under unified `j:<n>`/`d:<n>` ids; dream vividness is computed server-side and passed through. `db.ts` runs migration `024_drop_journal.sql`, which removes the interim local table. `routes/api.ts` mounts `routes/journal.ts` at `/journal` after authentication; `internal-routes.ts` exposes companion tools with `requireLocalhost` on every route. Mutations record local memory receipts after the remote write succeeds; remote failures surface as 502. Create/edit uses the shared `journal_entry` event; Svelte consumes it with its dedicated screen deferred. There is no new daemon or automatic Cortex write.
+
+### Permanent Letters vault (Wave 2)
+
+`services/db/letters.ts` owns a deliberately local, separate `letters` table loaded by migration 025 and a markdown mirror at `data/letters/<id>.md`. `routes/api.ts` mounts the authenticated operator surface at `/letters`; `internal-routes.ts` provides localhost-only companion seal, list, and open operations validated against the companion registry (plus the operator slug). No PATCH or DELETE route, scheduler hook, sweep, decay, memory job, or Mind client touches the vault; opening a seal once is its only mutation.

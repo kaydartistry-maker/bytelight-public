@@ -1,0 +1,52 @@
+import { after, test } from 'node:test';
+import assert from 'node:assert/strict';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+const root = mkdtempSync(join(tmpdir(), 'reroll-test-'));
+process.env.RESONANT_HOME = root;
+writeFileSync(join(root, 'config.yaml'), 'agent:\n  cwd: .\n  model: claude-sonnet-4-6\n');
+const { initDb, createMessage, getMessage, getRerollPreview, applyReroll, editMessage, softDeleteMessage } = await import('./db.js');
+const db = initDb(join(root, 'test.db'));
+for (const id of ['a', 'b']) db.prepare("INSERT INTO threads (id,name,type,created_at,last_activity_at) VALUES (?,?,'named',?,?)").run(id,id,new Date().toISOString(),new Date().toISOString());
+function add(id: string, role: 'user' | 'companion', threadId = 'a') {
+ return createMessage({ id, threadId, role, content: id, createdAt: new Date().toISOString() });
+}
+after(() => { db.close(); rmSync(root, { recursive: true, force: true }); });
+test('preview reads whole thread; cancel has no writes; stale confirmation cannot delete; exact tail only', () => {
+ add('u','user'); add('c','companion');
+ for(let i=0;i<110;i++) add(`later${i}`, i%2 ? 'user' : 'companion');
+ add('other','companion','b');
+ softDeleteMessage('later5',new Date().toISOString());
+ const p = getRerollPreview('c')!;
+ assert.equal(p.count,110);
+ assert.equal(p.priorUser.id,'u');
+ assert.equal(getMessage('c')?.deleted_at,null);
+ assert.equal(getRerollPreview('u'),null);
+ assert.equal(getRerollPreview('later5'),null);
+ assert.equal(getRerollPreview('missing'),null);
+ editMessage('u','changed prompt',new Date().toISOString());
+ assert.equal(applyReroll('c',p.revision),null);
+ const edited = getRerollPreview('c')!;
+ editMessage('later1','changed tail',new Date().toISOString());
+ assert.equal(applyReroll('c',edited.revision),null);
+ add('new','user');
+ assert.equal(applyReroll('c',p.revision),null);
+ assert.equal(getMessage('c')?.deleted_at,null);
+ const next = getRerollPreview('c')!;
+ const done = applyReroll('c',next.revision)!;
+ assert.equal(done.deletedIds.length,111);
+ assert.ok(getMessage('c')?.deleted_at);
+ assert.ok(getMessage('new')?.deleted_at);
+ assert.equal(getMessage('u')?.deleted_at,null);
+ assert.equal(getMessage('other')?.deleted_at,null);
+ assert.equal(applyReroll('c',next.revision),null);
+});
+test('deleting the selected prompt invalidates its confirmation even when an older prompt exists', () => {
+ add('old','user','b'); add('selected','user','b'); add('answer','companion','b');
+ const p = getRerollPreview('answer')!;
+ softDeleteMessage('selected', new Date().toISOString());
+ assert.equal(applyReroll('answer',p.revision),null);
+ assert.equal(getMessage('answer')?.deleted_at,null);
+ assert.equal(getRerollPreview('answer')?.priorUser.id,'old');
+});

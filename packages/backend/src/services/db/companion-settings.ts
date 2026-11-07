@@ -14,7 +14,7 @@
 
 import type { ProviderId, TierHint } from '@bytelight/shared';
 import type { ThinkingEffort } from '@bytelight/shared';
-import { getDb } from '../db.js';
+import { getDb } from './init.js';
 
 export type CompanionSettingsScope = 'system' | 'companion' | 'thread';
 
@@ -39,13 +39,6 @@ export interface CompanionSettingsKey {
   scope: CompanionSettingsScope;
   /** Required when scope='thread', ignored otherwise. */
   threadId?: string | null;
-}
-
-/** Listing filter shape. */
-export interface CompanionSettingsFilter {
-  companionId?: string;
-  tier?: TierHint;
-  scope?: CompanionSettingsScope;
 }
 
 /**
@@ -84,37 +77,6 @@ export function getCompanionSetting(key: CompanionSettingsKey): CompanionSetting
   `);
   const row = stmt.get(key.companionId, key.tier, key.scope, threadId, threadId, threadId);
   return row ? (row as unknown as CompanionSettingsRow) : null;
-}
-
-/**
- * Admin / debug listing. All fields are optional; with no filters this
- * returns every row.
- */
-export function listCompanionSettings(filter: CompanionSettingsFilter = {}): CompanionSettingsRow[] {
-  const clauses: string[] = [];
-  const args: unknown[] = [];
-  if (filter.companionId) {
-    assertCompanionId(filter.companionId);
-    clauses.push('companion_id = ?');
-    args.push(filter.companionId);
-  }
-  if (filter.tier) {
-    clauses.push('tier = ?');
-    args.push(filter.tier);
-  }
-  if (filter.scope) {
-    clauses.push('scope = ?');
-    args.push(filter.scope);
-  }
-  const where = clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : '';
-  const stmt = getDb().prepare(`
-    SELECT companion_id, tier, provider_id, model_id, thinking_effort,
-           is_default, scope, thread_id, created_at, updated_at
-    FROM companion_settings
-    ${where}
-    ORDER BY companion_id, tier, scope, thread_id
-  `);
-  return stmt.all(...args) as unknown as CompanionSettingsRow[];
 }
 
 /** Parameters for upsert. `threadId` required iff scope='thread'. */

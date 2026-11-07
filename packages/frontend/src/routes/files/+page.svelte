@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { formatBytes } from '$lib/utils/format';
   import { onMount } from 'svelte';
   import { apiFetch } from '$lib/utils/api';
 
@@ -42,12 +43,6 @@
     return files.filter(f => f.contentType === filter);
   });
 
-  function formatSize(bytes: number): string {
-    if (bytes < 1024) return `${bytes} B`;
-    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-  }
-
   function formatDate(iso: string): string {
     const d = new Date(iso);
     return d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
@@ -68,7 +63,7 @@
   async function loadFiles() {
     loading = true;
     try {
-      const response = await fetch('/api/files/list');
+      const response = await apiFetch('/api/files/list');
       if (!response.ok) throw new Error('Failed to fetch files');
       const data = await response.json();
       files = data.files;
@@ -113,7 +108,7 @@
     <div class="storage-summary">
       <span class="summary-item">{totalCount} files</span>
       <span class="summary-dot"></span>
-      <span class="summary-item">{formatSize(totalSize)}</span>
+      <span class="summary-item">{formatBytes(totalSize)}</span>
       {#if orphanCount > 0}
         <span class="summary-dot"></span>
         <span class="summary-item orphan-count">{orphanCount} orphan{orphanCount === 1 ? '' : 's'}</span>
@@ -160,7 +155,7 @@
             <div class="file-info">
               <span class="file-name">{file.filename}</span>
               <span class="file-meta">
-                {formatSize(file.size)} &middot; {formatDate(file.createdAt)}
+                {formatBytes(file.size)} &middot; {formatDate(file.createdAt)}
                 {#if !file.inUse}
                   <span class="orphan-tag">orphan</span>
                 {/if}

@@ -96,6 +96,25 @@ export function createFilesRoutes(): Router {
 
       res.setHeader('Content-Type', file.mimeType);
       res.setHeader('Cache-Control', 'private, max-age=86400'); // 24h cache
+      // Ported whole from Thornvale (fa006235). The phone asks for ?download=1
+      // on every save, because a WebView (and a browser link without a
+      // download attribute) decides what to do from the response: without
+      // this header a picture is shown in place and nothing is saved.
+      if (req.query.download !== undefined) {
+        // On disk a file is only its uuid plus an extension; the human name lives
+        // in the message that carries it. The page passes it back so the saved
+        // file is not a wall of hex -- but it is user input reaching a header, so
+        // it gets stripped of separators and anything non-printable below.
+        const asked = typeof req.query.name === 'string' ? req.query.name : '';
+        const cleaned = asked.replace(/[\\/]/g, '').replace(/^\.+/, '').slice(0, 120).trim();
+        const name = cleaned || file.filename || 'download';
+        // Quotes and control characters would break out of the header value.
+        const ascii = name.replace(/[^\x20-\x7e]/g, '_').replace(/["\\]/g, '');
+        res.setHeader(
+          'Content-Disposition',
+          `attachment; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(name)}`,
+        );
+      }
       res.sendFile(file.path);
     } catch (error) {
       console.error('File download error:', error);

@@ -3,13 +3,11 @@
 import { query } from '@anthropic-ai/claude-agent-sdk';
 import { existsSync, mkdirSync, readFileSync, readdirSync, appendFileSync } from 'fs';
 import { join, dirname } from 'path';
-import { getDb, getConfig, setConfig } from './db.js';
+import { getDb } from './db.js';
+import { makeSequenceCursor } from './sequence-cursor.js';
 import { getBytelightConfig } from '../config.js';
+import { today } from '../util/time.js';
 import type { AgentService } from './agent.js';
-
-function today(): string {
-  return new Date().toLocaleDateString('en-CA', { timeZone: getBytelightConfig().identity.timezone });
-}
 
 /**
  * Per-thread digest cursor. Each thread tracks its own "last processed
@@ -20,17 +18,9 @@ function today(): string {
  * Legacy `digest.last_sequence` (no thread id) is ignored: pre-fix
  * state is abandoned intentionally, no backfill.
  */
-function cursorKey(threadId: string): string {
-  return `digest.last_sequence:${threadId}`;
-}
-
-export function getDigestCursor(threadId: string): number {
-  return parseInt(getConfig(cursorKey(threadId)) || '0');
-}
-
-export function setDigestCursor(threadId: string, value: number): void {
-  setConfig(cursorKey(threadId), String(value));
-}
+const digestCursor = makeSequenceCursor('digest.last_sequence');
+export const getDigestCursor = digestCursor.get;
+export const setDigestCursor = digestCursor.set;
 
 function nowTime(): string {
   return new Date().toLocaleTimeString('en-GB', { timeZone: getBytelightConfig().identity.timezone, hour: '2-digit', minute: '2-digit' });

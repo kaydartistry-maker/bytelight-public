@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { timeAgo } from '$lib/utils/time';
+  import { api, apiFetch } from '$lib/utils/api';
   import { onMount } from 'svelte';
 
   interface MemoryFile {
@@ -163,19 +165,6 @@
     return { server: null, tool: raw };
   }
 
-  function relativeTime(iso: string): string {
-    const then = new Date(iso).getTime();
-    if (Number.isNaN(then)) return iso;
-    const mins = Math.floor((Date.now() - then) / 60000);
-    if (mins < 1) return 'just now';
-    if (mins < 60) return `${mins}m ago`;
-    const hrs = Math.floor(mins / 60);
-    if (hrs < 24) return `${hrs}h ago`;
-    const days = Math.floor(hrs / 24);
-    if (days < 7) return `${days}d ago`;
-    return new Date(iso).toLocaleDateString();
-  }
-
   // First meaningful line of an [ERROR] output, for a strong one-line row summary.
   function errorSummary(output: string): string {
     const body = output.replace(/^\[ERROR\]\s*/, '');
@@ -194,7 +183,7 @@
   });
 
   async function fetchXray(path: string) {
-    const res = await fetch(`/api/xray/${path}`, { credentials: 'include' });
+    const res = await apiFetch(`/api/xray/${path}`, { credentials: 'include' });
     if (!res.ok) throw new Error(`${path}: ${res.status}`);
     return res.json();
   }
@@ -225,7 +214,7 @@
   async function loadAudit(limit = auditLimit) {
     auditLoading = true;
     try {
-      const res = await fetch(`/api/audit?limit=${limit}`, { credentials: 'include' });
+      const res = await apiFetch(`/api/audit?limit=${limit}`, { credentials: 'include' });
       if (!res.ok) throw new Error(`audit: ${res.status}`);
       const data = await res.json();
       auditEntries = data.entries || [];
@@ -251,7 +240,7 @@
         fetchXray('wakes'),
         fetchXray(`context?platform=${contextPlatform}&includeStatic=${contextStatic}`),
         fetchXray('hooks'),
-        fetch(`/api/audit?limit=${auditLimit}`, { credentials: 'include' }).then((r) => r.json()),
+        apiFetch(`/api/audit?limit=${auditLimit}`, { credentials: 'include' }).then((r) => r.json()),
       ]);
 
       identityContent = identity.content || '';
@@ -278,19 +267,14 @@
     }
   }
 
-  async function saveIdentity() {
+  // Shared PUT-and-confirm for the three editable XRay files.
+  async function saveDraft(url: string, content: string, onSaved: () => void) {
     saving = true;
     saveMessage = null;
     try {
-      const res = await fetch('/api/xray/identity', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
-        body: JSON.stringify({ content: identityDraft }),
-      });
+      const res = await api.put(url, { content });
       if (!res.ok) throw new Error('Failed to save');
-      identityContent = identityDraft;
-      identityEditing = false;
+      onSaved();
       saveMessage = 'Saved (backup created)';
       setTimeout(() => saveMessage = null, 3000);
     } catch (e: any) {
@@ -300,53 +284,29 @@
     }
   }
 
-  async function saveMemoryFile(filename: string) {
-    saving = true;
-    saveMessage = null;
-    try {
-      const res = await fetch(`/api/xray/memory/${encodeURIComponent(filename)}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
-        body: JSON.stringify({ content: memoryDraft }),
-      });
-      if (!res.ok) throw new Error('Failed to save');
-      // Update local state
+  function saveIdentity() {
+    return saveDraft('/api/xray/identity', identityDraft, () => {
+      identityContent = identityDraft;
+      identityEditing = false;
+    });
+  }
+
+  function saveMemoryFile(filename: string) {
+    return saveDraft(`/api/xray/memory/${encodeURIComponent(filename)}`, memoryDraft, () => {
       memoryFiles = memoryFiles.map(f =>
         f.name === filename ? { ...f, content: memoryDraft } : f
       );
       memoryEditing = null;
-      saveMessage = 'Saved (backup created)';
-      setTimeout(() => saveMessage = null, 3000);
-    } catch (e: any) {
-      saveMessage = `Error: ${e.message}`;
-    } finally {
-      saving = false;
-    }
+    });
   }
 
-  async function saveWakes() {
-    saving = true;
-    saveMessage = null;
-    try {
-      const res = await fetch('/api/xray/wakes', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
-        body: JSON.stringify({ content: wakesDraft }),
-      });
-      if (!res.ok) throw new Error('Failed to save');
+  function saveWakes() {
+    return saveDraft('/api/xray/wakes', wakesDraft, () => {
       if (wakesData) {
         wakesData.rawContent = wakesDraft;
       }
       wakesEditing = false;
-      saveMessage = 'Saved (backup created)';
-      setTimeout(() => saveMessage = null, 3000);
-    } catch (e: any) {
-      saveMessage = `Error: ${e.message}`;
-    } finally {
-      saving = false;
-    }
+    });
   }
 
   function startEditIdentity() {
@@ -734,7 +694,7 @@
       <section class="section">
         <div class="section-header">
           <h3 class="section-title">Activity</h3>
-          <span class="section-path">what the boys actually did · {filteredAudit().length} of {auditEntries.length}</span>
+          <span class="section-path">what the companions actually did · {filteredAudit().length} of {auditEntries.length}</span>
         </div>
 
         <p class="description">
@@ -776,7 +736,7 @@
                     </span>
                   </span>
                   <span class="audit-meta-right">
-                    <span class="audit-time">{relativeTime(entry.created_at)}</span>
+                    <span class="audit-time">{timeAgo(entry.created_at, { dateAfterDays: 7, formatDate: (d) => d.toLocaleDateString() })}</span>
                     <span class="memory-toggle">{expandedAudit === entry.id ? '▼' : '▶'}</span>
                   </span>
                 </button>

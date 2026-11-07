@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { timeAgo } from '$lib/utils/time';
   import { onMount } from 'svelte';
   import DaemonGremlin from '$lib/components/DaemonGremlin.svelte';
   import { getPresence } from '$lib/stores/websocket.svelte';
@@ -141,21 +142,9 @@
   }
 
   function weightColor(w: string): string {
-    if (w === 'heavy') return 'var(--status-error, #ef4444)';
+    if (w === 'heavy') return 'var(--status-error, var(--color-error))';
     if (w === 'medium') return 'var(--status-waking)';
     return 'var(--text-muted)';
-  }
-
-  function timeAgo(dateStr: string): string {
-    const d = new Date(dateStr);
-    const now = new Date();
-    const diff = now.getTime() - d.getTime();
-    const mins = Math.floor(diff / 60000);
-    if (mins < 60) return `${mins}m ago`;
-    const hours = Math.floor(mins / 60);
-    if (hours < 24) return `${hours}h ago`;
-    const days = Math.floor(hours / 24);
-    return `${days}d ago`;
   }
 
   onMount(loadAll);

@@ -197,7 +197,7 @@ pm2 startup
 ```bash
 pm2 status              # Check if it's running
 pm2 logs resonant       # View logs
-pm2 restart resonant    # Restart after config changes
+pm2 restart bytelight    # Restart after config changes
 pm2 stop resonant       # Stop it
 ```
 

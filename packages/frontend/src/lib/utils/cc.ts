@@ -2,26 +2,12 @@
 
 export const CC_API = '/api/cc';
 
-let _timezone: string | null = null;
-
-async function getTimezone(): Promise<string> {
-  if (_timezone) return _timezone;
-  try {
-    const res = await fetch('/api/cc/config', { credentials: 'include' });
-    if (res.ok) {
-      const data = await res.json();
-      // Fall back to identity endpoint timezone
-      _timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
-    }
-  } catch { /* ignore */ }
-  // Use browser timezone as fallback
-  if (!_timezone) _timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
-  return _timezone;
-}
-
+// Today's calendar date in the device's own timezone. (A getTimezone() that
+// fetched /api/cc/config here never used the answer and was never called, so
+// the browser's zone was always the one in force; the React Command Center
+// does the same through lib/local-date.ts.)
 export function todayStr(): string {
-  // Use browser's resolved timezone (matches server config in most cases)
-  return new Date().toLocaleDateString('en-CA', { timeZone: _timezone || undefined });
+  return new Date().toLocaleDateString('en-CA');
 }
 
 export function formatCategory(cat: string): string {

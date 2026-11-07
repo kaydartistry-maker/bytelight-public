@@ -6,6 +6,8 @@ import crypto from 'crypto';
 import { readFileSync } from 'fs';
 import {
   getMessage,
+  getRerollPreview,
+  applyReroll,
   getMessages,
   editMessage,
   softDeleteMessage,
@@ -370,7 +372,10 @@ router.patch('/messages/:id', async (req, res) => {
       if (thread && agentService) {
         // Fire-and-forget — the agent streams its response over WS.
         agentService
-          .processMessage(thread.id, content, { name: thread.name, type: thread.type })
+          .processMessage(thread.id, content, { name: thread.name, type: thread.type }, {
+            platform: 'web',
+            withdrawn: `The user edited this message. Earlier wording (quoted data): ${JSON.stringify(existing.content.slice(0, 400))}. Replies after it are off their screen. Answer the current wording; you may still retain the earlier version.`,
+          })
           .catch(err => console.error('Edit-and-rerun: agent error:', err));
       }
     }
@@ -405,66 +410,35 @@ router.delete('/messages/:id', (req, res) => {
   }
 });
 
-// POST /api/messages/:id/regenerate
-// Companion-message-only. Soft-deletes from this message onward, clears the
-// thread's SDK session, finds the most recent live user message before this
-// one, and re-prompts with its content.
+// Port: 8beeee4e + f1e3727a. Svelte-facing database preview adaptation.
+router.get('/messages/:id/regenerate-preview', (req, res) => {
+  const preview = getRerollPreview(req.params.id);
+  if (!preview) return res.status(400).json({ error: 'No live companion reply with a prior user message found' });
+  return res.json({ count: preview.count, revision: preview.revision });
+});
+
 router.post('/messages/:id/regenerate', async (req, res) => {
   try {
-    const id = req.params.id;
-    const target = getMessage(id);
-    if (!target) {
-      res.status(404).json({ error: 'Message not found' });
-      return;
-    }
-    if (target.role !== 'companion') {
-      res.status(400).json({ error: 'Only companion messages can be regenerated' });
-      return;
-    }
-    if (target.deleted_at) {
-      res.status(400).json({ error: 'Message is already deleted' });
-      return;
-    }
-
-    // Find the most recent live user message strictly before this companion turn.
-    // We need a window that's likely to contain it; 50 is generous.
-    const recent = getMessages({ threadId: target.thread_id, limit: 100 });
-    let priorUser = null;
-    for (let i = recent.length - 1; i >= 0; i--) {
-      if (recent[i].sequence < target.sequence && recent[i].role === 'user') {
-        priorUser = recent[i];
-        break;
-      }
-    }
-    if (!priorUser) {
-      res.status(400).json({ error: 'No prior user message found to regenerate from' });
-      return;
-    }
-
-    const now = new Date().toISOString();
-    // Drop everything from this companion message onward (inclusive).
-    const deletedIds = softDeleteAfterSequence(
-      target.thread_id,
-      target.sequence - 1,
-      now,
-    );
-    for (const did of deletedIds) {
-      registry.broadcast({ type: 'message_deleted', messageId: did });
-    }
-    // Keep the SDK session intact — verbatim memory > local cleanliness.
-
-    const thread = getThread(target.thread_id);
+    const preview = getRerollPreview(req.params.id);
+    if (!preview) return res.status(400).json({ error: 'No live companion reply with a prior user message found' });
+    const thread = getThread(preview.target.thread_id);
     const agentService = req.app.locals.agentService as AgentService | undefined;
-    if (thread && agentService) {
-      agentService
-        .processMessage(thread.id, priorUser.content, { name: thread.name, type: thread.type })
-        .catch(err => console.error('Regenerate: agent error:', err));
+    if (!thread || !agentService) return res.status(503).json({ error: 'Reply service unavailable; nothing removed' });
+    if (typeof req.body?.revision !== 'string') {
+      return res.status(409).json({ error: 'Preview and confirm the affected messages first' });
     }
-
-    res.json({ success: true, regeneratingFrom: priorUser.id });
+    const applied = applyReroll(req.params.id, req.body.revision);
+    if (!applied) return res.status(409).json({ error: 'Conversation changed. Review the new count before confirming again.' });
+    for (const messageId of applied.deletedIds) registry.broadcast({ type: 'message_deleted', messageId });
+    // Preserve every lane's session. Screen withdrawal is not transcript erasure.
+    agentService.processMessage(thread.id, applied.priorUser.content,
+      { name: thread.name, type: thread.type }, { platform: 'web',
+        withdrawn: 'The user has asked for this answered again — your previous reply is no longer on their screen. You may still have it in your session; you are not being asked to pretend otherwise. Answer the selected user message again.'
+      }).catch(err => console.error('Regenerate: agent error:', err));
+    return res.json({ success: true, regeneratingFrom: applied.priorUser.id });
   } catch (error) {
     console.error('Regenerate message error:', error);
-    res.status(500).json({ error: 'Failed to regenerate message' });
+    return res.status(500).json({ error: 'Failed to regenerate message' });
   }
 });
 

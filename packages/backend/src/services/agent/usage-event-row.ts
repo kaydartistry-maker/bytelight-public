@@ -95,7 +95,12 @@ export function buildUsageEventRow(input: BuildUsageEventRowInput): UsageEventRo
     else toolCallList.push({ name: ti.toolName, count: 1 });
   }
 
-  const costUsd = input.event.cost ?? input.estimateCost({
+  // Cost precedence: a runtime-reported figure wins; an EXPLICIT null means
+  // "this lane has no per-turn dollar measurement — file the absence" (the
+  // subscription-billed CLI lane: estimating API-equivalent dollars there
+  // would invent a number no bill contains). Only a fully absent field falls
+  // through to the estimate, preserving every API lane's existing behavior.
+  const costUsd = input.event.cost !== undefined ? input.event.cost : input.estimateCost({
     model: input.model,
     inputTokens,
     outputTokens,

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseSse, isRemoteBrain } from './living-room-relay.js';
+import { parseSse, isRemoteBrain, remoteDisplayName } from './living-room-relay.js';
 
 function streamOf(chunks: string[]): ReadableStream<Uint8Array> {
   const encoder = new TextEncoder();
@@ -64,4 +64,9 @@ test('skips malformed JSON frames without killing the stream', async () => {
 test('isRemoteBrain knows companion-c and rejects the local pair', () => {
   assert.equal(isRemoteBrain('companion-c'), true);
   assert.equal(isRemoteBrain('companion-a-b'), false);
+});
+
+test('a remote brain goes by its display name in the room', () => {
+  assert.equal(remoteDisplayName('companion-c'), 'Companion C');
+  assert.equal(remoteDisplayName('nova'), 'Nova');
 });

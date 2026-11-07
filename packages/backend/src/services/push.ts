@@ -16,9 +16,17 @@ export class PushService {
 
   constructor(vapidPublic?: string, vapidPrivate?: string, vapidContact?: string) {
     if (vapidPublic && vapidPrivate && vapidContact) {
-      webpush.setVapidDetails(vapidContact, vapidPublic, vapidPrivate);
-      this.configured = true;
-      console.log('PushService: VAPID configured');
+      // web-push throws synchronously when the contact isn't a valid URL
+      // (a bare email instead of mailto:…) — unguarded, that takes the whole
+      // backend down at boot. A bad VAPID config just disables push.
+      try {
+        webpush.setVapidDetails(vapidContact, vapidPublic, vapidPrivate);
+        this.configured = true;
+        console.log('PushService: VAPID configured');
+      } catch (err) {
+        this.configured = false;
+        console.error('PushService: invalid VAPID config — push disabled', err);
+      }
     } else {
       console.log('PushService: VAPID keys not set — push disabled');
     }
@@ -85,4 +93,17 @@ export class PushService {
   async sendAlways(payload: PushPayload): Promise<void> {
     await this.sendPush(payload);
   }
+}
+
+// Module-level handle so code that isn't holding an Express request or the
+// agent instance (the Discord gateway's mention notifications, for one) can
+// still reach the live service. (Aerie.)
+let activePushService: PushService | null = null;
+
+export function setPushService(service: PushService): void {
+  activePushService = service;
+}
+
+export function getPushService(): PushService | null {
+  return activePushService;
 }

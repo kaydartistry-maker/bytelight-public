@@ -1,43 +1,12 @@
 // Discord utility functions
 
-import crypto from 'crypto';
 import type { Message as DiscordMessage } from 'discord.js';
+import { splitMessage } from '../split-message.js';
+import { composeIncomingContent, stickerTokensFor } from './sticker-content.js';
 
-/**
- * Split a response into Discord-safe chunks (max 1900 chars)
- */
+/** Split a response into Discord-safe chunks (max 1900 chars). */
 export function splitResponse(text: string, maxLength = 1900): string[] {
-  if (text.length <= maxLength) return [text];
-
-  const chunks: string[] = [];
-  let remaining = text;
-
-  while (remaining.length > 0) {
-    if (remaining.length <= maxLength) {
-      chunks.push(remaining);
-      break;
-    }
-
-    // Try to split at paragraph break
-    let splitAt = remaining.lastIndexOf('\n\n', maxLength);
-    if (splitAt < maxLength * 0.5) {
-      // Try single newline
-      splitAt = remaining.lastIndexOf('\n', maxLength);
-    }
-    if (splitAt < maxLength * 0.5) {
-      // Try space
-      splitAt = remaining.lastIndexOf(' ', maxLength);
-    }
-    if (splitAt < maxLength * 0.5) {
-      // Hard cut
-      splitAt = maxLength;
-    }
-
-    chunks.push(remaining.substring(0, splitAt));
-    remaining = remaining.substring(splitAt).trimStart();
-  }
-
-  return chunks;
+  return splitMessage(text, maxLength, 0.5);
 }
 
 // discord.js cleanContent reduces custom emotes <a:name:id> to :name:,
@@ -100,19 +69,31 @@ export function resolveEmoteShorthand(
 
 /**
  * Render a Discord message's text content with any stickers appended as
- * readable tokens (`[sticker: <Name>]`). Sticker-only messages have empty
- * text content — without the tokens they'd store and display as empty strings,
- * leaving the companion blind to what was sent.
+ * `<dsticker:<name>:<id>.<png|gif>>` tokens (sticker-content.ts, Aerie). The
+ * phone unfolds those into the sticker picture; the companion reads the name
+ * inside. Sticker-only messages have empty text content — without the tokens
+ * they'd store and display as empty strings, leaving the companion blind to
+ * what was sent. This one value is the stored row, the judge's input and the
+ * prompt, so the two can never drift apart.
+ *
+ * BYTE-LIGHT ADAPTATION: Aerie drops Lottie stickers entirely (no image
+ * form). byte-light already named them, so a Lottie sticker keeps its
+ * readable `[sticker: <Name>]` token rather than going silent.
  *
  * cleanContent resolves mentions to readable names but also reduces custom
  * emotes <a:name:id> to :name:, losing the id the frontend needs to render
  * the emote image off the Discord CDN, so restore the raw tokens afterwards.
  */
+/** Discord's StickerFormatType.Lottie. */
+const LOTTIE_STICKER_FORMAT = 3;
+
 export function formatDiscordMessageContent(message: DiscordMessage): string {
   const text = restoreEmoteTokens(message.content, message.cleanContent || message.content || '');
   if (message.stickers.size === 0) return text;
-  const stickerTokens = [...message.stickers.values()].map(s => `[sticker: ${s.name}]`);
-  return [text, ...stickerTokens].filter(Boolean).join(' ');
+  const lottie = [...message.stickers.values()]
+    .filter(s => s.format === LOTTIE_STICKER_FORMAT)
+    .map(s => `[sticker: ${s.name}]`);
+  return composeIncomingContent(text, [...stickerTokensFor([message]), ...lottie]);
 }
 
 /**
@@ -126,13 +107,4 @@ export function formatChannelHistory(messages: DiscordMessage[]): string {
       || (msg.attachments.size > 0 ? '[attachment]' : '[embed]');
     return `[${time}] ${author}: ${content}`;
   }).join('\n');
-}
-
-/**
- * Generate a deterministic UUID v4 from a Discord channel ID.
- * This maps each Discord channel to a stable bytelight thread.
- */
-export function getDiscordThreadId(channelId: string): string {
-  const hash = crypto.createHash('sha256').update(`discord:${channelId}`).digest('hex');
-  return `${hash.slice(0, 8)}-${hash.slice(8, 12)}-4${hash.slice(13, 16)}-a${hash.slice(17, 20)}-${hash.slice(20, 32)}`;
 }

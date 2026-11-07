@@ -23,6 +23,7 @@ import { homedir } from 'os';
 import crypto from 'crypto';
 import { PROJECT_ROOT } from '../config.js';
 import { getConfig, setConfig, getConfigBool, getConfigNumber, getDb } from './db.js';
+import { errMessage } from '../util/errors.js';
 
 /** Engine tag recorded on usage_events for image generations. */
 export const IMAGE_GEN_ENGINE = 'image-gen';
@@ -36,7 +37,7 @@ export interface Drawer { slug: string; label: string; isDefault: boolean; emoji
 const DEFAULT_DRAWERS: ReadonlyArray<{ slug: string; label: string }> = [
   { slug: 'companion-a', label: 'Companion A' },
   { slug: 'companion-b', label: 'Companion B' },
-  { slug: 'user', label: 'the operator' },
+  { slug: 'user', label: 'You' },
 ];
 
 const DATA_DIR = join(PROJECT_ROOT, 'data');
@@ -293,6 +294,48 @@ export interface GalleryMeta {
   folderId?: string;
   aspectRatio?: string;
   references?: string[];
+}
+
+/** Pixel size a requested picture size maps to. Shared by the Studio tab
+ *  and the chat door so both write the same gallery card. */
+export function galleryDimensions(size?: string, customWidth?: number, customHeight?: number): { width: number; height: number } {
+  if (size === 'custom' && customWidth && customHeight) return { width: customWidth, height: customHeight };
+  if (size === 'portrait' || size === '2:3') return { width: 1024, height: 1536 };
+  if (size === 'landscape' || size === '3:2') return { width: 1536, height: 1024 };
+  if (size === '16:9') return { width: 1536, height: 864 };
+  if (size === '9:16') return { width: 864, height: 1536 };
+  if (size === '21:9') return { width: 1536, height: 658 };
+  if (size === '4:5') return { width: 1024, height: 1280 };
+  if (size === '5:4') return { width: 1280, height: 1024 };
+  return { width: 1024, height: 1024 };
+}
+
+/** The gallery card for a picture made from chat: the same fields the Studio
+ *  tab records, so the gallery can show its prompt, model and who is in it.
+ *  recordGalleryMeta replaces the whole entry, so a card missing these loses them. */
+export function chatGalleryMeta(input: {
+  prompt: string;
+  subjects?: string[];
+  size?: string;
+  model?: string;
+  backend?: string;
+  messageId: string;
+  threadId: string;
+  createdAt: string;
+}): GalleryMeta {
+  const { width, height } = galleryDimensions(input.size);
+  return {
+    messageId: input.messageId,
+    threadId: input.threadId,
+    createdAt: input.createdAt,
+    prompt: input.prompt,
+    model: input.model,
+    backend: input.backend,
+    width,
+    height,
+    aspectRatio: input.size || 'square',
+    references: input.subjects?.length ? input.subjects : undefined,
+  };
 }
 
 async function readGalleryIndex(): Promise<Record<string, GalleryMeta>> {
@@ -574,8 +617,13 @@ async function generateViaCodex(input: GenerateInput): Promise<GenerateResult> {
     `--- PROMPT ---\n${input.prompt}\n--- END PROMPT ---\n\n` +
     `After it is saved, output as the final line exactly: RESULT_PATH=<absolute path>`;
 
-  // Use requested model or fall back to gpt-5.4 (good balance of speed/quality)
-  const codexModel = input.codexModel || 'gpt-5.4';
+  // Use requested model, then the operator's configured default, then gpt-5.5.
+  // NOT gpt-5.4: OpenAI retired it for ChatGPT-account Codex access, so every
+  // render 400'd on "model is not supported when using Codex with a ChatGPT
+  // account". gpt-5.5 is the newest id confirmed good on both the standalone
+  // CLI and the older npm build `image_gen.codex_bin` may still point at.
+  // The config key exists so the next retirement is a settings edit, not a deploy.
+  const codexModel = input.codexModel || getConfig('image_gen.codex_model') || 'gpt-5.5';
 
   const args = [
     'exec',
@@ -1221,7 +1269,7 @@ async function generateViaCloudflare(input: GenerateInput): Promise<GenerateResu
       signal: AbortSignal.timeout(180_000),
     });
   } catch (error) {
-    throw new ImageGenError(`Cloudflare Flux request failed: ${error instanceof Error ? error.message : String(error)}`);
+    throw new ImageGenError(`Cloudflare Flux request failed: ${errMessage(error)}`);
   }
   if (!response.ok) throw new ImageGenError(`Cloudflare Flux failed (${response.status}): ${(await response.text()).slice(0, 300)}`);
   const type = response.headers.get('content-type') || '';
@@ -1406,7 +1454,7 @@ export function startGenerateJob(input: GenerateInput, onComplete?: (result: Gen
       job.result = result;
     } catch (err) {
       job.status = 'failed';
-      job.error = err instanceof Error ? err.message : String(err);
+      job.error = errMessage(err);
     } finally {
       job.completedAt = Date.now();
       persistJobs();

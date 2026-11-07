@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { apiFetch } from '$lib/utils/api';
   import { onMount } from 'svelte';
   import '../../bytelight.css';
   import ResSkeleton from '$lib/components/ResSkeleton.svelte';
@@ -42,12 +43,12 @@
       const today = todayStr();
       const person = defaultPerson || 'default';
       const [careRes, taskRes, eventRes, petRes, countRes, winRes] = await Promise.all([
-        fetch(`${CC_API}/care?date=${today}&person=${person}`),
-        fetch(`${CC_API}/tasks?status=active`),
-        fetch(`${CC_API}/events?start_date=${today}&end_date=${today}`),
-        fetch(`${CC_API}/pets/upcoming?days=2`),
-        fetch(`${CC_API}/countdowns`),
-        fetch(`${CC_API}/wins?date=${today}`),
+        apiFetch(`${CC_API}/care?date=${today}&person=${person}`),
+        apiFetch(`${CC_API}/tasks?status=active`),
+        apiFetch(`${CC_API}/events?start_date=${today}&end_date=${today}`),
+        apiFetch(`${CC_API}/pets/upcoming?days=2`),
+        apiFetch(`${CC_API}/countdowns`),
+        apiFetch(`${CC_API}/wins?date=${today}`),
       ]);
 
       const [careData, taskData, eventData, petData, countData, winData] = await Promise.all([
@@ -72,7 +73,7 @@
 
   async function addCountdown() {
     if (!cdTitle.trim() || !cdDate) return;
-    await fetch(`${CC_API}/countdowns`, {
+    await apiFetch(`${CC_API}/countdowns`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ title: cdTitle.trim(), target_date: cdDate, emoji: cdEmoji || undefined }),
     });
@@ -82,7 +83,7 @@
 
   onMount(async () => {
     try {
-      const res = await fetch(`${CC_API}/config`);
+      const res = await apiFetch(`${CC_API}/config`);
       if (res.ok) {
         const config = await res.json();
         defaultPerson = config.default_person || '';

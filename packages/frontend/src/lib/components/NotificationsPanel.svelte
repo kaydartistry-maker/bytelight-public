@@ -37,8 +37,8 @@
   async function loadData() {
     try {
       const [vapidRes, subsRes] = await Promise.all([
-        fetch('/api/push/vapid-public'),
-        fetch('/api/push/subscriptions'),
+        apiFetch('/api/push/vapid-public'),
+        apiFetch('/api/push/subscriptions'),
       ]);
       if (vapidRes.ok) {
         const data = await vapidRes.json();

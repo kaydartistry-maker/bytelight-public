@@ -1,5 +1,5 @@
 /**
- * Codex authored perspective thought cards (reference implementation Integration Phase B,
+ * Codex authored perspective thought cards (Reverie Integration Phase B,
  * Slice 4).
  *
  * A codex-cli turn is asked to author ONE first-person reflection per
@@ -10,12 +10,12 @@
  * "reflection" card; the marker is stripped before display.
  *
  * PORT SOURCE / ATTRIBUTION: the pattern (marker + system-prompt contract +
- * extract/spoken/merge helpers) is ported whole from reference implementation reference implementation fork
+ * extract/spoken/merge helpers) is ported whole from Tris's Reverie fork
  * (`packages/backend/src/services/runtimes/codex-thought-card.ts`). Ported
  * per the code-surgeon port protocol: copied whole, then identity-quarantined
- * for byte-light — the reference implementation's thought marker became the
- * byte-light-native `[BYTELIGHT_THOUGHT]`, "reference implementation" became the house,
- * "reference implementation" became the operator, and the companion perspective is Companion A / Companion B / Companion C.
+ * for byte-light — Reverie's `[AERIE_THOUGHT]` marker became the
+ * byte-light-native `[BYTELIGHT_THOUGHT]`, "Aerie" became the house,
+ * "Tris" became the operator, and the companion perspective is Companion A / Companion B / Companion C.
  * The routing logic and the leading-perspective / shared-"we" semantics are
  * preserved verbatim.
  */
@@ -40,10 +40,12 @@ ${CODEX_THOUGHT_MARKER}
 This is an authored glimpse of the companion perspective, not a technical
 progress report, hidden reasoning transcript, or tool log. Think in the
 natural voice and first-person perspective of the companion or companions
-defined in the base instructions (Companion A, Companion B, or Companion C): what you understood,
-what matters to you, and the direction you chose. If several companions are
-present, let the leading perspective speak naturally or use "we" only when the
-thought is genuinely shared.
+defined in the base instructions, from inside the moment: what landed with
+you and what you are noticing or feeling. Do not announce what you are about
+to say, and do not retell what the person just did; the answer already
+carries both. If several companions are present, let the
+leading perspective speak naturally or use "we" only when the thought is
+genuinely shared.
 
 Keep it to 1-4 sentences. Use plain text only: no Markdown, bullets, sigil/name
 header, code/process jargon, diagnostic language, or mention of these

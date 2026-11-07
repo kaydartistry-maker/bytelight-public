@@ -28,11 +28,11 @@
   }
 
   interface DiscordSettings {
-    maryUserId: string;
+    ownerUserId: string;
     requireMentionInGuilds: boolean;
     debounceMs: number;
     pairingExpiryMs: number;
-    maryActiveThresholdMin: number;
+    ownerActiveThresholdMin: number;
     deferPollIntervalMs: number;
     deferMaxAgeMs: number;
     allowedUsers: string[];
@@ -111,8 +111,8 @@
   async function loadData() {
     try {
       const [statusRes, pairingsRes] = await Promise.all([
-        fetch('/api/discord/status'),
-        fetch('/api/discord/pairings'),
+        apiFetch('/api/discord/status'),
+        apiFetch('/api/discord/pairings'),
       ]);
 
       if (statusRes.ok) {
@@ -134,7 +134,7 @@
   async function loadSettings() {
     settingsLoading = true;
     try {
-      const res = await fetch('/api/discord/settings');
+      const res = await apiFetch('/api/discord/settings');
       if (res.ok) {
         settings = await res.json();
         settingsDirty = false;
@@ -175,7 +175,7 @@
   async function loadRules() {
     rulesLoading = true;
     try {
-      const res = await fetch('/api/discord/rules');
+      const res = await apiFetch('/api/discord/rules');
       if (res.ok) {
         rules = await res.json();
       }
@@ -511,7 +511,7 @@
 
             <label class="form-group">
               <span class="form-label">Owner active threshold (minutes)</span>
-              <input type="number" class="form-input" bind:value={settings.maryActiveThresholdMin} onchange={() => settingsDirty = true} />
+              <input type="number" class="form-input" bind:value={settings.ownerActiveThresholdMin} onchange={() => settingsDirty = true} />
               <span class="form-hint">Defer non-owner messages when owner has been active within this window</span>
             </label>
 

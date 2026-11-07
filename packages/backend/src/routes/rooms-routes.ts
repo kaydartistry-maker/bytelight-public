@@ -10,6 +10,8 @@
  *   GET /api/companions                 — list all pickable companions
  *   GET /api/threads/:id/roster         — the companions seated in a thread
  *   PUT /api/threads/:id/roster         — replace a thread's roster
+ *   PATCH /api/companions/:id           — edit a companion's card (name, bio,
+ *                                         status, phone)
  *
  * Schema shape ported from NESTstack's rooms-worker (cindiekinzz-coder, MIT);
  * see migrations/014_companions.sql for the full attribution.
@@ -22,12 +24,24 @@
 
 import { Router } from 'express';
 import { getThread } from '../services/db.js';
+import { getOwnerSlug, ownerDisplayName } from '../services/db/owner-name.js';
 import {
   listCompanions,
   getThreadRoster,
   setThreadRoster,
   allCompanionsExist,
+  updateCompanionCard,
+  type CompanionCardUpdate,
 } from '../services/db/rooms.js';
+
+// Card fields and how long each may be. The bio is read by a companion's own
+// head, so it is allowed room to say something; the rest are one-liners.
+const CARD_FIELDS: Record<keyof CompanionCardUpdate, number> = {
+  display_name: 80,
+  bio: 8000,
+  status: 200,
+  phone: 40,
+};
 
 export function createRoomsRoutes(): Router {
   const router = Router();
@@ -35,10 +49,54 @@ export function createRoomsRoutes(): Router {
   // GET /api/companions — the full pickable registry, picker order.
   router.get('/companions', (_req, res) => {
     try {
-      res.json({ companions: listCompanions() });
+      // The owner rides along so the phone seats her by the house's own slug
+      // (accents folded) instead of re-deriving it from preferences.
+      const name = ownerDisplayName();
+      res.json({ companions: listCompanions(), owner: { slug: getOwnerSlug(), name: name === 'the owner' ? 'You' : name } });
     } catch (err) {
       console.error('Failed to list companions:', err);
       res.status(500).json({ error: 'Failed to list companions' });
+    }
+  });
+
+  // PATCH /api/companions/:id — edit the card. Only the fields sent are
+  // written; null (or an empty string) clears one. display_name can't be
+  // cleared — a companion always has a name.
+  router.patch('/companions/:id', (req, res) => {
+    try {
+      const body = (req.body ?? {}) as Record<string, unknown>;
+      const updates: CompanionCardUpdate = {};
+      for (const [key, max] of Object.entries(CARD_FIELDS) as Array<[keyof CompanionCardUpdate, number]>) {
+        if (!(key in body)) continue;
+        const value = body[key];
+        if (value !== null && typeof value !== 'string') {
+          res.status(400).json({ error: `${key} must be a string or null` });
+          return;
+        }
+        const trimmed = typeof value === 'string' ? value.trim() : '';
+        if (trimmed.length > max) {
+          res.status(400).json({ error: `${key} is longer than ${max} characters` });
+          return;
+        }
+        if (key === 'display_name' && !trimmed) {
+          res.status(400).json({ error: 'display_name cannot be empty' });
+          return;
+        }
+        (updates as Record<string, string | null>)[key] = trimmed || null;
+      }
+      if (Object.keys(updates).length === 0) {
+        res.status(400).json({ error: 'nothing to update (display_name, bio, status, phone)' });
+        return;
+      }
+      const companion = updateCompanionCard(req.params.id, updates);
+      if (!companion) {
+        res.status(404).json({ error: 'Companion not found' });
+        return;
+      }
+      res.json({ companion });
+    } catch (err) {
+      console.error('Failed to update companion card:', err);
+      res.status(500).json({ error: 'Failed to update companion card' });
     }
   });
 

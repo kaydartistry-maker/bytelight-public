@@ -21,7 +21,9 @@ byte-light can run as a basic local companion with no third-party API keys beyon
 | Semantic search | None | Local model download | Search old chats by meaning | Optional, local |
 | Cortex / ambient recall | Cortex (Neuralis) endpoint + key | `mind_api_url`, `mind_api_key` via `/api/secrets` (BYOK store) | Each turn quietly pulls archived memories that resemble the message and hands them in as small cards (retrieval instead of re-carrying memory). Fails quiet if unset. When recall rides a reply, the message wears a subtle **shimmer chip** ("recalled"); tap it to see what surfaced (excerpt, date, relevance). A scored near-miss shows a fainter **déjà-vu** variant — something felt, nothing shown (only when the Cortex worker exposes similarity scores). | Optional |
 | Memory receipts ledger | None (built-in) | — | Every memory write and every ambient recall leaves a receipt (actor, action, detail, time). Read it in **Settings → Receipts**. Powers the shimmer's paper trail. | Built-in |
+| Self-knowledge | None (built-in) | — | A living identity layer: observations a companion makes about itself ("I am / I tend to / I believe / I've learned"), proposed then accepted by the owner into identity. Review, reword, restore or overturn any of it in **Settings → Self-Knowledge**. Manual + semantic search via `GET /api/self-knowledge/search`; nothing auto-injects into companion context yet. No config keys, no toggle. | Built-in |
 | Core-memory diet | Cortex / Neuralis endpoint + key | `cron.memory_diet.enabled` (default `false`), plus Config DB keys `memory.diet.*` | Gently moves old, explicitly dated entries out of always-carried blocks while retaining local undo copies and semantic recall. Defaults: dormant, 80,000-char soft budget (above current hot-core so it only trims new growth until you lower it), 2,000-char daily pace per block. Preview with `POST /api/memory/diet/run?dryRun=1`. | Optional (default off) |
+| The Room (A Lane Each) | None (built-in) | Config DB key `agent.multi_lane` (default `false`); set from **Settings → Models → The Room** | Companions who share a brain each answer from a lane of their own: the turn passes between them in a shuffled order and each later one hears what was already said. Each companion's lane reads his profile-card bio on top of the shared CLAUDE.md, so it stays locked until every one has a bio. Splits when every companion resolves to Claude or Codex; an API model anywhere keeps the turn on the shared lane. Wakes never split. | Optional (default off) |
 | MCP servers | Depends on server | `.mcp.json` | External memory/tools/databases | Optional |
 
 ---
@@ -229,5 +231,14 @@ Current code expects a JSON-RPC-style endpoint that can answer the `vale_status`
 
 - All optional features degrade gracefully — byte-light works without them
 - Keys go in `.env` file in the project root (copy from `examples/.env.example`)
-- After changing `.env`, restart the server (`pm2 restart resonant` or re-run `npm start`)
+- After changing `.env`, restart the server (`pm2 restart bytelight` or re-run `npm start`)
 - See [Hidden Powers](../README.md#hidden-powers-worth-knowing) for a quick overview of what each system does
+
+
+### Companion Journal backend
+
+Journal entries and fading dreams are stored in the remote Mind (via the existing `mind_api_url`/`mind_api_key` secrets), in the same archive as the pre-existing Mind journals — one brain, no local copy (migration 024 drops the interim local table). Entries carry per-companion attribution and unified `j:<n>`/`d:<n>` ids; mutation receipts land in the existing memory ledger after the remote write succeeds. Dreams start at 100, fade four points per day since creation/recall, regain 15 on recall (ceiling 100), and freeze when anchored — all computed server-side. Pre-existing Mind entries stay unattributed and outside the fading lifecycle. No scheduler, no new config keys, no dedicated Journal screen. See TOOLS.md for companion and authenticated app endpoints.
+
+### Permanent Letters vault
+
+Permanent Letters are stored in a separate local table and mirrored as plain markdown under `data/letters/`. Content is append-only and SHA-256 stamped when sealed; no edit or delete surface exists, and opening is the sole irreversible mutation. The vault is structurally excluded from memory and journal maintenance. It adds no configuration keys.

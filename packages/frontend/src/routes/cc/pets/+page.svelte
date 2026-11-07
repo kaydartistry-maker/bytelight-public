@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { apiFetch } from '$lib/utils/api';
   import { onMount } from 'svelte';
   import '../../../bytelight.css';
   import CcPageHeader from '$lib/components/CcPageHeader.svelte';
@@ -15,7 +16,7 @@
 
   async function load() {
     try {
-      const [pRes, uRes] = await Promise.all([fetch(`${CC_API}/pets`), fetch(`${CC_API}/pets/upcoming?days=14`)]);
+      const [pRes, uRes] = await Promise.all([apiFetch(`${CC_API}/pets`), apiFetch(`${CC_API}/pets/upcoming?days=14`)]);
       const pData = await pRes.json(); const uData = await uRes.json();
       pets = pData.pets || []; upcoming = uData.items || [];
     } catch { /* empty state handles */ }
@@ -24,13 +25,13 @@
 
   async function addPet() {
     if (!newName.trim()) return;
-    await fetch(`${CC_API}/pets`, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+    await apiFetch(`${CC_API}/pets`, { method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ name: newName.trim(), species: newSpecies || undefined, breed: newBreed || undefined, birthday: newBirthday || undefined }) });
     newName = ''; newSpecies = ''; newBreed = ''; newBirthday = ''; showAdd = false; await load();
   }
 
   async function markGiven(item: any) {
-    await fetch(`${CC_API}/pets/medications/given`, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+    await apiFetch(`${CC_API}/pets/medications/given`, { method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ med_name: item.name, pet_name: item.pet }) });
     await load();
   }
@@ -43,7 +44,7 @@
 
   async function savePetEdit() {
     if (!editingPet || !newName.trim()) return;
-    await fetch(`${CC_API}/pets/${editingPet}`, {
+    await apiFetch(`${CC_API}/pets/${editingPet}`, {
       method: 'PUT', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ name: newName.trim(), species: newSpecies || undefined, breed: newBreed || undefined, birthday: newBirthday || undefined, weight: newWeight || undefined, notes: newNotes || undefined }),
     });

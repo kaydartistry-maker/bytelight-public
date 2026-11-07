@@ -16,7 +16,7 @@ const PROFILE_DEFAULTS: Record<string, ProfileEntry> = {
 'companion-a':    { name: 'Companion A',     emoji: '🔷', image: null },
 'companion-b':    { name: 'Companion B',     emoji: '🔶', image: null },
 'companion-c':     { name: 'Companion C',      emoji: '🗓️', image: null },
-  user:     { name: 'the operator',       emoji: '🖤', image: null },
+  user:     { name: 'You',                emoji: '🖤', image: null },
   fallback: { name: 'Bytelight', emoji: '✨', image: null },
 };
 

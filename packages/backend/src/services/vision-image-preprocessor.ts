@@ -1,6 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import sharp from 'sharp';
 import type { NormalizedImage } from './runtimes/types.js';
+import { errMessage } from '../util/errors.js';
 
 export const MODEL_IMAGE_MAX_BYTES = 5 * 1024 * 1024;
 const MAX_INPUT_PIXELS = 40_000_000;
@@ -69,7 +70,7 @@ export async function prepareVisionImage(
 
     throw new Error(`could not reduce image below ${maxBytes} bytes`);
   } catch (error) {
-    const reason = error instanceof Error ? error.message : String(error);
+    const reason = errMessage(error);
     return {
       resized: false,
       warning: `[Vision warning: ${filename} could not be prepared for the model (${reason}). The original upload is still preserved in chat, but the model cannot see this image.]`,

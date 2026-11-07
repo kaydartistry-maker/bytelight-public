@@ -925,7 +925,6 @@
     border-radius: 50%;
     animation: spin 0.7s linear infinite;
   }
-  @keyframes spin { to { transform: rotate(360deg); } }
 
   .copy { min-height: 4.25rem; }
   .copy-title {

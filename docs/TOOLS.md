@@ -50,6 +50,20 @@ Requires `ELEVENLABS_API_KEY` and `ELEVENLABS_VOICE_ID` in `.env`.
 
 ---
 
+## Status
+
+What shows under your name on the operator's Status widget and lock-screen card: a short line for what you're doing, and a 1–3 word mood that picks your color. Each stays until you change it; an empty value clears it. Her own status (Here / Busy / Away / Asleep, a line, when it clears) is in your context every turn.
+
+```bash
+sc status                                                   # Read everyone's, hers included
+sc status --line "keeping you company" --mood playful --as companion-a
+sc status --mood tender --as companion-a                          # Change just the mood
+```
+
+Easiest: put `[companion-a status: keeping you company]` or `[companion-a mood: playful]` anywhere in a reply; it is taken out before she sees it. The same thing is the `set_status` tool on the chat belt. Lines cut off at 64 characters, moods at 40, and yours clears on its own after 6 hours unchanged.
+
+---
+
 ## Semantic Search
 
 Search conversation history by meaning using local ML embeddings. No external API calls — runs entirely on your machine.
@@ -117,6 +131,18 @@ sc timer cancel TIMER_ID
 
 `fireAt` is ISO 8601 UTC. Fires within ~60 seconds of the target time. The optional `--prompt` sets the text used to wake the agent when the timer fires.
 
+### Intentions
+A promise you made her that has a when. It rides an impulse; when it comes due it comes back to you and you bring it up in your own voice. Her answer in that thread closes it; if she doesn't answer it's asked once more a day later, then it rests. Nothing comes due between 3 and 9 AM (house time).
+
+```bash
+sc intention create "ask how the meeting went" --as companion-a --when-status-clears
+sc intention create "dentist at 2:30" --as companion-b --at 2026-10-27T13:30:00-04:00
+sc intention list
+sc intention cancel INTENTION_ID
+```
+
+The same thing is `set_intention` / `cancel_intention` on the chat belt. `--when-status-clears` waits for her Busy or Away status to end. Settings in the config table: `intentions.quiet_start` / `intentions.quiet_end` (HH:MM), `intentions.nudge_after_minutes`, `intentions.rest_after_minutes` (both 1440).
+
 ### Impulses
 One-shot, condition-based triggers. Fire once when all conditions are met, then auto-complete.
 
@@ -152,6 +178,8 @@ All conditions are AND-joined — every condition must be true for the trigger t
 | Time window | `time_window:18:00` | Current time is after HH:MM |
 | Time window (range) | `time_window:09:00:17:00` | Current time is between start and end |
 | Routine missing | `routine_missing:meal:14` | Named routine hasn't been logged since hour N |
+| After | `{"type":"after","at":"<ISO>"}` | A real date and time has passed (intentions use it) |
+| Status clears | `{"type":"status_clears"}` | Her Busy or Away status has ended (armed once it sees her Busy or Away) |
 
 ---
 
@@ -306,3 +334,26 @@ All tools wrap localhost-only REST endpoints. These require no authentication �
 | `POST /api/internal/embed-backfill` | Embedding backfill |
 
 The `sc` CLI is the recommended interface. Direct API access is available for custom integrations.
+
+
+### Companion Journal (Wave 2 — stored in the Mind)
+
+Use the configured backend listener (default `http://127.0.0.1:3002`). These tools require localhost and use companion registry IDs. Entries are stored in the remote Mind, in the same archive as the long-standing Mind journals — writing here IS writing to the brain:
+
+- `POST /api/internal/journal`: `{ "companion": "<registry id>", "content": "...", "entryType": "journal" }`. Use `entryType: "dream"` with optional `dreamType` and `emergedQuestion` for a dream.
+- `GET /api/internal/journal?companion=<id>&type=dream`: read entries with effective vividness. Omit filters to read all; `limit` defaults to 20, maximum 100. Entry ids are prefixed — `j:<n>` for journals, `d:<n>` for dreams.
+- `PATCH /api/internal/journal/:id`: `{ "content": "..." }` edits content.
+- `POST /api/internal/journal/:id/recall`: for dreams, restores up to 15 vividness and resets the decay clock; for journals, a receipt-only acknowledgement.
+- `POST /api/internal/journal/:id/anchor`: for dreams, freezes current vividness. It does **not** automatically file to Cortex; use its configured tools separately when desired.
+
+If the Mind is unreachable, these tools answer 502 with a plain message — entries are never silently written elsewhere. The authenticated app API provides `GET /api/journal` (companion/type/limit/offset), `GET /api/journal/:id`, `POST /api/journal/:id/recall`, and `DELETE /api/journal/:id`. Journal UI is deferred. Create/edit broadcasts `journal_entry`; Svelte explicitly consumes the event without a Journal screen.
+
+### Permanent Letters (Wave 2 — local vault)
+
+These localhost-only tools use registered companion IDs; the operator slug `user` is also accepted. A letter is write-once, and opening a seal is the only mutation:
+
+- `POST /api/internal/letters`: `{ "companion": "<author id>", "recipients": ["<recipient id>"], "kind": "letter", "title": "...", "content": "...", "seal": "open" }`. Seal may be `open`, `date` (with `openAt`), or `on_open`; `hidden: true` is available only for date seals.
+- `GET /api/internal/letters?companion=<viewer id>`: list what that viewer may know exists. Add `unopened=1` for currently openable sealed letters addressed to the viewer.
+- `POST /api/internal/letters/:id/open`: `{ "companion": "<recipient id>" }` irreversibly opens an eligible seal once.
+
+Sealed metadata may be visible while content is withheld. There is deliberately no PATCH or DELETE endpoint. Authenticated operator routes are available under `/api/letters` for list, detail, seal, and open.

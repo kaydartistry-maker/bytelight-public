@@ -9,6 +9,7 @@
   import StickerManager from './StickerManager.svelte';
   import ConfirmDialog from './ConfirmDialog.svelte';
   import InputModal from './InputModal.svelte';
+  import CutoutTab from './CutoutTab.svelte';
   import { apiFetch } from '$lib/utils/api';
   import { showToast } from '$lib/stores/toast.svelte';
 
@@ -21,7 +22,7 @@
 
   let { open = $bindable(false), onclose, onopen }: Props = $props();
 
-  type Tab = 'generate' | 'gallery' | 'edit' | 'sketch' | 'gif' | 'settings' | 'references' | 'stickers';
+  type Tab = 'generate' | 'gallery' | 'edit' | 'sketch' | 'gif' | 'cutout' | 'settings' | 'references' | 'stickers';
   let tab = $state<Tab>('generate');
   let tabBar = $state<HTMLElement>();
 
@@ -142,11 +143,33 @@
   let gifOutputTargetKb = $state<number | null>(null); // set when a Discord byte target was requested
   let gifOutputTargetBytes = $state<number | null>(null);
   let gifOutputFitMet = $state<boolean | null>(null);
+  let gifOutputFormat = $state('gif'); // 'gif' | 'apng' — keep-colors stickers export real APNG
+  let gifOutputW = $state(0); let gifOutputH = $state(0); // actual rendered dimensions, from the backend
+  let gifOutputNotes = $state<string[]>([]); // adjustments the backend reports (auto-fit, oversize, …)
+  // The pristine render — Optimize and Speed always work from this, never from
+  // their own previous output, so repeated passes can't compound quality loss
+  // or shrink the GIF a second time (the 320→288→259→233 spiral).
+  let gifRenderFilename = $state(''); let gifRenderW = $state(0); let gifRenderH = $state(0);
+  // A speed-adjusted copy of the render. Optimize starts here so re-timing
+  // survives it; Speed itself always starts from the pristine render so
+  // "Apply 2×" stays 2× no matter how many times it's tapped.
+  let gifTimedFilename = $state('');
   let gifCropX = $state(0); let gifCropY = $state(0); let gifCropW = $state(256); let gifCropH = $state(256);
-  let gifChromaColor = $state('#00ff00'); let gifChromaTolerance = $state(0.3);
+  let gifChromaColor = $state('#00ff00'); let gifChromaTolerance = $state(0.3); let gifChromaBlend = $state(0.1);
+  let gifGreenScreen = $state(false); // chromakey (YUV) for real footage; colorkey (RGB) for flat generated fills
   let gifOutputWidth = $state(0); let gifOutputHeight = $state(0); let gifSpeed = $state(1);
   let gifColors = $state(256); let gifLossy = $state(0); let gifDither = $state(true);
-  let gifFitBytes = $state(0); // 0 = off; Discord presets set a byte cap the render must fit under
+  let gifAutoFit = $state(false); // explicit permission to cut colors / raise lossy to hit the byte target
+  // Discord's own walls, taken whole from GIF Lab upstream: emoji cap 256KB at
+  // 128 square, stickers 512KB at 320 square. The output size decides the lane —
+  // the button name, the help text, and the byte budget all follow it together.
+  function discordLaneFor(width: number, height: number): { name: string | null; maxBytes: number } {
+    if (!width || !height) return { name: null, maxBytes: 512 * 1024 };
+    if (width === 320 && height === 320) return { name: 'Discord Sticker', maxBytes: 512 * 1024 };
+    if (width <= 128 && height <= 128) return { name: 'Discord Emoji', maxBytes: 256 * 1024 };
+    return { name: null, maxBytes: 512 * 1024 };
+  }
+  const gifLane = $derived(discordLaneFor(gifOutputWidth, gifOutputHeight));
   let gifPreserveColors = $state(false); let gifGalleryFilename = $state('');
   let gifToolsReady = $state<boolean | null>(null); let gifToolsReason = $state('');
   let gifCaption = $state(''); let gifTextPosition = $state('bottom'); let gifFontSize = $state(24);
@@ -155,7 +178,7 @@
   let gifDropDuplicates = $state(true); let gifRemoveFrames = $state(0); let gifOptimizeScale = $state(100);
   let gifPreviewTimer: ReturnType<typeof setInterval> | undefined;
   const gifActiveFrame = $derived(gifFrames[gifActive]);
-  const gifOutputOverKb = $derived(gifOutputTargetBytes === null ? 0 : Math.ceil(Math.max(0, gifOutputBytes - gifOutputTargetBytes) / 1000));
+  const gifOutputOverKb = $derived(gifOutputTargetBytes === null ? 0 : Math.ceil(Math.max(0, gifOutputBytes - gifOutputTargetBytes) / 1024));
 
   // ── Modals ──────────────────────────────────────────────────────────
   let createOpen = $state(false);
@@ -228,14 +251,26 @@
     try { await fn(); } catch (e) { gifError = e instanceof Error ? e.message : `${label} failed`; showToast(gifError, 'error'); }
     finally { gifBusy = ''; }
   }
-  function resetGifOutput() { gifOutputUrl = ''; gifOutputFilename = ''; gifOutputBytes = 0; gifOutputKb = 0; gifOutputOk = false; gifOutputTargetKb = null; gifOutputTargetBytes = null; gifOutputFitMet = null; gifGalleryFilename = ''; }
-  function presetDiscordSticker() { gifOutputWidth = 320; gifOutputHeight = 320; gifColors = 256; gifLossy = 30; gifDither = false; gifFitBytes = 500 * 1000; gifPreserveColors = false; }
-  function presetDiscordEmoji() { gifOutputWidth = 128; gifOutputHeight = 128; gifColors = 128; gifLossy = 40; gifDither = false; gifFitBytes = 250 * 1000; gifPreserveColors = false; }
+  function resetGifOutput() { gifOutputUrl = ''; gifOutputFilename = ''; gifOutputBytes = 0; gifOutputKb = 0; gifOutputOk = false; gifOutputTargetKb = null; gifOutputTargetBytes = null; gifOutputFitMet = null; gifGalleryFilename = ''; gifOutputFormat = 'gif'; gifOutputW = 0; gifOutputH = 0; gifOutputNotes = []; gifRenderFilename = ''; gifRenderW = 0; gifRenderH = 0; gifTimedFilename = ''; }
+  // Pressing a Discord preset is an explicit ask to fit that lane, so it turns auto-fit on.
+  function presetDiscordSticker() { gifOutputWidth = 320; gifOutputHeight = 320; gifColors = 256; gifLossy = 30; gifDither = false; gifPreserveColors = false; gifAutoFit = true; }
+  function presetDiscordEmoji() { gifOutputWidth = 128; gifOutputHeight = 128; gifColors = 128; gifLossy = 40; gifDither = false; gifPreserveColors = false; gifAutoFit = true; }
   function presetDiscordStickerKeepColors() { presetDiscordSticker(); gifPreserveColors = true; }
   function refreshGifFrames() { const stamp = Date.now(); gifFrames = gifFrames.map((f) => ({ ...f, url: `${f.url.split('?')[0]}?v=${stamp}` })); }
   function selectAllGifFrames() { gifSelected = gifFrames.map((_, i) => i); }
   function toggleGifFrame(index: number) { gifSelected = gifSelected.includes(index) ? gifSelected.filter((i) => i !== index) : [...gifSelected, index].sort((a, b) => a - b); gifActive = index; }
-  function useGifResult(data: any, success: string) { const targetBytes = gifFitBytes > 0 ? gifFitBytes : null; const sizeBytes = Number(data.sizeBytes) || Number(data.sizeKb) * 1024 || 0; const targetKb = targetBytes === null ? null : Math.round(targetBytes / 1000); gifOutputUrl = data.url; gifOutputFilename = data.filename; gifOutputBytes = sizeBytes; gifOutputKb = Math.ceil(sizeBytes / 1000); gifOutputOk = data.discordOk; gifOutputTargetBytes = targetBytes; gifOutputTargetKb = targetKb; gifOutputFitMet = targetBytes === null ? null : sizeBytes <= targetBytes; gifGalleryFilename = ''; if (targetBytes !== null && !gifOutputFitMet) showToast(`Still ${Math.ceil((sizeBytes - targetBytes) / 1000)}kB over Discord's ${targetKb}kB limit — try fewer colors or frames`, 'error'); else showToast(`${success} · ${gifOutputKb}kB${targetBytes !== null ? ' · Discord-ready' : ''}`, 'success'); }
+  function useGifResult(data: any, success: string) {
+    const targetBytes = gifLane.maxBytes; const sizeBytes = Number(data.sizeBytes) || Number(data.sizeKb) * 1024 || 0; const targetKb = Math.round(targetBytes / 1024);
+    gifOutputUrl = data.url; gifOutputFilename = data.filename;
+    gifOutputFormat = data.format ?? 'gif';
+    gifOutputW = Number(data.width) || 0; gifOutputH = Number(data.height) || 0;
+    gifOutputNotes = Array.isArray(data.adjustments) ? data.adjustments : [];
+    gifOutputBytes = sizeBytes; gifOutputKb = Math.round(sizeBytes / 1024); gifOutputOk = data.discordOk;
+    gifOutputTargetBytes = targetBytes; gifOutputTargetKb = targetKb; gifOutputFitMet = sizeBytes <= targetBytes; gifGalleryFilename = '';
+    const dims = gifOutputW && gifOutputH ? ` · ${gifOutputW}×${gifOutputH}` : '';
+    if (!gifOutputFitMet) showToast(`Still ${Math.round((sizeBytes - targetBytes) / 1024)}KB over ${gifLane.name ?? 'Discord'}'s ${targetKb}KB limit${gifAutoFit || gifOutputFormat !== 'gif' ? ' — try fewer colors, frames, or a smaller size' : ' — enable Auto-fit or lower the settings yourself'}`, 'error');
+    else showToast(`${success}${dims} · ${gifOutputKb}KB · under ${targetKb}KB`, 'success');
+  }
   async function extractGifFrames(event: Event) {
     const input = event.target as HTMLInputElement; const file = input.files?.[0]; if (!file) return;
     await gifTask('Extracting frames', async () => {
@@ -257,11 +292,99 @@
     }); input.value = '';
   }
   async function cropGif() { if (!gifSessionId) return; await gifTask('Cropping', async () => { await gifResponseData(await apiFetch(`/api/gif/crop/${gifSessionId}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ x: gifCropX, y: gifCropY, width: gifCropW, height: gifCropH }) })); refreshGifFrames(); resetGifOutput(); }); }
-  async function chromaGif() { if (!gifSessionId || !gifSelected.length) return; await gifTask('Removing color', async () => { for (const index of gifSelected) await gifResponseData(await apiFetch(`/api/gif/chroma-key/${gifSessionId}/${encodeURIComponent(gifFrames[index].filename)}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ color: gifChromaColor, tolerance: gifChromaTolerance }) })); refreshGifFrames(); resetGifOutput(); }); }
-  async function createGif() { if (!gifSessionId || !gifSelected.length) return; await gifTask('Forging GIF', async () => { const data = await gifResponseData(await apiFetch('/api/gif/create', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sessionId: gifSessionId, frames: gifSelected.map((i) => gifFrames[i].filename), fps: gifFps, loop: true, width: gifOutputWidth || undefined, height: gifOutputHeight || undefined, fit: gifPreserveColors, speed: gifSpeed, lossy: gifPreserveColors ? undefined : gifLossy, colors: gifPreserveColors ? undefined : gifColors, dither: gifPreserveColors ? false : gifDither, maxBytes: gifFitBytes || undefined, text: gifCaption.trim() ? { content: gifCaption.trim(), position: gifTextPosition, fontSize: gifFontSize, fontColor: gifFontColor, borderColor: gifBorderColor, fontFamily: gifFontFamily } : undefined }) })); useGifResult(data, 'GIF ready'); }); }
-  async function optimizeGif() { if (!gifOutputFilename) return; await gifTask('Optimizing', async () => { const data = await gifResponseData(await apiFetch(`/api/gif/optimize/${gifSessionId}/${encodeURIComponent(gifOutputFilename)}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ lossy: gifPreserveColors ? undefined : gifLossy, colors: gifPreserveColors ? undefined : gifColors, dither: gifPreserveColors ? false : gifDither, optimizeLevel: 3, dropDuplicates: gifDropDuplicates, removeFrames: gifRemoveFrames || undefined, stripMetadata: true, scale: gifOptimizeScale < 100 ? gifOptimizeScale / 100 : undefined, maxBytes: gifFitBytes || undefined }) })); useGifResult(data, `Optimized · saved ${data.savedPercent}%${data.framesDropped ? ` · removed ${data.framesDropped} frames` : ''}`); }); }
-  async function changeGifSpeed() { if (!gifOutputFilename) return; await gifTask('Changing speed', async () => { useGifResult(await gifResponseData(await apiFetch(`/api/gif/speed/${gifSessionId}/${encodeURIComponent(gifOutputFilename)}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ speed: gifSpeed }) })), 'Speed changed'); }); }
+  async function chromaGif() { if (!gifSessionId || !gifSelected.length) return; await gifTask('Removing color', async () => { for (const index of gifSelected) await gifResponseData(await apiFetch(`/api/gif/chroma-key/${gifSessionId}/${encodeURIComponent(gifFrames[index].filename)}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ color: gifChromaColor, tolerance: gifChromaTolerance, blend: gifChromaBlend, mode: gifGreenScreen ? 'chroma' : 'color' }) })); refreshGifFrames(); resetGifOutput(); }); }
+  function gifCreateBody(width?: number, height?: number, frameNames?: string[]) {
+    return {
+      sessionId: gifSessionId,
+      frames: frameNames ?? gifSelected.map((i) => gifFrames[i].filename),
+      fps: gifFps, loop: true,
+      width: width ?? (gifOutputWidth || undefined),
+      height: height ?? (gifOutputHeight || undefined),
+      fit: gifPreserveColors, preserveColors: gifPreserveColors,
+      format: gifPreserveColors ? 'apng' : 'gif',
+      autoFit: gifAutoFit,
+      speed: gifSpeed,
+      lossy: gifPreserveColors ? undefined : gifLossy,
+      colors: gifPreserveColors ? undefined : gifColors,
+      dither: gifPreserveColors ? false : gifDither,
+      maxBytes: gifLane.maxBytes,
+      text: gifCaption.trim() ? { content: gifCaption.trim(), position: gifTextPosition, fontSize: gifFontSize, fontColor: gifFontColor, borderColor: gifBorderColor, fontFamily: gifFontFamily } : undefined,
+    };
+  }
+  async function requestCreateGif(width?: number, height?: number, frameNames?: string[]) {
+    return gifResponseData(await apiFetch('/api/gif/create', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(gifCreateBody(width, height, frameNames)) }));
+  }
+  function recordRender(data: any) { gifRenderFilename = data.filename; gifRenderW = Number(data.width) || 0; gifRenderH = Number(data.height) || 0; gifTimedFilename = ''; }
+  async function createGif() { if (!gifSessionId || !gifSelected.length) return; await gifTask('Forging GIF', async () => { const data = await requestCreateGif(); recordRender(data); useGifResult(data, 'GIF ready'); }); }
+  async function optimizeGif() {
+    const base = gifRenderFilename || gifOutputFilename; if (!base) return;
+    if (gifOutputFormat === 'apng' || gifPreserveColors) {
+      // No gifsicle for APNG — but the size levers that matter (drop every Nth,
+      // scale down) work by re-rendering from the original frames, so the
+      // "over budget → thin the frames" workflow stays intact on this lane.
+      const nth = gifRemoveFrames;
+      if (!nth && gifOptimizeScale >= 100) { showToast('For APNG set “Drop every Nth” or Scale — palette and duplicate tricks are GIF-only', 'error'); return; }
+      await gifTask('Re-rendering APNG', async () => {
+        const names = gifSelected.map((i) => gifFrames[i].filename).filter((_, pos) => !nth || (pos + 1) % nth !== 0);
+        const baseW = gifRenderW || gifOutputW; const baseH = gifRenderH || gifOutputH;
+        const w = gifOptimizeScale < 100 && baseW ? Math.max(16, Math.round((baseW * gifOptimizeScale) / 100)) : undefined;
+        const h = gifOptimizeScale < 100 && baseH ? Math.max(16, Math.round((baseH * gifOptimizeScale) / 100)) : undefined;
+        const data = await requestCreateGif(w, h, names);
+        recordRender(data);
+        useGifResult(data, `Re-rendered APNG${nth ? ` · dropped every ${nth}th frame` : ''}${w ? ` · scaled to ${gifOptimizeScale}%` : ''}`);
+      });
+      return;
+    }
+    await gifTask('Optimizing', async () => {
+      let target = gifTimedFilename || base;
+      let scaleParam: number | undefined;
+      if (gifOptimizeScale < 100) {
+        const baseW = gifRenderW || gifOutputW; const baseH = gifRenderH || gifOutputH;
+        if (baseW && baseH) {
+          // Scaling re-renders from the original frames at the reduced size, so
+          // the smaller GIF is built from full-quality pixels — never by
+          // shrinking an already-compressed GIF.
+          const rerender = await requestCreateGif(Math.max(16, Math.round((baseW * gifOptimizeScale) / 100)), Math.max(16, Math.round((baseH * gifOptimizeScale) / 100)));
+          target = rerender.filename;
+        } else {
+          scaleParam = gifOptimizeScale / 100; // dimensions unknown — scale the pristine render once
+        }
+      }
+      const data = await gifResponseData(await apiFetch(`/api/gif/optimize/${gifSessionId}/${encodeURIComponent(target)}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ lossy: gifPreserveColors ? undefined : gifLossy, colors: gifPreserveColors ? undefined : gifColors, dither: gifPreserveColors ? false : gifDither, optimizeLevel: 3, dropDuplicates: gifDropDuplicates, removeFrames: gifRemoveFrames || undefined, stripMetadata: true, scale: scaleParam, maxBytes: gifLane.maxBytes }) }));
+      useGifResult(data, `Optimized · saved ${data.savedPercent}%${data.framesDropped ? ` · removed ${data.framesDropped} frames` : ''}`);
+    });
+  }
+  async function changeGifSpeed() {
+    // Speed also works from the pristine render: "Apply 2×" means 2× of the
+    // render every time, not 2× of whatever the last button click produced.
+    const target = gifRenderFilename || gifOutputFilename; if (!target) return;
+    if (gifOutputFormat === 'apng' || gifPreserveColors) {
+      // Speed is a render parameter on this lane — rebuild with it baked in.
+      await gifTask('Re-rendering APNG', async () => { const data = await requestCreateGif(); recordRender(data); useGifResult(data, `Speed ${gifSpeed}× baked in`); });
+      return;
+    }
+    await gifTask('Changing speed', async () => {
+      const data = await gifResponseData(await apiFetch(`/api/gif/speed/${gifSessionId}/${encodeURIComponent(target)}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ speed: gifSpeed }) }));
+      gifTimedFilename = data.filename;
+      useGifResult(data, 'Speed changed');
+    }); }
   async function keepGif() { if (!gifOutputFilename || gifGalleryFilename) return; await gifTask('Saving to gallery', async () => { const data = await gifResponseData(await apiFetch(`/api/gif/keep/${gifSessionId}/${encodeURIComponent(gifOutputFilename)}`, { method: 'POST' })); gifGalleryFilename = data.filename; await loadGallery(); showToast(`Saved to ${data.location}: ${data.filename}`, 'success'); }); }
+  // The escape hatch for an over-budget APNG: same frames, GIF lane, auto-fit
+  // granted — always lands a postable file, quality cost reported honestly.
+  async function makeItFitAsGif() {
+    if (!gifSessionId || !gifSelected.length) return;
+    await gifTask('Fitting as GIF', async () => {
+      const body = {
+        ...gifCreateBody(),
+        format: 'gif', preserveColors: false, autoFit: true,
+        fit: !!(gifOutputWidth && gifOutputHeight), // keep the square padding the sticker lane had
+        lossy: gifLossy, colors: gifColors, dither: gifDither,
+      };
+      const data = await gifResponseData(await apiFetch('/api/gif/create', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }));
+      recordRender(data);
+      useGifResult(data, 'Fitted as GIF');
+    });
+  }
 
   async function putSettings(patch: Record<string, unknown>) {
     saving = true;
@@ -411,6 +534,7 @@
       <button class="filter-btn" class:active={tab === 'edit'} onclick={() => (tab = 'edit')}>Edit</button>
       <button class="filter-btn" class:active={tab === 'sketch'} onclick={() => (tab = 'sketch')}>Sketch</button>
       <button class="filter-btn" class:active={tab === 'gif'} onclick={() => (tab = 'gif')}>GIF</button>
+      <button class="filter-btn" class:active={tab === 'cutout'} onclick={() => (tab = 'cutout')}>Cutout</button>
       <button class="filter-btn" class:active={tab === 'settings'} onclick={() => (tab = 'settings')}>Settings</button>
       <button class="filter-btn" class:active={tab === 'references'} onclick={() => (tab = 'references')}>References</button>
       <button class="filter-btn" class:active={tab === 'stickers'} onclick={() => (tab = 'stickers')}>Stickers</button>
@@ -451,18 +575,22 @@
 
             <section class="gif-card"><h3>3 · Edit frames</h3>
               <details><summary>Crop every frame</summary><div class="gif-grid gif-four"><label>X<input type="number" min="0" bind:value={gifCropX}></label><label>Y<input type="number" min="0" bind:value={gifCropY}></label><label>Width<input type="number" min="1" bind:value={gifCropW}></label><label>Height<input type="number" min="1" bind:value={gifCropH}></label></div><button class="primary" onclick={cropGif} disabled={!!gifBusy || gifToolsReady !== true}>Apply crop</button></details>
-              <details><summary>Green screen / chroma key</summary><div class="gif-grid gif-two"><label>Key color<input type="color" bind:value={gifChromaColor}></label><label>Tolerance · {gifChromaTolerance.toFixed(2)}<input type="range" min="0.01" max="1" step="0.01" bind:value={gifChromaTolerance}></label></div><button class="primary" onclick={chromaGif} disabled={!!gifBusy || !gifSelected.length || gifToolsReady !== true}>Apply to selected</button></details>
+              <details><summary>Remove a background color</summary><div class="gif-grid gif-two"><label>Key color<input type="color" bind:value={gifChromaColor}></label><label>Tolerance · {Math.round(gifChromaTolerance * 100)}%<input type="range" min="0.01" max="0.8" step="0.01" bind:value={gifChromaTolerance}></label><label>Edge blend · {Math.round(gifChromaBlend * 100)}%<input type="range" min="0" max="0.5" step="0.05" bind:value={gifChromaBlend}></label></div><label class="gif-check"><input type="checkbox" bind:checked={gifGreenScreen}> Green-screen mode</label><p class="gif-hint">For an actual green screen, not a flat backdrop. Leave it off and a red background stops taking the pink with it.</p><button class="primary" onclick={chromaGif} disabled={!!gifBusy || !gifSelected.length || gifToolsReady !== true}>Apply to selected</button></details>
               <details><summary>Caption</summary><textarea rows="2" placeholder="Add a caption…" bind:value={gifCaption}></textarea><div class="gif-grid gif-two"><label>Font<select bind:value={gifFontFamily}>{#each gifFonts as font}<option value={font}>{font}</option>{/each}</select></label><label>Position<select bind:value={gifTextPosition}><option value="top">Top</option><option value="center">Center</option><option value="bottom">Bottom</option></select></label><label>Size<input type="number" min="8" max="200" bind:value={gifFontSize}></label><label>Fill / outline<span class="gif-colors"><input type="color" bind:value={gifFontColor}><input type="color" bind:value={gifBorderColor}></span></label></div></details>
             </section>
 
-            <section class="gif-card"><h3>4 · Render</h3><div class="gif-actions"><button onclick={presetDiscordSticker}>Discord Sticker</button><button onclick={presetDiscordEmoji}>Discord Emoji</button><button onclick={presetDiscordStickerKeepColors}>Sticker (keep colors)</button></div><p class="gif-hint">Animated stickers upload only from Discord desktop or browser server settings; mobile refuses silently.</p>{#if gifPreserveColors}<p class="gif-hint">Keep colors: transparent 320×320 fit with the full palette; palette, lossy, and dither controls are skipped.</p>{/if}<div class="gif-grid gif-two"><label>Output width <small>0 = auto</small><input type="number" min="0" bind:value={gifOutputWidth}></label><label>Output height <small>0 = auto</small><input type="number" min="0" bind:value={gifOutputHeight}></label><label>Speed · {gifSpeed}×<input type="range" min="0.25" max="4" step="0.25" bind:value={gifSpeed}></label><label>Colors · {gifColors}<input type="range" min="2" max="256" step="2" bind:value={gifColors}></label><label>Lossy · {gifLossy}<input type="range" min="0" max="200" step="5" bind:value={gifLossy}></label><label class="gif-check"><input type="checkbox" bind:checked={gifDither}> Dither colors</label></div><button class="gif-forge" onclick={createGif} disabled={!!gifBusy || !gifSelected.length || gifToolsReady !== true} title={!gifSelected.length ? 'Select at least one frame in the timeline' : 'Render the GIF from your selected frames'}>{gifBusy === 'Forging GIF' ? 'Forging…' : 'Create GIF'}</button></section>
+            <section class="gif-card"><h3>4 · Render</h3><div class="gif-actions"><button onclick={presetDiscordSticker}>Discord Sticker</button><button onclick={presetDiscordEmoji}>Discord Emoji</button><button onclick={presetDiscordStickerKeepColors}>Sticker (keep colors)</button></div><p class="gif-hint">{gifLane.name ? `${gifLane.name} preset: transparent, sized to ${gifOutputWidth}×${gifOutputHeight}, compressed against ${Math.round(gifLane.maxBytes / 1024)}KB.` : `Full color, transparent, compressed against 512KB — at the frames’ own size. Not a Discord sticker: set an output size above for that.`}</p><p class="gif-hint">Animated stickers upload only from Discord desktop or browser server settings; mobile refuses silently.</p>{#if gifPreserveColors}<p class="gif-hint">Keep colors: exports a real APNG — true full color, transparent, {gifOutputWidth || 320}×{gifOutputHeight || 320} fit. Palette, lossy, dither, and auto-fit don't apply; Discord accepts APNG stickers.</p>{/if}<div class="gif-grid gif-two"><label>Output width <small>0 = auto</small><input type="number" min="0" bind:value={gifOutputWidth}></label><label>Output height <small>0 = auto</small><input type="number" min="0" bind:value={gifOutputHeight}></label><label>Speed · {gifSpeed}×<input type="range" min="0.25" max="4" step="0.25" bind:value={gifSpeed}></label><label>Colors · {gifColors}<input type="range" min="2" max="256" step="2" bind:value={gifColors}></label><label>Lossy · {gifLossy}<input type="range" min="0" max="200" step="5" bind:value={gifLossy}></label><label class="gif-check"><input type="checkbox" bind:checked={gifDither}> Dither colors</label><label class="gif-check" title="Allow the Studio to cut colors or raise lossy past your settings until the file fits the size limit. Off = your settings are the floor; an oversized result is reported, never silently degraded."><input type="checkbox" bind:checked={gifAutoFit} disabled={gifPreserveColors}> Auto-fit to {Math.round(gifLane.maxBytes / 1024)}KB</label></div><button class="gif-forge" onclick={createGif} disabled={!!gifBusy || !gifSelected.length || gifToolsReady !== true} title={!gifSelected.length ? 'Select at least one frame in the timeline' : 'Render from your selected frames'}>{gifBusy === 'Forging GIF' ? 'Forging…' : gifLane.name ? `Create ${gifLane.name} ${gifPreserveColors ? 'APNG' : 'GIF'}` : 'Create GIF'}</button></section>
           {/if}
 
           {#if gifBusy}<p class="gif-status"><span></span>{gifBusy}…</p>{/if}
           {#if gifError}<p class="gif-error">{gifError}</p>{/if}
           {#if gifOutputUrl}
-            <section class="gif-card gif-result" class:gif-over={gifOutputTargetKb !== null && !gifOutputFitMet}><h3>{gifOutputTargetKb !== null && !gifOutputFitMet ? 'Over Discord limit' : 'Finished GIF'}</h3><img src={gifOutputUrl} alt="Created GIF"><p>{gifOutputKb} kB · {#if gifOutputTargetKb !== null}<span class:ok={gifOutputFitMet}>{gifOutputFitMet ? `✅ Discord-ready under ${gifOutputTargetKb}kB` : `Still ${gifOutputOverKb}kB over Discord's ${gifOutputTargetKb}kB limit — try fewer colors or frames`}</span>{:else}<span class:ok={gifOutputOk}>{gifOutputOk ? 'under 256 KB' : 'over 256 KB'}</span>{/if}</p><div class="gif-actions gif-result-bar"><a class="gif-button primary" href={gifOutputUrl} download="byte-light.gif">Download</a><button onclick={keepGif} disabled={!!gifBusy || !!gifGalleryFilename}>{gifGalleryFilename ? 'Saved to gallery' : 'Save to gallery'}</button><button onclick={changeGifSpeed} disabled={!!gifBusy || gifToolsReady !== true}>Apply {gifSpeed}× speed</button><button onclick={optimizeGif} disabled={!!gifBusy || gifToolsReady !== true}>Optimize</button></div>{#if gifGalleryFilename}<p class="ok">Saved in Studio gallery · {gifGalleryFilename}</p>{/if}<details><summary>Optimization controls</summary><div class="gif-grid gif-two"><label class="gif-check"><input type="checkbox" bind:checked={gifDropDuplicates}> Drop duplicates</label><label>Drop every Nth<select bind:value={gifRemoveFrames}><option value={0}>Keep all</option><option value={2}>2nd</option><option value={3}>3rd</option><option value={4}>4th</option></select></label><label>Scale · {gifOptimizeScale}%<input type="range" min="25" max="100" step="5" bind:value={gifOptimizeScale}></label></div></details></section>
+            <section class="gif-card gif-result" class:gif-over={gifOutputTargetKb !== null && !gifOutputFitMet}><h3>{gifOutputTargetKb !== null && !gifOutputFitMet ? 'Over Discord limit' : `Finished ${gifOutputFormat === 'apng' ? 'APNG' : 'GIF'}`}</h3><img src={gifOutputUrl} alt="Created animation"><p>{#if gifOutputW && gifOutputH}{gifOutputW}×{gifOutputH} · {/if}{gifOutputFormat.toUpperCase()} · {gifOutputKb}KB · <span class:ok={gifOutputFitMet}>{gifOutputFitMet ? `✅ under ${gifOutputTargetKb}KB${gifLane.name ? ` — ${gifLane.name}-ready` : ''}` : `Still ${gifOutputOverKb}KB over the ${gifOutputTargetKb}KB limit${gifAutoFit || gifOutputFormat === 'apng' ? ' — try fewer colors, frames, or a smaller size' : ' — enable Auto-fit or lower the settings'}`}</span></p>{#if gifOutputWidth && gifOutputW && gifOutputW < gifOutputWidth}<p class="gif-hint">Rendered at {gifOutputW}×{gifOutputH}, smaller than the requested {gifOutputWidth}×{gifOutputHeight}.</p>{/if}{#if gifOutputNotes.length}<p class="gif-hint">{gifOutputNotes.join(' · ')}</p>{/if}<div class="gif-actions gif-result-bar">{#if gifOutputFormat === 'apng' && gifOutputFitMet === false}<button class="gif-button primary" onclick={makeItFitAsGif} disabled={!!gifBusy} title="Re-renders these frames on the GIF lane with auto-fit — always lands under the limit; any quality cost is reported on the card">Make it fit as GIF</button>{/if}<a class="gif-button primary" href={gifOutputUrl} download={`byte-light.${gifOutputFormat}`}>Download</a><button onclick={keepGif} disabled={!!gifBusy || !!gifGalleryFilename}>{gifGalleryFilename ? 'Saved to gallery' : 'Save to gallery'}</button><button onclick={changeGifSpeed} disabled={!!gifBusy || gifToolsReady !== true} title={gifOutputFormat !== 'gif' ? `Re-renders the APNG with ${gifSpeed}× speed baked in` : `Re-time the render to ${gifSpeed}×`}>Apply {gifSpeed}× speed</button><button onclick={optimizeGif} disabled={!!gifBusy || gifToolsReady !== true} title={gifOutputFormat !== 'gif' ? 'Re-renders the APNG from your frames — Drop every Nth and Scale apply; palette tricks are GIF-only' : 'Optimize from the pristine render'}>Optimize</button></div>{#if gifGalleryFilename}<p class="ok">Saved in Studio gallery · {gifGalleryFilename}</p>{/if}<details><summary>Optimization controls</summary><div class="gif-grid gif-two"><label class="gif-check"><input type="checkbox" bind:checked={gifDropDuplicates}> Drop duplicates</label><label>Drop every Nth<select bind:value={gifRemoveFrames}><option value={0}>Keep all</option><option value={2}>2nd</option><option value={3}>3rd</option><option value={4}>4th</option></select></label><label>Scale · {gifOptimizeScale}%<input type="range" min="25" max="100" step="5" bind:value={gifOptimizeScale}></label></div></details></section>
           {/if}
+        </div>
+      {:else if tab === 'cutout'}
+        <div class="gif-editor">
+          <CutoutTab active={tab === 'cutout'} />
         </div>
       {:else if tab === 'settings'}
         {#if settings}
@@ -603,7 +731,7 @@
 <InputModal
   bind:open={createOpen}
   title="New drawer"
-  placeholder="e.g. sample subject, sample subject, The Jungle"
+  placeholder="e.g. sample subject, sample subject, a jungle"
   bind:value={createValue}
   showEmoji
   bind:emoji={createEmoji}

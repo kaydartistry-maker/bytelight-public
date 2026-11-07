@@ -16,8 +16,9 @@ import {
 } from '@modelcontextprotocol/sdk/types.js';
 import { getRouterTools, executeRouterTool } from '../services/mcp-bridge.js';
 import { runWithBeltContext } from '../services/chat-tool-belt.js';
-import { codexActiveBeltThread } from '../services/runtimes/codex-daemon.js';
+import { codexActiveBeltThread, codexActiveTurnAudience } from '../services/runtimes/codex-daemon.js';
 import { getMcpBeltToken, validMcpBeltBearer } from '../services/mcp-belt-auth.js';
+import { errMessage } from '../util/errors.js';
 
 const THREAD_BOUND_TOOLS = new Set(['send_voice_note', 'generate_image']);
 
@@ -25,6 +26,7 @@ interface BeltDependencies {
   getTools: typeof getRouterTools;
   executeTool: typeof executeRouterTool;
   activeThread: typeof codexActiveBeltThread;
+  activeAudience?: typeof codexActiveTurnAudience;
   expectedToken: () => string;
   sessionIdleMs: number;
   sweepIntervalMs: number;
@@ -46,6 +48,7 @@ const defaultDependencies: BeltDependencies = {
   getTools: getRouterTools,
   executeTool: executeRouterTool,
   activeThread: codexActiveBeltThread,
+  activeAudience: codexActiveTurnAudience,
   expectedToken: getMcpBeltToken,
   sessionIdleMs: 6 * 60 * 60 * 1000,
   sweepIntervalMs: 60 * 1000,
@@ -112,7 +115,10 @@ export function createBeltMcpRouter(overrides: Partial<BeltDependencies> = {}): 
       }
 
       try {
-        const { result, ok } = await runWithBeltContext({ threadId }, () =>
+        // The live Codex turn's audience rides along, so a guest's turn is
+        // refused belt tools by executeRouterTool (turn-audience.ts).
+        const audience = deps.activeAudience?.() ?? undefined;
+        const { result, ok } = await runWithBeltContext({ threadId, ...(audience ? { audience } : {}) }, () =>
           deps.executeTool(name, args));
         return {
           content: [{ type: 'text', text: result }],
@@ -122,7 +128,7 @@ export function createBeltMcpRouter(overrides: Partial<BeltDependencies> = {}): 
         return {
           content: [{
             type: 'text',
-            text: `Error: ${error instanceof Error ? error.message : String(error)}`,
+            text: `Error: ${errMessage(error)}`,
           }],
           isError: true,
         };

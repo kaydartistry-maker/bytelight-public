@@ -704,16 +704,3 @@ export function loadProviderConfig(): ProviderConfig {
   const cfg = getBytelightConfig();
   return (cfg.providers ?? {}) as ProviderConfig;
 }
-
-/** List available provider names based on config presence. */
-export function getAvailableProviders(config: ProviderConfig): string[] {
-  const available: string[] = [];
-  if (config.ollama?.base_url) available.push('ollama');
-  if (config.anthropic?.api_key) available.push('anthropic');
-  if (config.openrouter?.api_key) available.push('openrouter');
-  if (config.groq?.api_key) available.push('groq');
-  if (config.xai?.api_key) available.push('xai');
-  if (config.openai?.api_key) available.push('openai');
-  if (config.huggingface?.api_key) available.push('huggingface');
-  return available;
-}

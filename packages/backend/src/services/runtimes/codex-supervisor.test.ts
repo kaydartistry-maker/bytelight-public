@@ -13,7 +13,12 @@ import {
 import { tmpdir } from 'os';
 import { join } from 'path';
 
-import { codexDaemonStartupAction, materializeCodexSkillsDoor } from './codex-supervisor.js';
+import {
+  codexDaemonStartupAction,
+  codexLaunchFingerprint,
+  findOwnedDaemonPids,
+  materializeCodexSkillsDoor,
+} from './codex-supervisor.js';
 
 const tempDirs: string[] = [];
 
@@ -37,6 +42,37 @@ describe('Codex daemon lifecycle', () => {
 
   test('starts the daemon only when no socket exists', () => {
     assert.equal(codexDaemonStartupAction(false), 'start');
+    assert.equal(codexDaemonStartupAction(false, 'a', 'b'), 'start');
+  });
+
+  test('adopts a reachable daemon only while its launch config matches', () => {
+    assert.equal(codexDaemonStartupAction(true, 'same', 'same'), 'reuse');
+    assert.equal(codexDaemonStartupAction(true, 'old', 'new'), 'restart');
+    // A daemon from code that never recorded a fingerprint is restarted once.
+    assert.equal(codexDaemonStartupAction(true, null, 'new'), 'restart');
+  });
+
+  test('fingerprints change with any arg (e.g. an .mcp.json edit) and nothing else', () => {
+    const a = codexLaunchFingerprint('codex', ['app-server', '-c', 'mcp_servers={bytelight={url="x"}}']);
+    assert.equal(a, codexLaunchFingerprint('codex', ['app-server', '-c', 'mcp_servers={bytelight={url="x"}}']));
+    assert.notEqual(a, codexLaunchFingerprint('codex', ['app-server', '-c', 'mcp_servers={bytelight={url="y"}}']));
+    assert.notEqual(a, codexLaunchFingerprint('/opt/codex', ['app-server', '-c', 'mcp_servers={bytelight={url="x"}}']));
+  });
+
+  test('finds only the app-server bound to byte-light\'s private socket', () => {
+    const proc = mkdtempSync(join(tmpdir(), 'fake-proc-'));
+    tempDirs.push(proc);
+    const write = (pid: string, args: string[]) => {
+      mkdirSync(join(proc, pid));
+      writeFileSync(join(proc, pid, 'cmdline'), args.join('\0') + '\0');
+    };
+    const sock = '/home/user/.codex/app-server-control/bytelight-app-server.sock';
+    write('101', ['codex', '--dangerously-bypass-approvals-and-sandbox', 'app-server', '--listen', `unix://${sock}`, '-c', 'mcp_servers={}']);
+    write('202', ['codex', 'app-server', '--listen', 'unix:///home/user/.codex/other.sock']); // The operator's own Codex
+    write('303', ['node', 'server.js', `unix://${sock}`]); // mentions the socket but is not an app-server
+    mkdirSync(join(proc, 'self'));
+    assert.deepEqual(findOwnedDaemonPids(sock, proc), [101]);
+    assert.deepEqual(findOwnedDaemonPids(sock, '/nonexistent-proc'), []);
   });
 });
 

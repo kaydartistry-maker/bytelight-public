@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { apiFetch } from '$lib/utils/api';
   import { onMount } from 'svelte';
   import '../../../bytelight.css';
   import CcPageHeader from '$lib/components/CcPageHeader.svelte';
@@ -18,10 +19,10 @@
     try {
       const person = defaultPerson || 'default';
       const [tRes, cRes, cyRes, eRes] = await Promise.all([
-        fetch(`${CC_API}/stats/tasks?days=${days}`),
-        fetch(`${CC_API}/stats/care?person=${person}&days=${days}`),
-        fetch(`${CC_API}/stats/cycle`),
-        fetch(`${CC_API}/expenses/stats?period=month`),
+        apiFetch(`${CC_API}/stats/tasks?days=${days}`),
+        apiFetch(`${CC_API}/stats/care?person=${person}&days=${days}`),
+        apiFetch(`${CC_API}/stats/cycle`),
+        apiFetch(`${CC_API}/expenses/stats?period=month`),
       ]);
       taskStats = await tRes.json();
       careStats = await cRes.json();
@@ -46,7 +47,7 @@
 
   onMount(async () => {
     try {
-      const res = await fetch(`${CC_API}/config`);
+      const res = await apiFetch(`${CC_API}/config`);
       if (res.ok) {
         const config = await res.json();
         defaultPerson = config.default_person || '';

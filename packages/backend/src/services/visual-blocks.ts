@@ -1,6 +1,6 @@
 // Helpers for embedding images directly into the model's input as content
 // blocks instead of surfacing them via path-hints + Read tool. Used for
-// sticker refs in chat and image attachments — so the boys actually SEE
+// sticker refs in chat and image attachments — so the companions actually SEE
 // the visual, not just know its name.
 //
 // The Anthropic API accepts user messages with content as an array of
@@ -128,14 +128,6 @@ export function normalizedImagesToImageBlocks(images: readonly NormalizedImage[]
     });
   }
   return out;
-}
-
-// Sanity check used by tests / debug — not invoked by hot paths.
-export function debugImageBlock(block: ImageBlock): { mediaType: string; bytes: number } {
-  return {
-    mediaType: block.source.media_type,
-    bytes: Math.ceil((block.source.data.length * 3) / 4),
-  };
 }
 
 // File-size guard for fileToImageBlock callers that want to skip huge files

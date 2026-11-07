@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { apiFetch } from '$lib/utils/api';
   import { onMount } from 'svelte';
   import '../../../bytelight.css';
   import CcPageHeader from '$lib/components/CcPageHeader.svelte';
@@ -17,7 +18,7 @@
   async function loadLists() {
     loading = true;
     try {
-      const res = await fetch(`${CC_API}/lists`);
+      const res = await apiFetch(`${CC_API}/lists`);
       const data = await res.json();
       lists = data.lists || [];
     } catch { /* handled by empty state */ }
@@ -25,42 +26,42 @@
   }
 
   async function selectList(id: string) {
-    const res = await fetch(`${CC_API}/lists/${id}`);
+    const res = await apiFetch(`${CC_API}/lists/${id}`);
     const data = await res.json();
     selectedList = data.list;
   }
 
   async function createList() {
     if (!newListName.trim()) return;
-    await fetch(`${CC_API}/lists`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: newListName.trim() }) });
+    await apiFetch(`${CC_API}/lists`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: newListName.trim() }) });
     newListName = ''; showAddList = false; await loadLists();
   }
 
   async function addItem() {
     if (!newItemText.trim() || !selectedList) return;
-    await fetch(`${CC_API}/lists/${selectedList.id}/items`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ item: newItemText.trim() }) });
+    await apiFetch(`${CC_API}/lists/${selectedList.id}/items`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ item: newItemText.trim() }) });
     newItemText = ''; await selectList(selectedList.id);
   }
 
   async function toggleItem(itemId: string, currentChecked: number) {
-    await fetch(`${CC_API}/lists/items/${itemId}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ checked: !currentChecked }) });
+    await apiFetch(`${CC_API}/lists/items/${itemId}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ checked: !currentChecked }) });
     await selectList(selectedList.id);
   }
 
   async function deleteItem(itemId: string) {
-    await fetch(`${CC_API}/lists/items/${itemId}`, { method: 'DELETE' });
+    await apiFetch(`${CC_API}/lists/items/${itemId}`, { method: 'DELETE' });
     await selectList(selectedList.id);
   }
 
   async function deleteList(listId: string) {
     if (!confirm('Delete this list and all its items?')) return;
-    await fetch(`${CC_API}/lists/${listId}`, { method: 'DELETE' });
+    await apiFetch(`${CC_API}/lists/${listId}`, { method: 'DELETE' });
     await loadLists();
   }
 
   async function clearChecked() {
     if (!selectedList) return;
-    await fetch(`${CC_API}/lists/${selectedList.id}/items`, { method: 'DELETE' });
+    await apiFetch(`${CC_API}/lists/${selectedList.id}/items`, { method: 'DELETE' });
     await selectList(selectedList.id);
   }
 

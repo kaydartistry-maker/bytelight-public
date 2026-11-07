@@ -1,0 +1,23 @@
+{
+  "name": "@bytelight/shared",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "clean": "node -e \"const fs=require('fs');['dist','tsconfig.tsbuildinfo'].forEach(p=>{try{fs.rmSync(p,{recursive:true,force:true})}catch{}})\"",
+    "build": "tsc -b --force",
+    "check": "tsc --noEmit",
+    "test": "find src -name '*.test.ts' -print0 | xargs -0 tsx --test"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3"
+  }
+}

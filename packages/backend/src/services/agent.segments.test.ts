@@ -35,7 +35,7 @@ import { describe, test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import type { MessageSegment } from '@bytelight/shared';
 import { initDb, createThread, createMessage, getMessage, getMessages } from './db.js';
-import { buildSegments, shouldDiscardEmptyTurn, type ThinkingInsertion } from './agent.js';
+import { buildSegments, shouldDiscardEmptyTurn, isDeliberateSilence, type ThinkingInsertion } from './agent.js';
 import type { ToolInsertion } from './hooks.js';
 import { loadConfig } from '../config.js';
 
@@ -278,5 +278,27 @@ describe('silent turn persistence', () => {
       endedSilently: true,
       hasDurableArtifacts: false,
     }), false);
+  });
+});
+
+describe('the [SILENT] pass', () => {
+  test('exactly [SILENT], give or take whitespace, is a deliberate pass; anything else is words', () => {
+    assert.equal(isDeliberateSilence('[SILENT]'), true);
+    assert.equal(isDeliberateSilence('  [SILENT]\n'), true);
+    assert.equal(isDeliberateSilence('[SILENT] but also this'), false);
+    assert.equal(isDeliberateSilence('silent'), false);
+    assert.equal(isDeliberateSilence(''), false);
+    assert.equal(isDeliberateSilence(undefined), false);
+  });
+
+  test('a deliberate pass is discarded even with a tool trail behind it', () => {
+    assert.equal(shouldDiscardEmptyTurn({
+      fullResponse: '',
+      stoppedByUser: false,
+      agentTimedOut: false,
+      endedSilently: false,
+      hasDurableArtifacts: true,
+      deliberateSilence: true,
+    }), true);
   });
 });

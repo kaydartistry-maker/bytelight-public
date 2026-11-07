@@ -10,7 +10,7 @@
   }>();
 
   const barColor = $derived(() => {
-    if (percentage >= 95) return 'var(--context-critical, #ef4444)';
+    if (percentage >= 95) return 'var(--context-critical, var(--color-error))';
     if (percentage >= 85) return 'var(--context-warning, #f97316)';
     if (percentage >= 70) return 'var(--context-caution, #f59e0b)';
     return 'var(--gold-dim)';

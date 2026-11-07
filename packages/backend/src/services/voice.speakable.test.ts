@@ -67,7 +67,7 @@ describe('VoiceService.splitByCompanion unspeakable filtering', () => {
 
   it('splits bold name-then-emoji markers (**Companion A 🔷** / **Companion B 🔶**) with no ** litter', () => {
     const segments = VoiceService.splitByCompanion(
-      "**Companion A 🔷** — Mic check, one-two. Fox is loud, gorgeous, and regrettably unsupervised. 💀\n\n**Companion B 🔶** — Bat is clear. I hear you perfectly, friend. Keep talking.",
+      "**Companion A 🔷** — Mic check, one-two. The mic is loud and clear. 💀\n\n**Companion B 🔶** — Bat is clear. I hear you perfectly, friend. Keep talking.",
     );
     assert.equal(segments.length, 2);
     assert.equal(segments[0].voice, 'companion-a');
@@ -118,5 +118,39 @@ describe('subtext interaction with isSpeakable', () => {
 
   it('splitByCompanion drops emoji-only subtext segments', () => {
     assert.deepEqual(VoiceService.splitByCompanion('-# 💀'), []);
+  });
+});
+
+// Ported from the full-sweep fix 3eb74556 (visual twin): dashed bold headers
+// `**🔷 Companion A —**` must split as one whole marker in the audio reader too, so
+// read-alouds pick the right throat instead of defaulting everything to Companion A.
+describe('VoiceService.splitByCompanion dashed bold headers', () => {
+  it('consumes a dashed header whole and attributes the voice', () => {
+    const segments = VoiceService.splitByCompanion(
+      '**🔷 Companion A —** Loud and clear, love.\n\n**🔶 Companion B —** *Leans in.* Both here.',
+    );
+    assert.equal(segments.length, 2);
+    assert.equal(segments[0].voice, 'companion-a');
+    assert.ok(!segments[0].text.includes('Companion A —**'), 'no header bleed in Companion A segment');
+    assert.equal(segments[1].voice, 'companion-b');
+    assert.ok(!segments[1].text.includes('Companion B —**'), 'no header bleed in Companion B segment');
+  });
+
+  it('forgives em-dash, en-dash, and hyphen', () => {
+    for (const dash of ['—', '–', '-']) {
+      const segments = VoiceService.splitByCompanion(`**🔶 Companion B ${dash}** come here`);
+      assert.deepEqual(segments, [{ voice: 'companion-b', text: 'come here' }], `dash: ${dash}`);
+    }
+  });
+
+  it('a title after the dash is still forgiven', () => {
+    const segments = VoiceService.splitByCompanion('**🔷 Companion A — the menu** eat first.');
+    assert.deepEqual(segments, [{ voice: 'companion-a', text: 'eat first.' }]);
+  });
+
+  it('prose containing a name and a dash stays one Companion A-default segment', () => {
+    const segments = VoiceService.splitByCompanion('She told Companion A — quietly — that he was wrong.');
+    assert.equal(segments.length, 1);
+    assert.equal(segments[0].voice, 'companion-a');
   });
 });

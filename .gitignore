@@ -29,7 +29,14 @@ screenshots/
 
 # Internal working docs — plans, trackers, audits, smoke cards.
 # Never commit; this is where the share tool writes.
-shared/
+# Anchored to the repo root: packages/shared is real source, never ignore it.
+/shared/
+
+# Internal port maps — local planning artifacts, never publish.
+**/*PORT-MAP*.md
+**/*port-map*.md
+**/*PORT_MAP*.md
+**/*port_map*.md
 
 # Companion memory — never commit. Lives locally only.
 memory.md

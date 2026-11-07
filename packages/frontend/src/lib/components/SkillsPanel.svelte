@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { apiFetch } from '$lib/utils/api';
   import { onMount } from 'svelte';
 
   interface Skill {
@@ -12,7 +13,7 @@
 
   onMount(async () => {
     try {
-      const response = await fetch('/api/skills');
+      const response = await apiFetch('/api/skills');
       if (!response.ok) throw new Error('Failed to fetch skills');
       const data = await response.json();
       skills = data.skills;
@@ -57,7 +58,7 @@
   }
 
   .error {
-    color: var(--error, #ef4444);
+    color: var(--error, var(--color-error));
   }
 
   .skills-grid {

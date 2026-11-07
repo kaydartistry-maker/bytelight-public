@@ -39,6 +39,7 @@ import {
   getCodexAuthSnapshot,
   type CodexAuthSnapshot,
 } from '../services/auth/codex-oauth.js';
+import { errMessage } from '../util/errors.js';
 
 const router: Router = Router();
 
@@ -137,11 +138,18 @@ export function buildCodexCliCatalogEntries(): ModelInfo[] {
 
 // Claude models — always available via SDK (matches model-manifest entries).
 const CLAUDE_MODELS: ModelInfo[] = [
+  { id: 'claude-fable-5-1', name: 'Claude Fable 5.1', provider: 'claude', runtime: 'claude-sdk', tier: 'included', context_length: 1000000, supports_tools: true, ref: 'claude/claude-fable-5-1' },
+  { id: 'claude-opus-5-5', name: 'Claude Opus 5.5', provider: 'claude', runtime: 'claude-sdk', tier: 'included', context_length: 1000000, supports_tools: true, ref: 'claude/claude-opus-5-5' },
+  { id: 'claude-sonnet-5-5', name: 'Claude Sonnet 5.5', provider: 'claude', runtime: 'claude-sdk', tier: 'included', context_length: 1000000, supports_tools: true, ref: 'claude/claude-sonnet-5-5' },
+  { id: 'claude-haiku-5-5', name: 'Claude Haiku 5.5', provider: 'claude', runtime: 'claude-sdk', tier: 'included', context_length: 1000000, supports_tools: true, ref: 'claude/claude-haiku-5-5' },
+  { id: 'claude-fable-5', name: 'Claude Fable 5', provider: 'claude', runtime: 'claude-sdk', tier: 'included', context_length: 1000000, supports_tools: true, ref: 'claude/claude-fable-5' },
+  { id: 'claude-opus-4-8', name: 'Claude Opus 4.8', provider: 'claude', runtime: 'claude-sdk', tier: 'included', context_length: 1000000, supports_tools: true, ref: 'claude/claude-opus-4-8' },
+  { id: 'claude-sonnet-5', name: 'Claude Sonnet 5', provider: 'claude', runtime: 'claude-sdk', tier: 'included', context_length: 1000000, supports_tools: true, ref: 'claude/claude-sonnet-5' },
   { id: 'claude-opus-5', name: 'Claude Opus 5', provider: 'claude', runtime: 'claude-sdk', tier: 'included', context_length: 1000000, supports_tools: true, ref: 'claude/claude-opus-5' },
-  { id: 'claude-opus-4-7', name: 'Claude Opus 4.7', provider: 'claude', runtime: 'claude-sdk', tier: 'included', context_length: 200000, supports_tools: true, ref: 'claude/claude-opus-4-7' },
-  { id: 'claude-opus-4-6', name: 'Claude Opus 4.6', provider: 'claude', runtime: 'claude-sdk', tier: 'included', context_length: 200000, supports_tools: true, ref: 'claude/claude-opus-4-6' },
+  { id: 'claude-opus-4-7', name: 'Claude Opus 4.7', provider: 'claude', runtime: 'claude-sdk', tier: 'included', context_length: 1000000, supports_tools: true, ref: 'claude/claude-opus-4-7' },
+  { id: 'claude-opus-4-6', name: 'Claude Opus 4.6', provider: 'claude', runtime: 'claude-sdk', tier: 'included', context_length: 1000000, supports_tools: true, ref: 'claude/claude-opus-4-6' },
   { id: 'claude-opus-4-5', name: 'Claude Opus 4.5', provider: 'claude', runtime: 'claude-sdk', tier: 'included', context_length: 200000, supports_tools: true, ref: 'claude/claude-opus-4-5' },
-  { id: 'claude-sonnet-4-6', name: 'Claude Sonnet 4.6', provider: 'claude', runtime: 'claude-sdk', tier: 'included', context_length: 200000, supports_tools: true, ref: 'claude/claude-sonnet-4-6' },
+  { id: 'claude-sonnet-4-6', name: 'Claude Sonnet 4.6', provider: 'claude', runtime: 'claude-sdk', tier: 'included', context_length: 1000000, supports_tools: true, ref: 'claude/claude-sonnet-4-6' },
   { id: 'claude-sonnet-4-5', name: 'Claude Sonnet 4.5', provider: 'claude', runtime: 'claude-sdk', tier: 'included', context_length: 200000, supports_tools: true, ref: 'claude/claude-sonnet-4-5' },
   { id: 'claude-haiku-4-5', name: 'Claude Haiku 4.5', provider: 'claude', runtime: 'claude-sdk', tier: 'included', context_length: 200000, supports_tools: true, ref: 'claude/claude-haiku-4-5' },
 ];
@@ -615,7 +623,7 @@ router.post('/models/check', async (req: Request, res: Response) => {
     const data = await probe.json() as any;
     res.json({ ok: true, models: Array.isArray(data.data) ? data.data.length : 0 });
   } catch (err) {
-    res.json({ ok: false, error: err instanceof Error ? err.message : String(err) });
+    res.json({ ok: false, error: errMessage(err) });
   }
 });
 

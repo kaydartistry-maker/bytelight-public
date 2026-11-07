@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Sampled from the edge of her artwork so the adaptive background is
+         the same black as the drawing and no seam shows under the mask. -->
+    <color name="ic_launcher_background">#000000</color>
+</resources>

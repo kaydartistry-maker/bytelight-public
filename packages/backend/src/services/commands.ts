@@ -6,6 +6,7 @@ import { join } from 'path';
 import crypto from 'crypto';
 import { MODEL_VARIANTS, type CommandRegistryEntry, type ServerMessage } from '@bytelight/shared';
 import { scanSkills } from './skills.js';
+import { persistAgentSetting } from './agent-settings.js';
 import {
   getDb,
   getThread,
@@ -21,6 +22,7 @@ import { AgentService } from './agent.js';
 import { Orchestrator } from './orchestrator.js';
 import { getBytelightConfig } from '../config.js';
 import type { ConnectionRegistry } from '../types.js';
+import { errMessage } from '../util/errors.js';
 
 // ---------------------------------------------------------------------------
 // UI-only commands (we handle, never touch the agent)
@@ -173,7 +175,7 @@ export async function handleCommand(
       type: 'command_result',
       name,
       success: false,
-      error: err instanceof Error ? err.message : String(err),
+      error: errMessage(err),
       display: 'toast',
     };
   }
@@ -233,7 +235,9 @@ function handleRename(threadId: string | undefined, args: string | undefined): S
 function handleModel(args: string | undefined): ServerMessage {
   const modelId = args?.trim();
   if (!modelId) {
-    const current = getConfig('agent.model') || getBytelightConfig().agent.model;
+    // Live config is what dispatch actually reads — quote THAT, not a DB row
+    // the settings screen never writes (which went stale and lied here).
+    const current = getBytelightConfig().agent.model || getConfig('agent.model');
     return {
       type: 'command_result',
       name: 'model',
@@ -243,7 +247,9 @@ function handleModel(args: string | undefined): ServerMessage {
     };
   }
 
-  setConfig('agent.model', modelId);
+  // All three legs — DB row, bytelight.yaml, live config — move together.
+  // setConfig alone wrote a row nothing dispatches from and reported success.
+  persistAgentSetting('agent.model', modelId);
 
   return {
     type: 'command_result',
@@ -391,7 +397,7 @@ function handleSubagents(): ServerMessage {
         type: 'command_result',
         name: 'subagents',
         success: false,
-        error: `Failed to read agents directory: ${err instanceof Error ? err.message : String(err)}`,
+        error: `Failed to read agents directory: ${errMessage(err)}`,
         display: 'toast',
       };
     }

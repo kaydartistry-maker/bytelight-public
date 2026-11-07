@@ -34,6 +34,7 @@ import {
   submitManualCode,
   cancelLoginSession,
 } from '../services/auth/codex-oauth.js';
+import { errMessage } from '../util/errors.js';
 
 const router = Router();
 
@@ -58,7 +59,7 @@ router.post('/auth/codex/login', async (_req: Request, res: Response) => {
       startedAt: snapshot.startedAt,
     });
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
+    const message = errMessage(err);
     console.error('[codex-auth route] /login error:', message);
     res.status(500).json({ error: 'Failed to start Codex login', details: message });
   }
@@ -81,7 +82,7 @@ router.get('/auth/codex/status', async (_req: Request, res: Response) => {
     const snapshot = await getCodexAuthSnapshot();
     res.json(snapshot);
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
+    const message = errMessage(err);
     console.error('[codex-auth route] /status error:', message);
     res.status(500).json({ error: 'Failed to read Codex auth status', details: message });
   }
@@ -119,7 +120,7 @@ router.post('/auth/codex/logout', async (_req: Request, res: Response) => {
     await logoutCodex();
     res.json({ success: true });
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
+    const message = errMessage(err);
     console.error('[codex-auth route] /logout error:', message);
     res.status(500).json({ error: 'Failed to log out of Codex', details: message });
   }

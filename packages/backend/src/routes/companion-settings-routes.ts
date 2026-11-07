@@ -17,6 +17,7 @@
  *   PUT    /api/companion-settings/thread     (thread-scope, interactive-only)
  *   DELETE /api/companion-settings/thread
  *   PUT    /api/companion-settings/default    (companion-scope, interactive|autonomous)
+ *   DELETE /api/companion-settings/default    (back to the brain's / house default)
  *
  * Auth is inherited from the parent router at packages/backend/src/routes/api.ts
  * (the router.use(authMiddleware) boundary). This module mounts AFTER that
@@ -98,6 +99,9 @@ export function createCompanionSettingsRoutes(): Router {
         model: resolved.model,
         thinkingEffort: resolved.effort,
         source: resolved.source,
+        // Whose row answered — a companion ('companion-a') may be following the
+        // brain it shares ('companion-a-b'). null on the bare config fallback.
+        matchedCompanionId: resolved.matchedCompanionId ?? null,
       });
     } catch (err) {
       console.error('Failed to resolve companion settings:', err);
@@ -273,6 +277,34 @@ export function createCompanionSettingsRoutes(): Router {
     } catch (err) {
       console.error('Failed to upsert companion default:', err);
       res.status(500).json({ error: 'Failed to upsert companion default' });
+    }
+  });
+
+  /**
+   * DELETE /api/companion-settings/default
+   *
+   * Removes one COMPANION-scope row, so that companion falls back to what is
+   * below it (its brain's default, then the system fallback). Exact key —
+   * no thread or system row can be touched by this handler.
+   */
+  router.delete('/companion-settings/default', (req, res) => {
+    try {
+      const body = (req.body ?? {}) as Record<string, unknown>;
+      const companionId = body.companionId;
+      const tier = body.tier;
+      if (typeof companionId !== 'string' || companionId.trim().length === 0) {
+        res.status(400).json({ error: 'companionId required' });
+        return;
+      }
+      if (tier !== 'interactive' && tier !== 'autonomous') {
+        res.status(400).json({ error: "tier must be 'interactive' or 'autonomous'" });
+        return;
+      }
+      const removed = deleteCompanionSetting({ companionId, tier, scope: 'companion' });
+      res.json({ ok: true, removed });
+    } catch (err) {
+      console.error('Failed to delete companion default:', err);
+      res.status(500).json({ error: 'Failed to delete companion default' });
     }
   });
 

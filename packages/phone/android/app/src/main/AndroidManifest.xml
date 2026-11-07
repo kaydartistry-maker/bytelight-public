@@ -1,0 +1,109 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <application
+        android:allowBackup="true"
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:supportsRtl="true"
+        android:theme="@style/AppTheme">
+
+        <activity
+            android:configChanges="orientation|keyboardHidden|keyboard|screenSize|locale|smallestScreenSize|screenLayout|uiMode|navigation"
+            android:name=".MainActivity"
+            android:label="@string/title_activity_main"
+            android:theme="@style/AppTheme.NoActionBarLaunch"
+            android:launchMode="singleTask"
+            android:resizeableActivity="true"
+            android:exported="true">
+
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+
+        </activity>
+
+        <!-- The system-owned outside-Bytelight call dock. Android embeds this
+             small native activity when the ongoing conversation notification
+             is promoted to a Bubble; it deliberately is not another WebView
+             competing with the live voice session in MainActivity. -->
+        <activity
+            android:name=".PocketVoiceBubbleActivity"
+            android:allowEmbedded="true"
+            android:documentLaunchMode="always"
+            android:resizeableActivity="true"
+            android:exported="false"
+            android:theme="@style/AppTheme.NoActionBar" />
+
+        <!-- A visible, user-started conversation may stay alive behind another
+             app while its Bubble or ongoing-call notification remains visible.
+             The service has no boot receiver and is never started silently. -->
+        <service
+            android:name=".PocketVoiceService"
+            android:exported="false"
+            android:foregroundServiceType="microphone" />
+
+        <receiver
+            android:name=".PocketVoiceActionReceiver"
+            android:exported="false" />
+
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths"></meta-data>
+        </provider>
+    </application>
+
+    <!-- Permissions -->
+
+    <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Thresholds: location for proximity + geofencing lanes -->
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-feature android:name="android.hardware.location.gps" android:required="false" />
+    <!-- Local notifications (the pocket buzz) -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.VIBRATE" />
+    <!-- True Voice Mode + camera capture inside the WebView (Sidney's warning) -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+    <!-- Android 14+ requires the type-specific declaration before a visible
+         microphone conversation can continue outside the foreground UI. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+    <!-- The floating voice tray. A Bubble asks Android to lend us a window and
+         vendor builds refuse; this draws our own. Special access, so declaring
+         it grants nothing on its own — the owner must switch on "Appear on top"
+         once, and with it off every overlay call is a no-op and the ongoing
+         call notification is unchanged. -->
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
+    <uses-feature android:name="android.hardware.microphone" android:required="false" />
+    <!-- Update lane: install house-served APK updates -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+
+    <!-- Android 11+ package visibility. Targeting SDK 30 or later hides every
+         other installed app from us unless we name what we intend to ask for,
+         and Capacitor's WebView file chooser gates the camera on
+         resolveActivity(ACTION_IMAGE_CAPTURE). Without this block that lookup
+         answers "nobody can do that", the capture intent is never built, and
+         the chooser falls back to the ordinary document picker — the same
+         symptom the FileProvider root fixed one step further down the chain.
+         @capacitor/camera ships this exact block; the thin shell has no
+         plugin, so it declares it itself. -->
+    <queries>
+        <intent>
+            <action android:name="android.media.action.IMAGE_CAPTURE" />
+        </intent>
+        <intent>
+            <action android:name="android.media.action.VIDEO_CAPTURE" />
+        </intent>
+    </queries>
+</manifest>

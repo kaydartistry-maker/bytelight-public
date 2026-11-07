@@ -17,6 +17,7 @@ import {
 } from '../services/db.js';
 import { discoverManagedServer, invalidateManagedServer } from '../services/mcp-bridge.js';
 import { discoverMcpTools } from '../services/mcp-client.js';
+import { errMessage } from '../util/errors.js';
 
 const router = Router();
 
@@ -60,7 +61,7 @@ router.post('/mcp-servers', (req, res) => {
       createdAt: server.created_at,
     });
   } catch (err) {
-    res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
+    res.status(500).json({ error: errMessage(err) });
   }
 });
 
@@ -114,7 +115,7 @@ router.post('/mcp-servers/test', async (req, res) => {
   } catch (err) {
     res.status(502).json({
       ok: false,
-      error: err instanceof Error ? err.message : String(err),
+      error: errMessage(err),
     });
   }
 });
@@ -132,7 +133,7 @@ router.post('/mcp-servers/:id/discover', async (req, res) => {
   } catch (err) {
     res.status(502).json({
       ok: false,
-      error: err instanceof Error ? err.message : String(err),
+      error: errMessage(err),
     });
   }
 });

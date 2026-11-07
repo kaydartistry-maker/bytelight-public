@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { apiFetch } from '$lib/utils/api';
   import { onMount } from 'svelte';
   import '../../../bytelight.css';
   import CcPageHeader from '$lib/components/CcPageHeader.svelte';
@@ -82,9 +83,9 @@
     loading = true;
     try {
       const [taskRes, eventRes, projRes] = await Promise.all([
-        fetch(`${CC_API}/tasks?status=active`),
-        fetch(`${CC_API}/events?start_date=${date}&end_date=${date}`),
-        fetch(`${CC_API}/projects?status=active`),
+        apiFetch(`${CC_API}/tasks?status=active`),
+        apiFetch(`${CC_API}/events?start_date=${date}&end_date=${date}`),
+        apiFetch(`${CC_API}/projects?status=active`),
       ]);
       const [taskData, eventData, projData] = await Promise.all([taskRes.json(), eventRes.json(), projRes.json()]);
       allTasks = taskData.tasks || []; events = eventData.events || []; projects = projData.projects || [];
@@ -94,7 +95,7 @@
 
   async function addTask(projectName: string | null) {
     if (!newTaskText.trim()) return;
-    await fetch(`${CC_API}/tasks`, {
+    await apiFetch(`${CC_API}/tasks`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ text: newTaskText.trim(), project: projectName || undefined, priority: newTaskPriority }),
     });
@@ -104,42 +105,42 @@
 
   async function toggleComplete(task: Task) {
     if (task.status === 'active') {
-      await fetch(`${CC_API}/tasks/${task.id}/complete`, { method: 'PUT' });
+      await apiFetch(`${CC_API}/tasks/${task.id}/complete`, { method: 'PUT' });
     } else {
-      await fetch(`${CC_API}/tasks/${task.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: 'active' }) });
+      await apiFetch(`${CC_API}/tasks/${task.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: 'active' }) });
     }
     await loadDay(selectedDate);
   }
 
   async function saveTaskEdit() {
     if (!editingTask || !editText.trim()) return;
-    await fetch(`${CC_API}/tasks/${editingTask}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: editText.trim() }) });
+    await apiFetch(`${CC_API}/tasks/${editingTask}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: editText.trim() }) });
     editingTask = null; editText = '';
     await loadDay(selectedDate);
   }
 
   async function cyclePriority(task: Task) {
     const next = task.priority >= 2 ? 0 : task.priority + 1;
-    await fetch(`${CC_API}/tasks/${task.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ priority: next }) });
+    await apiFetch(`${CC_API}/tasks/${task.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ priority: next }) });
     await loadDay(selectedDate);
   }
 
   async function deleteTask(id: string) {
-    await fetch(`${CC_API}/tasks/${id}`, { method: 'DELETE' });
+    await apiFetch(`${CC_API}/tasks/${id}`, { method: 'DELETE' });
     await loadDay(selectedDate);
   }
 
   // Project CRUD
   async function saveProjectEdit() {
     if (!editingProject || !projName.trim()) return;
-    await fetch(`${CC_API}/projects/${editingProject}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: projName.trim(), color: projColor || undefined, deadline: projDeadline || undefined }) });
+    await apiFetch(`${CC_API}/projects/${editingProject}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: projName.trim(), color: projColor || undefined, deadline: projDeadline || undefined }) });
     editingProject = null;
     await loadDay(selectedDate);
   }
 
   async function createProject() {
     if (!projName.trim()) return;
-    await fetch(`${CC_API}/projects`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: projName.trim(), color: projColor || undefined, deadline: projDeadline || undefined }) });
+    await apiFetch(`${CC_API}/projects`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: projName.trim(), color: projColor || undefined, deadline: projDeadline || undefined }) });
     projName = ''; projColor = ''; projDeadline = ''; showNewProject = false;
     await loadDay(selectedDate);
   }
@@ -178,7 +179,7 @@
     items.splice(toIdx, 0, moved);
 
     // Update sort_order for all affected
-    const updates = items.map((t, i) => fetch(`${CC_API}/tasks/${t.id}`, {
+    const updates = items.map((t, i) => apiFetch(`${CC_API}/tasks/${t.id}`, {
       method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sort_order: i }),
     }));
     await Promise.all(updates);

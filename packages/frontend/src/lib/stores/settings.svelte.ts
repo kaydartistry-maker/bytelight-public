@@ -26,12 +26,17 @@ let runtimeHealth = $state<RuntimeHealth | null>(null);
 export async function loadSettings(): Promise<void> {
   loading = true;
   try {
-    const [configRes, orchRes, failsafeRes, triggersRes, prefsRes] = await Promise.all([
-      apiFetch('/api/settings'),
-      apiFetch('/api/orchestrator/status'),
-      apiFetch('/api/orchestrator/failsafe'),
-      apiFetch('/api/orchestrator/triggers'),
-      apiFetch('/api/preferences'),
+    // Cap each initial fetch so a transit stall can never pend forever — on
+    // timeout the fetch rejects, Promise.all rejects, and the existing catch
+    // below handles it exactly like any other network failure (no rethrow).
+    const initTimeout = () => ({ signal: AbortSignal.timeout(10000) });
+    const [configRes, orchRes, failsafeRes, triggersRes, prefsRes, wakePromptsRes] = await Promise.all([
+      apiFetch('/api/settings', initTimeout()),
+      apiFetch('/api/orchestrator/status', initTimeout()),
+      apiFetch('/api/orchestrator/failsafe', initTimeout()),
+      apiFetch('/api/orchestrator/triggers', initTimeout()),
+      apiFetch('/api/preferences', initTimeout()),
+      apiFetch('/api/orchestrator/wake-prompts', initTimeout()),
     ]);
 
     // Parse preferences first so we can seed agent.model into config below
@@ -73,6 +78,14 @@ export async function loadSettings(): Promise<void> {
     if (triggersRes.ok) {
       const data = await triggersRes.json();
       triggers = data.triggers || [];
+    }
+
+    // Wake prompts ride the same proven mount-load as the siblings above,
+    // so the map is hydrated before the Orchestrator tab is ever opened.
+    if (wakePromptsRes.ok) {
+      ingestWakePromptReport(await wakePromptsRes.json());
+    } else {
+      console.warn('[wake-prompts] load failed:', wakePromptsRes.status);
     }
   } catch (err) {
     console.error('Failed to load settings:', err);
@@ -152,6 +165,72 @@ export async function rescheduleTask(wakeType: string, cronExpr: string): Promis
   }
 }
 
+// --- Per-wake prompt view/edit ---
+
+export interface WakePromptEntry {
+  body: string;
+  source: 'file' | 'default';
+  hasDefault: boolean;
+}
+
+let wakePrompts = $state<Record<string, WakePromptEntry>>({});
+
+export function getWakePrompt(wakeType: string): WakePromptEntry | undefined {
+  return wakePrompts[wakeType];
+}
+
+function ingestWakePromptReport(data: unknown): void {
+  const prompts = (data as { prompts?: Array<WakePromptEntry & { wakeType: string }> })?.prompts;
+  if (!Array.isArray(prompts)) return;
+  const map: Record<string, WakePromptEntry> = {};
+  for (const p of prompts) {
+    map[p.wakeType] = { body: p.body, source: p.source, hasDefault: p.hasDefault };
+  }
+  wakePrompts = map;
+}
+
+export async function loadWakePrompts(): Promise<void> {
+  try {
+    const res = await apiFetch('/api/orchestrator/wake-prompts');
+    if (!res.ok) {
+      console.warn('[wake-prompts] refresh failed:', res.status);
+      return;
+    }
+    ingestWakePromptReport(await res.json());
+  } catch (err) {
+    console.error('[wake-prompts] refresh threw:', err);
+  }
+}
+
+export async function saveWakePrompt(wakeType: string, content: string): Promise<{ ok: boolean; error?: string }> {
+  try {
+    const res = await apiFetch(`/api/orchestrator/wake-prompts/${wakeType}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content }),
+    });
+    const data = await res.json().catch(() => null);
+    if (res.ok) {
+      ingestWakePromptReport(data);
+      return { ok: true };
+    }
+    return { ok: false, error: (data as { error?: string })?.error || 'Failed to save prompt' };
+  } catch {
+    return { ok: false, error: 'Failed to save prompt' };
+  }
+}
+
+export async function resetWakePrompt(wakeType: string): Promise<boolean> {
+  try {
+    const res = await apiFetch(`/api/orchestrator/wake-prompts/${wakeType}`, { method: 'DELETE' });
+    if (!res.ok) return false;
+    ingestWakePromptReport(await res.json());
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 // Update failsafe thresholds
 export async function updateFailsafe(update: { enabled?: boolean; gentle?: number; concerned?: number; emergency?: number }): Promise<boolean> {
   try {
@@ -179,6 +258,31 @@ export function setSystemStatus(status: SystemStatus | null, mcpServers?: import
   }
   if (mcpServers && systemStatus) {
     systemStatus = { ...systemStatus, mcpServers };
+  }
+}
+
+// Create a trigger (impulse or watcher)
+export async function createTriggerApi(payload: {
+  kind: 'impulse' | 'watcher';
+  label: string;
+  conditions: Array<Record<string, unknown>>;
+  prompt?: string;
+  cooldownMinutes?: number;
+}): Promise<{ ok: boolean; error?: string }> {
+  try {
+    const res = await apiFetch('/api/orchestrator/triggers', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json().catch(() => null);
+    if (res.ok && data?.trigger) {
+      triggers = [data.trigger, ...triggers];
+      return { ok: true };
+    }
+    return { ok: false, error: data?.error || 'Failed to create trigger' };
+  } catch {
+    return { ok: false, error: 'Failed to create trigger' };
   }
 }
 

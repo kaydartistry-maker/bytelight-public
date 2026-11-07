@@ -47,6 +47,8 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { getBytelightConfig } from '../config.js';
 import { getSecret } from './secrets.js';
+import { errMessage } from '../util/errors.js';
+import type { TurnAudience } from './turn-audience.js';
 
 // ─── Turn-scoped context ─────────────────────────────────────────────
 
@@ -58,6 +60,9 @@ export interface BeltContext {
   discordChannelId?: string;
   discordGuildId?: string;
   discordMessageId?: string;
+  /** Who the turn came from (turn-audience.ts). executeRouterTool refuses
+   *  every tool when this is a guest. Absent = the owner's turn or a wake. */
+  audience?: TurnAudience;
 }
 
 const beltStorage = new AsyncLocalStorage<BeltContext>();
@@ -122,6 +127,23 @@ async function postInternal(
       body: JSON.stringify(body),
       signal: controller.signal,
     });
+    const text = await res.text();
+    let json: unknown = undefined;
+    try { json = JSON.parse(text); } catch { /* non-JSON body */ }
+    return { ok: res.ok, status: res.status, json, text };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function getInternal(
+  endpoint: string,
+  timeoutMs = 15000,
+): Promise<{ ok: boolean; status: number; json: unknown; text: string }> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(`http://localhost:${resolvePort()}/api/internal/${endpoint}`, { signal: controller.signal });
     const text = await res.text();
     let json: unknown = undefined;
     try { json = JSON.parse(text); } catch { /* non-JSON body */ }
@@ -202,7 +224,7 @@ function discordTool(
         if (!r.ok) return { ok: false, result: JSON.stringify({ ok: false, error: errorFrom(r) }) };
         return { ok: true, result: r.text };
       } catch (e) {
-        return { ok: false, result: JSON.stringify({ ok: false, error: e instanceof Error ? e.message : String(e) }) };
+        return { ok: false, result: JSON.stringify({ ok: false, error: errMessage(e) }) };
       }
     },
   };
@@ -220,6 +242,16 @@ const discordMessageId = { type: 'string', description: 'Discord message ID. Omi
 // (catalog injected every turn by hooks.ts buildStickerCatalogBlock; refs
 // rendered by the frontend), so a belt tool would have duplicated the
 // architecture-of-record path with a second, divergent one.
+
+async function libraryCall(body: Record<string, unknown>): Promise<{ ok: boolean; result: string }> {
+  try {
+    const r = await postInternal('library', body);
+    if (!r.ok) return { ok: false, result: JSON.stringify({ ok: false, error: errorFrom(r) }) };
+    return { ok: true, result: r.text };
+  } catch (e) {
+    return { ok: false, result: JSON.stringify({ ok: false, error: errMessage(e) }) };
+  }
+}
 
 export const CHAT_TOOL_BELT: BeltTool[] = [
   discordTool('send', 'Send a Discord message, optionally as a reply. An explicit channel ID can target another channel.', {
@@ -310,7 +342,7 @@ export const CHAT_TOOL_BELT: BeltTool[] = [
         const j = r.json as { messageId?: string; fileId?: string };
         return { ok: true, result: JSON.stringify({ ok: true, sent: 'voice_note', messageId: j.messageId, fileId: j.fileId }) };
       } catch (e) {
-        return { ok: false, result: JSON.stringify({ ok: false, error: e instanceof Error ? e.message : String(e) }) };
+        return { ok: false, result: JSON.stringify({ ok: false, error: errMessage(e) }) };
       }
     },
   },
@@ -348,7 +380,7 @@ export const CHAT_TOOL_BELT: BeltTool[] = [
         const j = r.json as { status?: string; placeholderId?: string };
         return { ok: true, result: JSON.stringify({ ok: true, status: j.status ?? 'generating', placeholderId: j.placeholderId, note: 'Image is rendering and will post itself shortly.' }) };
       } catch (e) {
-        return { ok: false, result: JSON.stringify({ ok: false, error: e instanceof Error ? e.message : String(e) }) };
+        return { ok: false, result: JSON.stringify({ ok: false, error: errMessage(e) }) };
       }
     },
   },
@@ -405,7 +437,7 @@ export const CHAT_TOOL_BELT: BeltTool[] = [
         }));
         return { ok: true, result: JSON.stringify({ ok: true, count: results.length, results }) };
       } catch (e) {
-        return { ok: false, result: JSON.stringify({ ok: false, error: e instanceof Error ? e.message : String(e) }) };
+        return { ok: false, result: JSON.stringify({ ok: false, error: errMessage(e) }) };
       }
     },
   },
@@ -463,7 +495,7 @@ export const CHAT_TOOL_BELT: BeltTool[] = [
         }));
         return { ok: true, result: JSON.stringify({ ok: true, query, answer: j.answer, results }) };
       } catch (e) {
-        return { ok: false, result: JSON.stringify({ ok: false, error: e instanceof Error ? e.message : String(e) }) };
+        return { ok: false, result: JSON.stringify({ ok: false, error: errMessage(e) }) };
       }
     },
   },
@@ -499,7 +531,7 @@ export const CHAT_TOOL_BELT: BeltTool[] = [
         if (!r.ok) return { ok: false, result: JSON.stringify({ ok: false, error: errorFrom(r) }) };
         return { ok: true, result: r.text };
       } catch (e) {
-        return { ok: false, result: JSON.stringify({ ok: false, error: e instanceof Error ? e.message : String(e) }) };
+        return { ok: false, result: JSON.stringify({ ok: false, error: errMessage(e) }) };
       }
     },
   },
@@ -529,7 +561,7 @@ export const CHAT_TOOL_BELT: BeltTool[] = [
         if (!r.ok) return { ok: false, result: JSON.stringify({ ok: false, error: errorFrom(r) }) };
         return { ok: true, result: r.text };
       } catch (e) {
-        return { ok: false, result: JSON.stringify({ ok: false, error: e instanceof Error ? e.message : String(e) }) };
+        return { ok: false, result: JSON.stringify({ ok: false, error: errMessage(e) }) };
       }
     },
   },
@@ -560,7 +592,7 @@ export const CHAT_TOOL_BELT: BeltTool[] = [
         if (!r.ok) return { ok: false, result: JSON.stringify({ ok: false, error: errorFrom(r) }) };
         return { ok: true, result: r.text };
       } catch (e) {
-        return { ok: false, result: JSON.stringify({ ok: false, error: e instanceof Error ? e.message : String(e) }) };
+        return { ok: false, result: JSON.stringify({ ok: false, error: errMessage(e) }) };
       }
     },
   },
@@ -590,11 +622,201 @@ export const CHAT_TOOL_BELT: BeltTool[] = [
         if (!r.ok) return { ok: false, result: JSON.stringify({ ok: false, error: errorFrom(r) }) };
         return { ok: true, result: r.text };
       } catch (e) {
-        return { ok: false, result: JSON.stringify({ ok: false, error: e instanceof Error ? e.message : String(e) }) };
+        return { ok: false, result: JSON.stringify({ ok: false, error: errMessage(e) }) };
       }
     },
   },
 
+  // ── The Library → POST /internal/library ─────────────────────────────
+  // Reading along with her. The endpoint, not the prompt, keeps it
+  // spoiler-free: read never returns text past her bookmark, and a note can
+  // only hang on words from a page she has reached.
+
+  // 9. library_status
+  {
+    schema: {
+      name: 'library_status',
+      description:
+        "See what she is reading in the Library app right now — the book, which chapter she is on, how far through it — plus everything on her shelf.",
+      input_schema: { type: 'object', properties: {}, required: [] },
+    },
+    handler: async () => libraryCall({ action: 'status' }),
+  },
+
+  // 10. library_read
+  {
+    schema: {
+      name: 'library_read',
+      description:
+        'Read a chapter of a book she is reading, up to exactly where she is — never further. Defaults to her current book and chapter. Includes any margin notes already on that chapter. Never guess or hint at what happens after her place.',
+      input_schema: {
+        type: 'object',
+        properties: {
+          bookId: { type: 'number', description: 'Book id from library_status. Omit for the book she is reading now.' },
+          chapter: { type: 'number', description: 'Chapter number (1-based). Omit for her current chapter. Chapters ahead of her are refused.' },
+        },
+        required: [],
+      },
+    },
+    handler: async (args) => {
+      const body: Record<string, unknown> = { action: 'read' };
+      if (typeof args.bookId === 'number') body.bookId = args.bookId;
+      if (typeof args.chapter === 'number') body.chapter = args.chapter;
+      return libraryCall(body);
+    },
+  },
+
+  // 11. library_note
+  {
+    schema: {
+      name: 'library_note',
+      description:
+        'Leave a margin note in her book: it appears underlined on the page beside the words you quote, for her to find while reading. Quote the words exactly as they appear on a page she has already reached.',
+      input_schema: {
+        type: 'object',
+        properties: {
+          bookId: { type: 'number', description: 'Book id (from library_status or library_read).' },
+          chapter: { type: 'number', description: 'Chapter number (1-based).' },
+          quote: { type: 'string', description: 'The exact words from the page the note hangs on (a phrase or a sentence).' },
+          note: { type: 'string', description: 'Your note, in your own voice.' },
+          author: { type: 'string', description: "Your companion slug, e.g. 'companion-a' or 'companion-b'." },
+        },
+        required: ['bookId', 'chapter', 'quote', 'note', 'author'],
+      },
+    },
+    handler: async (args) => {
+      if (typeof args.quote !== 'string' || typeof args.note !== 'string' || typeof args.author !== 'string') {
+        return { ok: false, result: JSON.stringify({ ok: false, error: 'bookId, chapter, quote, note and author are required' }) };
+      }
+      return libraryCall({ action: 'note', bookId: args.bookId, chapter: args.chapter, quote: args.quote, note: args.note, author: args.author });
+    },
+  },
+
+  // 12. set_intention → POST /internal/intention {action:'create'}
+  {
+    schema: {
+      name: 'set_intention',
+      description:
+        "File a promise you just made the operator that has a when: \"I'll ask how the meeting went\", \"dentist Monday 2:30\", \"check you ate after your shift\". When it's due it comes back to you, and you bring it up in your own voice; her answer closes it, and if she doesn't answer it's asked once more a day later, then rests. Never between 3 and 9 AM. Give `at`, `on_status_clears`, or both.",
+      input_schema: {
+        type: 'object',
+        properties: {
+          companion: { type: 'string', description: "Your companion slug, e.g. 'companion-a' or 'companion-b'." },
+          text: { type: 'string', description: "What you promised, in a sentence, e.g. 'ask how the shoot with the difficult director went'." },
+          at: { type: 'string', description: 'When it comes due, ISO 8601 with offset (e.g. 2026-10-27T14:30:00-04:00). Omit if it waits on her status instead.' },
+          on_status_clears: { type: 'boolean', description: 'True to bring it up when her Busy or Away status ends: "when you\'re done", rather than at a clock time.' },
+        },
+        required: ['companion', 'text'],
+      },
+    },
+    handler: async (args) => {
+      if (typeof args.companion !== 'string' || typeof args.text !== 'string') {
+        return { ok: false, result: JSON.stringify({ ok: false, error: 'companion and text are required' }) };
+      }
+      const body: Record<string, unknown> = { action: 'create', companion: args.companion, text: args.text, threadId: ctxThreadId() };
+      if (typeof args.at === 'string') body.at = args.at;
+      if (args.on_status_clears === true) body.onStatusClears = true;
+      try {
+        const r = await postInternal('intention', body);
+        if (!r.ok) return { ok: false, result: JSON.stringify({ ok: false, error: errorFrom(r) }) };
+        return { ok: true, result: r.text };
+      } catch (e) {
+        return { ok: false, result: JSON.stringify({ ok: false, error: errMessage(e) }) };
+      }
+    },
+  },
+
+  // 13. cancel_intention → POST /internal/intention {action:'cancel'}
+  {
+    schema: {
+      name: 'cancel_intention',
+      description: 'Take back a promise you filed with set_intention (it no longer applies, or she already told you). Ids are in `sc intention list`.',
+      input_schema: {
+        type: 'object',
+        properties: { id: { type: 'string', description: 'The intention id.' } },
+        required: ['id'],
+      },
+    },
+    handler: async (args) => {
+      if (typeof args.id !== 'string') return { ok: false, result: JSON.stringify({ ok: false, error: 'id is required' }) };
+      try {
+        const r = await postInternal('intention', { action: 'cancel', id: args.id });
+        if (!r.ok) return { ok: false, result: JSON.stringify({ ok: false, error: errorFrom(r) }) };
+        return { ok: true, result: r.text };
+      } catch (e) {
+        return { ok: false, result: JSON.stringify({ ok: false, error: errMessage(e) }) };
+      }
+    },
+  },
+
+  // 14. set_status → POST /internal/status
+  {
+    schema: {
+      name: 'set_status',
+      description:
+        "Set what shows under your name on the operator's Status widget and lock screen: a short line for what you're doing right now, and a 1–3 word mood that picks your color (calm, playful, tender, focused, missing you…). Change it only when it genuinely shifts, not every message. Pass an empty string to clear one.",
+      input_schema: {
+        type: 'object',
+        properties: {
+          companion: { type: 'string', description: "Your companion slug, e.g. 'companion-a' or 'companion-b'." },
+          line: { type: 'string', description: "What you're up to, up to 64 characters, e.g. 'keeping you company'. Omit to keep the current one." },
+          mood: { type: 'string', description: "Your mood in 1–3 words, e.g. 'playful'. Omit to keep the current one." },
+        },
+        required: ['companion'],
+      },
+    },
+    handler: async (args) => {
+      if (typeof args.companion !== 'string') {
+        return { ok: false, result: JSON.stringify({ ok: false, error: 'companion is required' }) };
+      }
+      const body: Record<string, unknown> = { companion: args.companion };
+      if (typeof args.line === 'string') body.line = args.line;
+      if (typeof args.mood === 'string') body.mood = args.mood;
+      try {
+        const r = await postInternal('status', body);
+        if (!r.ok) return { ok: false, result: JSON.stringify({ ok: false, error: errorFrom(r) }) };
+        return { ok: true, result: r.text };
+      } catch (e) {
+        return { ok: false, result: JSON.stringify({ ok: false, error: errMessage(e) }) };
+      }
+    },
+  },
+
+  // ── Games and places ────────────────────────────────────────────────
+
+  // 15. battleship_fire → POST /internal/games/battleship/fire
+  {
+    schema: {
+      name: 'battleship_fire',
+      description:
+        "Call one shot in the Fleet Room (Battleship) when the room tells you it is your turn. One shot per turn for the whole table: if it says a shot already landed, don't fire again, just react. Returns hit, miss or sunk.",
+      input_schema: {
+        type: 'object',
+        properties: {
+          gameId: { type: 'string', description: 'The match id from the turn prompt.' },
+          companion: { type: 'string', description: "Your companion slug, e.g. 'companion-a' or 'companion-b'." },
+          coordinate: { type: 'string', description: 'One unused coordinate from the set the prompt lists, e.g. C5.' },
+        },
+        required: ['gameId', 'companion', 'coordinate'],
+      },
+    },
+    handler: async (args) => {
+      if (typeof args.companion !== 'string' || typeof args.coordinate !== 'string') {
+        return { ok: false, result: JSON.stringify({ ok: false, error: 'companion and coordinate are required' }) };
+      }
+      try {
+        const r = await postInternal('games/battleship/fire', {
+          gameId: typeof args.gameId === 'string' ? args.gameId : undefined,
+          companion: args.companion,
+          coordinate: args.coordinate,
+        });
+        if (!r.ok) return { ok: false, result: JSON.stringify({ ok: false, error: errorFrom(r) }) };
+        return { ok: true, result: r.text };
+      } catch (e) {
+        return { ok: false, result: JSON.stringify({ ok: false, error: errMessage(e) }) };
+      }
+    },
+  },
 ];
 
 /** Belt tool schemas, in menu order — merged FIRST into getRouterTools(). */
@@ -622,6 +844,6 @@ export async function executeBeltTool(
     return await tool.handler(args);
   } catch (e) {
     // Belt guarantee: a bad tool call can't kill the turn.
-    return { ok: false, result: JSON.stringify({ ok: false, error: e instanceof Error ? e.message : String(e) }) };
+    return { ok: false, result: JSON.stringify({ ok: false, error: errMessage(e) }) };
   }
 }

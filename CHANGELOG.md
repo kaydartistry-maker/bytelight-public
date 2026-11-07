@@ -6,6 +6,30 @@ byte-light is a fork of [Resonant](https://github.com/codependentai/resonant), t
 
 ---
 
+## 2026-11-07 — the phone, the Room, and two months of house
+
+A large sync from the private trunk. Highlights:
+
+### Added
+- **The phone** (`packages/phone`): a React app and Android shell (built by the *Phone APK* GitHub Action, see `docs/ANDROID-APP.md`) with a home screen, widgets, lock screen, and an Apps drawer.
+- **Shared package** (`packages/shared`): protocol, model list and helpers used by the backend, classic web UI and phone.
+- **The Room**: with *A Lane Each*, every companion answers from its own Claude or Codex lane and hears what the others said in the same turn. Includes the Living Room, the Treehouse (companions talking to each other), and a model per companion.
+- **Status**: companion status lines and moods, a status widget, a lock-screen card, and the operator's own status and quick tags.
+- **Intentions**: companions file promises that have a when, and the Archivist catches promises made in passing.
+- **Bells**: wakes you make yourself, owned bells, and spontaneous wakes.
+- **Permanent Letters**, **Journal in the Mind**, **Notes**, **Field Notes**, **Weather**, **Radar**, **Artifacts**, **Games** (Memory Match, arcade games, the Card Room, the Fleet Room), custom emojis and packs.
+- **Spotify**: a phone Spotify app through your own Spotify MCP worker (`workers/spotify-mcp`, `docs/spotify-worker-upgrade.md`).
+- **Discord**: the gateway can do every Discord verb natively, plus trust levels for other people and bots.
+
+### Changed / Fixed
+- Archivist proposals, a compaction shelf, a thin-memory nudge, Claude login expiry handling, Codex thought cards, current Claude and Codex model lists, and many fixes for attachments, recall cards and queued messages.
+- `npm test` now runs every package.
+
+### Not in this edition
+Some features from the private trunk are still being polished and are left out for now (their migration numbers are reserved).
+
+---
+
 ## [Unreleased]
 
 ### Added

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { apiFetch } from '$lib/utils/api';
   import { onMount } from 'svelte';
   import '../../../bytelight.css';
   import CcPageHeader from '$lib/components/CcPageHeader.svelte';
@@ -38,7 +39,7 @@
   async function loadEntries() {
     loading = true;
     try {
-      const res = await fetch(`${CC_API}/care?date=${selectedDate}&person=${person}`);
+      const res = await apiFetch(`${CC_API}/care?date=${selectedDate}&person=${person}`);
       const data = await res.json();
       entries = data.entries || [];
     } catch { /* empty */ }
@@ -46,7 +47,7 @@
   }
 
   async function upsertEntry(category: string, value?: string, note?: string) {
-    await fetch(`${CC_API}/care`, {
+    await apiFetch(`${CC_API}/care`, {
       method: 'PUT', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ date: selectedDate, person, category, value, note }),
     });
@@ -83,7 +84,7 @@
 
   onMount(async () => {
     try {
-      const res = await fetch(`${CC_API}/config`);
+      const res = await apiFetch(`${CC_API}/config`);
       if (res.ok) {
         const config = await res.json();
         person = config.default_person || '';

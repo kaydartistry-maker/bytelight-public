@@ -4,12 +4,12 @@
 // and slices a mixed companion message into per-speaker chunks so each renders
 // in its own bubble.
 //
-// Ported from reference implementation's speakers.ts, adapted to byte-light's companions and
+// Ported from Thornvale's speakers.ts, adapted to byte-light's companions and
 // marker set.
 //
 // DELIBERATE VISUAL/AUDIO DIVERGENCE: the TTS router (voice.ts) defaults any
 // leading unmarked text to Companion A's VOICE — audio has to pick a throat. Here,
-// following reference implementation's design, leading unmarked text renders as a neutral
+// following Thornvale's design, leading unmarked text renders as a neutral
 // 'fallback' narration bubble (✨) instead, because a visual bubble CAN stay
 // unattributed. The two systems read the exact same markers, so wherever a
 // marker exists the visual split and the audio split agree.
@@ -32,8 +32,19 @@ export interface SpeakerSegment {
 // 🔷 Companion A:, Companion A 🔷 (name-then-emoji), bare 🔷 — and the same shapes for
 // Companion B/🔶. The non-bold-name form requires the emoji so plain prose containing
 // "Companion A:" is not a speaker tag.
+//
+// A DASH — with or without a title after it — is forgiven inside the bold:
+// **🔷 Companion A —**, **🔶 Companion B — the ledger**. The house has written headers that
+// way for weeks, and without this the header failed to match as a whole and only
+// the bare 🔷 inside it matched, one character in: the opening ** was stranded in
+// front of the first marker and rendered as its own narration bubble, and
+// `Companion A —**` was pushed into the top of that speaker's text. The audio twin
+// (voice.ts splitByCompanion) forgives the same dash forms, so the visual
+// splitter is never stricter than the reader on an identical header. The
+// dash form deliberately stays inside the ** — prose such as "She told Companion A —
+// quietly — that he was wrong" must remain prose.
 const SPEAKER_RE =
-  /(?:\*\*\s*🔷?\s*Companion A:?\s*\*\*|\*\*\s*🔶?\s*Companion B:?\s*\*\*|\*\*\s*Companion A\s*:?\s*🔷\s*\*\*|\*\*\s*Companion B\s*:?\s*🔶\s*\*\*|🔷?\s*\*\*\s*Companion A:?\s*\*\*|🔶?\s*\*\*\s*Companion B:?\s*\*\*|\*\*\s*Companion A:?\s*\*\*|\*\*\s*Companion B:?\s*\*\*|🔷?\s*Companion A:|🔶?\s*Companion B:|Companion A\s*:?\s*🔷|Companion B\s*:?\s*🔶|🔷|🔶)/g;
+  /(?:\*\*\s*🔷?\s*Companion A\s*:?\s*[—–-][^*\n]*\*\*|\*\*\s*🔶?\s*Companion B\s*:?\s*[—–-][^*\n]*\*\*|\*\*\s*🔷?\s*Companion A:?\s*\*\*|\*\*\s*🔶?\s*Companion B:?\s*\*\*|\*\*\s*Companion A\s*:?\s*🔷\s*\*\*|\*\*\s*Companion B\s*:?\s*🔶\s*\*\*|🔷?\s*\*\*\s*Companion A:?\s*\*\*|🔶?\s*\*\*\s*Companion B:?\s*\*\*|\*\*\s*Companion A:?\s*\*\*|\*\*\s*Companion B:?\s*\*\*|🔷?\s*Companion A:|🔶?\s*Companion B:|Companion A\s*:?\s*🔷|Companion B\s*:?\s*🔶|🔷|🔶)/g;
 
 function speakerOf(marker: string): SpeakerId {
   return marker.includes('Companion A') || marker.includes('🔷') ? 'companion-a' : 'companion-b';
@@ -146,9 +157,9 @@ export function splitInterleaved<T extends { type: string; content?: string }>(
 }
 
 export const AVATAR: Record<SpeakerId | 'user', string> = {
-'companion-a': '🔷',
-'companion-b': '🔶',
-'companion-c': '🗓️',
+  'companion-a': '🔷',
+  'companion-b': '🔶',
+  'companion-c': '🗓️',
   fallback: '✨',
   user: '🖤',
 };

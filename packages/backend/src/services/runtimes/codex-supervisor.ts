@@ -4,8 +4,8 @@
  * Ensures the daemon is running before connections are attempted,
  * monitors health, and restarts on failure.
  *
- * Ported whole from the reference implementation fork codex-supervisor.ts.
- * BYTE-LIGHT ADAPTATION: The reference implementation pins the binary at `~/.local/bin/codex`
+ * Ported whole from the Keystone fork codex-supervisor.ts.
+ * BYTE-LIGHT ADAPTATION: The upstream fork pins the binary at `~/.local/bin/codex`
  * (its VPS layout). byte-light installs `codex` system-wide at
  * `/usr/bin/codex` (same root prefix as `claude`), so we resolve from
  * PATH via `codex` and let the OS locate it — with a `CODEX_BIN` env
@@ -15,16 +15,18 @@
 
 import { spawn, ChildProcess } from 'child_process';
 import { createConnection } from 'node:net';
-import { existsSync, lstatSync, mkdirSync, readlinkSync, statSync, symlinkSync, unlinkSync } from 'fs';
+import { createHash } from 'node:crypto';
+import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, readlinkSync, statSync, symlinkSync, unlinkSync, writeFileSync } from 'fs';
 import { dirname, join, resolve } from 'path';
 import { getBytelightConfig } from '../../config.js';
 import { BYTELIGHT_CODEX_SOCKET, codexAppServerArgs } from '../codex-app-server-config.js';
+import { readMcpJson } from '../mcp-json.js';
 import { getMcpBeltToken, MCP_BELT_TOKEN_ENV } from '../mcp-belt-auth.js';
 
 const SOCKET_PATH = BYTELIGHT_CODEX_SOCKET;
 // BYTE-LIGHT ADAPTATION (was `process.env.HOME + '/.local/bin/codex'` in the upstream
 // codex-supervisor.ts:10): resolve `codex` from PATH (installed system-wide at
-// /usr/bin/codex, v0.143.0). `spawn` searches PATH for a bare command name, so
+// /usr/bin/codex; v0.162.1 as of 2026-10-14). `spawn` searches PATH for a bare command name, so
 // passing 'codex' Just Works; `CODEX_BIN` env overrides for non-standard installs.
 const CODEX_BIN = process.env.CODEX_BIN || 'codex';
 
@@ -65,9 +67,55 @@ export function materializeCodexSkillsDoor(agentCwd: string): void {
   }
 }
 
-/** A live daemon socket is reusable across backend process lifetimes. */
-export function codexDaemonStartupAction(socketRunning: boolean): 'reuse' | 'start' {
-  return socketRunning ? 'reuse' : 'start';
+// Fingerprint of the exact launch (binary + args, which carry the whole MCP
+// table) recorded beside byte-light's private socket. A reachable daemon is
+// adopted across backend/PM2 lifetimes only while the fingerprint still matches.
+const LAUNCH_RECORD_PATH = `${SOCKET_PATH}.launch.json`;
+
+export function codexLaunchFingerprint(bin: string, args: string[]): string {
+  return createHash('sha256').update(JSON.stringify([bin, ...args])).digest('hex');
+}
+
+/**
+ * A live daemon socket is reusable across backend process lifetimes, unless it
+ * was launched with a different config (or by code that never recorded one):
+ * then it is restarted so a .mcp.json or belt change actually reaches Codex.
+ */
+export function codexDaemonStartupAction(
+  socketRunning: boolean,
+  recordedFingerprint: string | null = null,
+  currentFingerprint: string | null = null,
+): 'reuse' | 'start' | 'restart' {
+  if (!socketRunning) return 'start';
+  if (currentFingerprint === null || recordedFingerprint === currentFingerprint) return 'reuse';
+  return 'restart';
+}
+
+function readLaunchFingerprint(): string | null {
+  try {
+    return (JSON.parse(readFileSync(LAUNCH_RECORD_PATH, 'utf-8')) as { fingerprint?: string }).fingerprint ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * PIDs of byte-light's own app-server: processes whose command line names the
+ * private socket. Never matches the operator's own Codex sessions.
+ */
+export function findOwnedDaemonPids(socketPath = SOCKET_PATH, procDir = '/proc'): number[] {
+  const needle = `unix://${socketPath}`;
+  const pids: number[] = [];
+  let entries: string[];
+  try { entries = readdirSync(procDir); } catch { return pids; }
+  for (const entry of entries) {
+    if (!/^\d+$/.test(entry)) continue;
+    try {
+      const args = readFileSync(join(procDir, entry, 'cmdline'), 'utf-8').split('\0');
+      if (args.includes('app-server') && args.includes(needle)) pids.push(Number(entry));
+    } catch { /* process exited or unreadable */ }
+  }
+  return pids;
 }
 
 class CodexDaemonSupervisor {
@@ -107,17 +155,62 @@ class CodexDaemonSupervisor {
     });
   }
 
+  /** The exact command this backend would launch, and its fingerprint. */
+  private launchPlan(): { args: string[]; fingerprint: string } {
+    const configuredPort = getBytelightConfig().server.port;
+    const beltUrl = process.env.BYTELIGHT_MCP_BELT_URL || `http://127.0.0.1:${configuredPort}/mcp/belt`;
+    // Same .mcp.json the Claude lane loads, so swapping runtimes keeps every hand.
+    const mcpJsonServers = readMcpJson(getBytelightConfig().agent.mcp_json_path);
+    const args = codexAppServerArgs(beltUrl, mcpJsonServers);
+    return { args, fingerprint: codexLaunchFingerprint(CODEX_BIN, args) };
+  }
+
+  /** Stop byte-light's own daemon (SIGTERM, then SIGKILL) and clear its socket. */
+  private async retireDaemon(): Promise<void> {
+    const pids = findOwnedDaemonPids();
+    for (const pid of pids) {
+      try { process.kill(pid, 'SIGTERM'); } catch { /* already gone */ }
+    }
+    for (let i = 0; i < 50 && await this.isDaemonReachable(); i++) {
+      await new Promise((r) => setTimeout(r, 100));
+    }
+    if (await this.isDaemonReachable()) {
+      for (const pid of findOwnedDaemonPids()) {
+        try { process.kill(pid, 'SIGKILL'); } catch { /* already gone */ }
+      }
+      await new Promise((r) => setTimeout(r, 200));
+    }
+    try { unlinkSync(SOCKET_PATH); } catch { /* already gone */ }
+    this.daemonProcess = null;
+    this.weStartedIt = false;
+  }
+
   /** Ensure a daemon is reachable, reusing a healthy detached process. */
   async ensureRunning(): Promise<void> {
     materializeCodexSkillsDoor(getBytelightConfig().agent.cwd);
     const socketReachable = await this.isDaemonReachable();
+    const { fingerprint } = this.launchPlan();
+    const action = codexDaemonStartupAction(socketReachable, readLaunchFingerprint(), fingerprint);
 
     // A healthy socket is the ownership hand-off. After a backend/PM2 restart,
     // in-memory `weStartedIt` is false even when this same app launched the
     // still-running detached daemon. Killing it here severs every warm Codex
     // thread precisely while the rest of the house is recovering. Per-turn
-    // sandbox/approval policy is repeated by codex-daemon.ts, so reuse it.
-    if (codexDaemonStartupAction(socketReachable) === 'reuse' && !this.weStartedIt) {
+    // sandbox/approval policy is repeated by codex-daemon.ts, so reuse it —
+    // unless its launch config is stale, in which case the restart is the point.
+    if (action === 'restart') {
+      if (this.startPromise) return this.startPromise;
+      console.log('[CodexSupervisor] Daemon launch config changed (.mcp.json, belt or binary) — restarting it; warm Codex threads resume from their sidecars');
+      this.startPromise = this.retireDaemon().then(() => this.startDaemon());
+      try {
+        await this.startPromise;
+      } finally {
+        this.startPromise = null;
+      }
+      return;
+    }
+
+    if (action === 'reuse' && !this.weStartedIt) {
       console.log('[CodexSupervisor] Adopting healthy existing daemon socket');
       return;
     }
@@ -161,8 +254,7 @@ class CodexDaemonSupervisor {
       // may lack CAP_NET_ADMIN for bwrap network namespaces, and every turn
       // runs on the operator's own subscription — there is no hostile tenant
       // to sandbox against. The flag is a the operator-visible decision, not smuggled.
-      const configuredPort = getBytelightConfig().server.port;
-      const beltUrl = process.env.BYTELIGHT_MCP_BELT_URL || `http://127.0.0.1:${configuredPort}/mcp/belt`;
+      const { args, fingerprint } = this.launchPlan();
       const startupErrors: string[] = [];
       let settled = false;
       const finish = (error?: Error) => {
@@ -173,7 +265,7 @@ class CodexDaemonSupervisor {
         else resolve();
       };
 
-      this.daemonProcess = spawn(CODEX_BIN, codexAppServerArgs(beltUrl), {
+      this.daemonProcess = spawn(CODEX_BIN, args, {
         detached: true,
         stdio: ['ignore', 'ignore', 'pipe'],
         env: { ...process.env, [MCP_BELT_TOKEN_ENV]: getMcpBeltToken() },
@@ -206,6 +298,11 @@ class CodexDaemonSupervisor {
         attempts++;
         if (await this.isDaemonReachable()) {
           console.log('[CodexSupervisor] Daemon started successfully');
+          try {
+            writeFileSync(LAUNCH_RECORD_PATH, JSON.stringify({ fingerprint, startedAt: new Date().toISOString() }));
+          } catch (err) {
+            console.warn(`[CodexSupervisor] Could not record launch fingerprint: ${err instanceof Error ? err.message : err}`);
+          }
           finish();
         } else if (attempts >= maxAttempts) {
           const detail = startupErrors.join('\n');

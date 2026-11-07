@@ -32,6 +32,14 @@ export const api = {
       body: body ? JSON.stringify(body) : undefined,
     }),
 
+  patch: (url: string, body?: unknown, options?: FetchOptions) =>
+    apiFetch(url, {
+      ...options,
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', ...options?.headers },
+      body: body ? JSON.stringify(body) : undefined,
+    }),
+
   delete: (url: string, options?: FetchOptions) =>
     apiFetch(url, { ...options, method: 'DELETE' }),
 };

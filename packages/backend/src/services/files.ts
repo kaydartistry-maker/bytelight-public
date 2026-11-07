@@ -120,6 +120,7 @@ export function saveFileInternal(buffer: Buffer, originalFilename: string): File
   return { fileId, filename: originalFilename, mimeType, size: buffer.length, contentType: getContentTypeFromMime(mimeType), url: `/api/files/${fileId}` };
 }
 
+
 export function saveFileFromBase64(base64Data: string, mimeType: string, filename: string): FileMetadata {
   return saveFile(Buffer.from(base64Data, 'base64'), filename, mimeType);
 }

@@ -319,7 +319,7 @@
 
   async function loadArchived() {
     try {
-      const response = await fetch('/api/threads/archived');
+      const response = await apiFetch('/api/threads/archived');
       if (response.ok) {
         const data = await response.json();
         archivedThreads = data.threads;
@@ -810,7 +810,7 @@
   }
 
   .context-delete {
-    color: #ef4444 !important;
+    color: var(--color-error) !important;
   }
 
   .context-delete:hover {

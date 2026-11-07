@@ -17,14 +17,14 @@
  * field-for-field identical to the source's router.ts ToolSchema.
  *
  * This module:
- * 1. Registers HTTP MCP servers from .mcp.json for tool bridging (legacy path)
- * 2. Loads + discovers DB-managed MCP servers (with 5-min cache)
- * 3. Provides getRouterTools() and executeRouterTool() for the router runtime
+ * 1. Loads + discovers DB-managed MCP servers (with 5-min cache)
+ * 2. Provides getRouterTools() and executeRouterTool() for the router runtime
  */
 
 import { listMcpServers, getMcpServer, updateMcpServerToolsCache } from './db.js';
 import { discoverMcpTools, executeMcpTool } from './mcp-client.js';
-import { getBeltToolSchemas, executeBeltTool } from './chat-tool-belt.js';
+import { getBeltToolSchemas, executeBeltTool, getBeltContext } from './chat-tool-belt.js';
+import { guestToolRefusal } from './turn-audience.js';
 import { createSingleFlight } from './single-flight.js';
 
 // ─── Local ToolSchema (NAMED ADAPTATION #2) ─────────────────────────
@@ -36,46 +36,10 @@ export interface ToolSchema {
   server_url?: string;
 }
 
-// ─── HTTP MCP Server client (.mcp.json legacy) ─────────────────────
-
-interface HttpMcpServer {
-  name: string;
-  url: string;
-  headers?: Record<string, string>;
-  tools: ToolSchema[];
-  initialized: boolean;
-}
-
-const httpMcpServers: HttpMcpServer[] = [];
-
-/**
- * Register an HTTP MCP server from .mcp.json for tool bridging.
- * Tools are discovered lazily on first getRouterTools() call.
- */
-export function registerHttpMcpServer(name: string, url: string, headers?: Record<string, string>): void {
-  if (!httpMcpServers.find(s => s.name === name)) {
-    httpMcpServers.push({ name, url, headers: headers || {}, tools: [], initialized: false });
-  }
-}
-
-async function initHttpMcpServer(server: HttpMcpServer): Promise<void> {
-  if (server.initialized) return;
-  try {
-    // Use proper MCP handshake for .mcp.json servers too
-    const tools = await discoverMcpTools(server.url);
-    server.tools = tools.map(t => ({
-      name: t.name,
-      description: t.description,
-      input_schema: t.inputSchema,
-      server_url: server.url,
-      _transport: t.transport,
-    }));
-    console.log(`[MCP] ${server.name}: discovered ${server.tools.length} tools`);
-  } catch (err) {
-    console.warn(`[MCP] ${server.name}: discovery failed —`, err instanceof Error ? err.message : err);
-  }
-  server.initialized = true;
-}
+// .mcp.json servers are not bridged here. The Claude lane passes them to the
+// SDK directly and the Codex lane gets them natively in its app-server MCP
+// table (codex-app-server-config.ts). The old registerHttpMcpServer path had
+// no caller and could not carry stdio servers, so it was removed.
 
 // ─── DB-backed managed MCP servers ──────────────────────────────────
 
@@ -261,15 +225,11 @@ export function invalidateManagedServer(id: number): void {
  * source's sandbox/exec belt. Pattern lineage: reference implementation reference implementation tools-bridge.ts.
  */
 export async function getRouterTools(): Promise<ToolSchema[]> {
-  // Initialize .mcp.json servers
-  await Promise.all(httpMcpServers.map(s => initHttpMcpServer(s)));
-
   // Load DB-managed servers (with caching)
   await ensureManagedServersLoaded();
 
   const sourcedTools: Array<{ tool: ToolSchema; source: string }> = [
     ...getBeltToolSchemas().map(tool => ({ tool, source: 'native belt' })),
-    ...httpMcpServers.flatMap(server => server.tools.map(tool => ({ tool, source: `.mcp.json:${server.name}` }))),
     ...[...managedServers.values()].flatMap(server =>
       server.tools.map(tool => ({ tool, source: `managed:${server.name}` }))),
   ];
@@ -290,7 +250,7 @@ export function getManagedServerConfigs(): Array<{ name: string; url: string; ap
 
 /**
  * Execute a tool by name. Routes to the in-process chat-tool belt first,
- * then .mcp.json servers, then DB-managed MCP servers.
+ * then DB-managed MCP servers.
  *
  * H2 "hands": the belt is checked FIRST so a belt tool name wins any MCP
  * collision (mirrors getRouterTools's belt-first merge and the source's
@@ -298,18 +258,16 @@ export function getManagedServerConfigs(): Array<{ name: string; url: string; ap
  * a belt tool, so we fall through to MCP unchanged. The belt never throws.
  */
 export async function executeRouterTool(name: string, args: Record<string, unknown>): Promise<{ result: string; ok: boolean }> {
+  // A guest turn gets NO router tools (turn-audience.ts). Every engine that
+  // runs house tools through this bridge (API router incl. Ollama, Codex
+  // OAuth, the Codex daemon's /mcp/belt) enters a belt context carrying the
+  // turn's audience, so this one door refuses for all of them.
+  const refused = guestToolRefusal(getBeltContext()?.audience, name);
+  if (refused) return refused;
+
   // Check the in-process chat-tool belt first (belt wins name collisions).
   const beltResult = await executeBeltTool(name, args);
   if (beltResult) return beltResult;
-
-  // Check .mcp.json HTTP MCP servers
-  for (const server of httpMcpServers) {
-    const tool = server.tools.find(t => t.name === name);
-    if (tool) {
-      const transport = (tool as any)._transport || 'streamable';
-      return executeMcpTool(server.url, null, name, args, transport);
-    }
-  }
 
   // Check DB-managed MCP servers
   for (const server of managedServers.values()) {

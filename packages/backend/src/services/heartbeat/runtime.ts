@@ -24,7 +24,7 @@
  * glue) — it lands here typecheck-clean but unreachable.
  */
 
-import { writeFileSync } from 'fs';
+import { writeFileSync, appendFileSync } from 'fs';
 import { join } from 'path';
 import { randomUUID } from 'crypto';
 import type { ModelRef, ProviderId, RuntimeId } from '@bytelight/shared';
@@ -35,12 +35,27 @@ import type {
   NormalizedMessage,
   NormalizedImage,
 } from '../runtimes/types.js';
+import { extractLatestUserPrompt } from '../runtimes/latest-user-prompt.js';
+import { buildEmojiSightBlock } from './emoji-sight.js';
+import { getEmojiByName } from '../db/emojis.js';
+import { PROJECT_ROOT } from '../../config.js';
+import { BUSY_FRESH_MS, laneTagFor } from './constants.js';
+import { thinNudgeForTurn } from './thin-nudge.js';
+import { selectOtherLaneReplies, nextOtherLaneMark, renderOtherLaneBlock, clampForDelivery, speakerName } from './other-lane-net.js';
+// Re-exported so existing callers and tests keep one import site.
+export { OTHER_LANE_REPLY_CAP, selectOtherLaneReplies, nextOtherLaneMark } from './other-lane-net.js';
 import { getHeartbeatSession, type HeartbeatSession } from './supervisor.js';
+import { parseOutboxLine } from './outbox-line.js';
 import { measureDelivery, MEMORY_OPEN, MEMORY_CLOSE, DELIVERY_CAP } from './provision.js';
+import {
+  latestTranscriptFile, readSessionUsage, contextWindowFor, logCompaction,
+  computeUsageDelta, DEFAULT_CONTEXT_WINDOW_TOKENS, type UsageBaseline,
+} from './transcript-usage.js';
 import { unfiledNoticings, ambientRecall } from './whisper.js';
 import { getBytelightConfig } from '../../config.js';
 import type { PushService } from '../push.js';
 import type { ThinkingInsertion } from '../agent.js';
+import { errMessage } from '../../util/errors.js';
 // NOTE: `db.js` and `ws.js` are LAZY-imported inside `postSystemLine` to
 // break a module-load cycle. A future dispatcher (`runtimes/index.ts`) will
 // construct a singleton of this runtime at module-load time; if we eagerly
@@ -50,9 +65,78 @@ import type { ThinkingInsertion } from '../agent.js';
 // body initialized (TDZ). Deferring those imports to call time means the
 // cycle is resolved before either side actually needs the symbol.
 
+/**
+ * Which of her messages reached no turn.
+ *
+ * Exported and pure ON PURPOSE. Aerie's first version of this rule lived
+ * inside the runtime and its test held a hand-written COPY of the same filter,
+ * so the test agreed with the bug and went green through every misfire. A
+ * check that mirrors the implementation cannot fail on it.
+ *
+ * `currentPrompt` is NOT the bare message — it can carry a platform frame or
+ * other prefixes — so matching by equality announced the message being read
+ * right now as lost on every turn that carried one. Ask what the prompt can
+ * answer: does it END with this message.
+ *
+ * Deliberately one-way: it may hand a message over twice, never zero times.
+ */
+export function selectMissedInbound<T extends { content: string; createdAt: string }>(
+  users: T[],
+  since: string | undefined,
+  currentPrompt: string,
+  newestAt: string,
+): T[] {
+  const prompt = currentPrompt.trim();
+  const arrivingNow = (m: T): boolean => {
+    const body = m.content.trim();
+    // An image-only row has no text to match on, and every string ends with
+    // the empty one. Identify it by position instead: the newest row is the
+    // turn arriving now.
+    if (body === '') return m.createdAt === newestAt;
+    return prompt === body || prompt.endsWith(body);
+  };
+  return users.filter(m => (!since || m.createdAt > since) && !arrivingNow(m));
+}
+
+/**
+ * What the [MISSED] banner says — two different events wearing one sentence
+ * until you separate them. Every genuinely late batch Aerie measured landed
+ * within seconds of a session birth, not in a gap between two turns of a
+ * living lane: nothing raced; there was no window alive to hand them to.
+ * Those arrive already replayed in the recycle context, so telling a fresh
+ * session they "reached no turn at all" invites it to answer, at length, a
+ * conversation it is holding in its other hand.
+ */
+export function missedInboundBanner(count: number, afterRestart: boolean): string {
+  const s = count === 1 ? '' : 's';
+  const it = count === 1 ? 'it' : 'them';
+  if (afterRestart) {
+    return `[MISSED — ${count} message${s} of hers landed while this lane was restarting, so no window was alive to take ${it}. They are almost certainly in the replayed conversation above. READ THAT FIRST and answer only what is genuinely unanswered — do not re-answer a thread you are already holding.]`;
+  }
+  return `[MISSED — ${count} message${s} of hers reached no turn at all. Stored, stamped delivered, handed to nobody. Answer ${it} now; if you already have, say so rather than repeating yourself.]`;
+}
+
 // 600s default, re-armed by every chunk the session writes — only sustained
 // silence times a turn out. Late lines are delivered next turn, not dropped.
 const REPLY_TIMEOUT_MS = (parseInt(process.env.HEARTBEAT_REPLY_TIMEOUT || '600', 10)) * 1000;
+
+// Declared background work (io/.busy): background jobs run hooks-dark — the
+// activity mirror never sees them — so a session touches io/.busy before
+// spawning one, and while the flag stays fresh the reply window holds open.
+// BUSY_FRESH_MS lives in ./constants.ts, shared with the supervisor watchdog.
+
+// Per-turn cap on BOTH holds (open tool, fresh .busy) so nothing can zombie a
+// turn. Deliberately the same env var the supervisor's watchdog uses for its
+// long leash: if these two ever disagree, one clock waits patiently while the
+// other kills the session anyway.
+const WORKING_MAX_MS = (parseInt(process.env.HEARTBEAT_WATCHDOG_WORKING_TIMEOUT || '1200', 10)) * 1000;
+
+// Re-prime seed budget (upstream warm-lane numbers, ported whole): the seed
+// is re-sent as FRESH input on every recycle, so its size is a recurring
+// cache-write cost. 30 newest messages, 4K chars each, 50K total.
+export const RECYCLE_SEED_MESSAGES = 30;
+export const RECYCLE_SEED_MSG_CHARS = 4_000;
+export const RECYCLE_SEED_TOTAL_CHARS = 50_000;
 const POLL_MS = 500;
 const MAX_UNRESOLVED = 8;
 
@@ -118,6 +202,27 @@ interface LaneState {
    *  `more:true` (a chunked reply mid-flight) — held up to
    *  IDLE_MORE_GRACE_MS so one reply doesn't fragment across messages. */
   idleHoldSince: number | null;
+  /** Last transcript gauge read for this lane — the compaction-transition
+   *  baseline (same file + higher compaction count = a compaction landed)
+   *  AND the session-to-date token totals as of the last recorded turn, so
+   *  the next one can be filed as a DELTA (Aerie 18ec6725: the transcript
+   *  only ever gives running totals; a usage row wants what a turn added). */
+  lastUsage: (UsageBaseline & { contextTokens: number; compactions: number }) | null;
+  /** How far into side-notes.jsonl has already been handed over. */
+  sideNotesOffset: number;
+  /**
+   * The newest of her messages this lane has been HANDED — as a prompt, or by
+   * the missed-inbound net. Distinct from when the lane last SPOKE; a message
+   * can be stored, stamped delivered, and still have reached nobody. That is
+   * the whole failure the watermark exists to catch.
+   */
+  lastHandedUserAt?: string;
+  /**
+   * Per thread: when this lane last STARTED a turn there (when it last read
+   * that thread's history). Bounds how far back the other-lane net
+   * (selectOtherLaneReplies) looks in that thread.
+   */
+  lastReadThreadAt: Map<string, string>;
 }
 const laneStates = new Map<string, LaneState>();
 
@@ -133,6 +238,9 @@ function laneStateFor(key: string, session: HeartbeatSession): LaneState {
       turnActive: false,
       idleDelivery: null,
       idleHoldSince: null,
+      lastUsage: null,
+      sideNotesOffset: session.sideNotesSize(),
+      lastReadThreadAt: new Map(),
     };
     laneStates.set(key, state);
   }
@@ -182,13 +290,18 @@ function classifyOutboxLines(
   const ledger = [...unresolved];
   const deliveries: OutboxDelivery[] = [];
   let endsWithMore = false;
+  // parseOutboxLine recovers replies glued onto one line by a write that
+  // missed its newline — a bare JSON.parse threw and took BOTH replies with
+  // it — and reports anything genuinely unreadable instead of swallowing it.
+  const parsedObjects: any[] = [];
   for (const line of lines) {
-    let parsed: any;
-    try {
-      parsed = JSON.parse(line);
-    } catch {
-      continue; // non-JSON between turns — not a reply, skip
+    for (const obj of parseOutboxLine(line, (fragment, error) => {
+      console.error(`[InteractiveCli] UNREADABLE OUTBOX LINE in out-of-turn read (a reply may be lost): ${error} :: ${fragment.slice(0, 160)}`);
+    })) {
+      parsedObjects.push(obj);
     }
+  }
+  for (const parsed of parsedObjects) {
     // Sentinels never post: even a malformed one that carries content is a
     // declaration of intentional silence, not a message.
     if (parsed.silent === true) continue;
@@ -214,6 +327,41 @@ function classifyOutboxLines(
     endsWithMore = more;
   }
   return { deliveries, unresolved: ledger, endsWithMore };
+}
+
+/**
+ * A reply seen by the LIVE loop for a turn that is no longer owed.
+ *
+ * Out-of-turn reads don't need this — classifyOutboxLines delivers not-owed
+ * lines as `proactive` (the July 22 decision). But the live loop advances
+ * consumedOffset past everything it reads, so a line it skips is never seen
+ * again by any reader. That skip used to be a bare `continue`: no log, no
+ * counter, no trace — a finished reply could vanish and the only witness was
+ * The operator noticing she never got an answer. Delivering it here is deliberately NOT
+ * done: mid-turn it would arrive glued into the message being written. Keep
+ * the text where it can be recovered by hand, and make the loss audible.
+ * (Aerie 18be3c8d, live-loop half; her sweep half is superseded by ours.)
+ */
+export function recordOrphanedReply(
+  path: string | undefined,
+  turnId: string | null,
+  content: string,
+): void {
+  console.error(
+    `[InteractiveCli] ORPHANED OUTBOX LINE — turn ${turnId ?? '(none)'} is already resolved, so this reply was ` +
+    `written after that turn's final line and is NOT being delivered. ${content.length} chars preserved ` +
+    `${path ? `in ${path}` : 'nowhere — this session exposes no orphan path'}. ` +
+    `First 160: ${content.slice(0, 160)}`,
+  );
+  if (!path) return;
+  try {
+    appendFileSync(
+      path,
+      JSON.stringify({ at: new Date().toISOString(), turn_id: turnId, content }) + '\n',
+    );
+  } catch (err) {
+    console.error(`[InteractiveCli] could not preserve orphaned reply: ${(err as Error).message}`);
+  }
 }
 
 const EXT_BY_MEDIA: Record<string, string> = {
@@ -335,23 +483,6 @@ export function fitRecallToCap(
 }
 
 /**
- * Build a flat prompt string for the inbox payload from the latest user
- * message in `input.messages`. byte-light's `messages` is the full recent
- * history; the CLI lane only needs the last user turn (the warm session
- * already holds prior context). Older turns flow through the recycle history
- * seed (see `buildRecycleContext`).
- */
-function extractLatestUserPrompt(messages: NormalizedMessage[]): string {
-  for (let i = messages.length - 1; i >= 0; i--) {
-    const m = messages[i];
-    if (m.role === 'user' && typeof m.content === 'string') {
-      return m.content;
-    }
-  }
-  return '';
-}
-
-/**
  * Validate-but-do-not-mutate model id helper.
  *
  * The bracket suffix `[1m]` is a legitimate Anthropic 1M-context request
@@ -439,11 +570,29 @@ export class InteractiveCliRuntime implements AgentRuntime {
   }
 
   /**
+   * Clamp one seed message to `cap` chars: keep the head (85%) and the tail
+   * (10%) with a visible truncation marker between. Ported whole from the
+   * upstream lane's `clampForInbox` (minus its file-block pre-pass, which has
+   * no byte-light equivalent) — the seed rides the same hook payload as the
+   * live message, so one pasted log must not eat the whole budget.
+   */
+  private clampForSeed(content: string, cap: number): string {
+    return clampForDelivery(content, cap);
+  }
+
+  /**
    * Build the re-prime seed from `input.messages`.
    *
    * The upstream lane took a `loadHistory` closure + `threadId` and queried
    * the DB. byte-light passes the full history via `input.messages`, so we
    * read from that directly — no DB closure, no thread-id round-trip.
+   *
+   * Budgeted (upstream numbers, ported whole): at most the newest
+   * RECYCLE_SEED_MESSAGES messages, each clamped to RECYCLE_SEED_MSG_CHARS,
+   * under a RECYCLE_SEED_TOTAL_CHARS total that drops OLDEST first with a
+   * visible omitted-count marker. Every recycle used to re-send up to ~49
+   * unclamped messages as fresh input — a repeated cache-write tax this
+   * budget bounds.
    */
   private buildRecycleContext(messages: NormalizedMessage[]): string {
     const { companionName, userName } = this.options;
@@ -458,14 +607,113 @@ export class InteractiveCliRuntime implements AgentRuntime {
     }
     if (history.length === 0) return '';
 
-    const lines = history.map(m =>
-      `${m.role === 'assistant' ? (companionName || 'Companion') : (userName || 'User')}: ${m.content}`,
+    const windowed = history.slice(-RECYCLE_SEED_MESSAGES);
+    const lines = windowed.map(m =>
+      `${m.role === 'assistant' ? speakerName(m.companionId, companionName || 'Companion') : (userName || 'User')}: ${this.clampForSeed(typeof m.content === 'string' ? m.content : '', RECYCLE_SEED_MSG_CHARS)}`,
     );
+    let dropped = history.length - windowed.length;
+    while (lines.length > 1 && lines.reduce((n, s) => n + s.length + 1, 0) > RECYCLE_SEED_TOTAL_CHARS) {
+      lines.shift();
+      dropped++;
+    }
+    if (dropped > 0) {
+      lines.unshift(`[${dropped} older message${dropped === 1 ? '' : 's'} omitted from this seed for size]`);
+    }
     const header = '[Session recycled — recent conversation, oldest first, for continuity:]';
     return [
       header,
       ...lines,
       '[End of context. The message below continues this conversation — respond to it in character.]',
+      '',
+    ].join('\n');
+  }
+
+  /**
+   * Render the other-lane net (see selectOtherLaneReplies), labelled by who
+   * actually spoke. Returns '' when nothing was said elsewhere. The mark moves
+   * when the turn finishes, so the same reply is not offered twice.
+   */
+  private buildOtherLaneBlock(
+    state: LaneState,
+    key: string,
+    threadId: string,
+    messages: readonly { role: string; content: string; createdAt: string; lane?: string; companionId?: string }[],
+  ): string {
+    const theirs = selectOtherLaneReplies(messages, state.lastReadThreadAt.get(threadId), laneTagFor('claude-cli', key));
+    return renderOtherLaneBlock(theirs, this.options.companionName || 'Companion');
+  }
+
+  /**
+   * Her messages that reached nobody.
+   *
+   * There were two nets and a seam between them. The recycle seed is
+   * assembled at the START of a turn, so anything arriving during one is
+   * already too late for it. Side notes are only written while a turn is
+   * active and exactly one lane is busy. A message that lands in between is
+   * stored, stamped delivered, and handed to no window at all — Aerie counted
+   * four before anyone had a witness beyond a screenshot.
+   *
+   * So this runs on EVERY turn and asks the plainest possible question: is
+   * there anything of hers newer than the last thing this lane was handed,
+   * that is not the thing it is being handed right now? Anything found is
+   * given over late and written to io/missed-inbound.jsonl, so there is a
+   * witness on disk even if the window never mentions it.
+   *
+   * Deliberately one-way: it can hand a message over twice, never zero times.
+   * A doubled answer is visible and annoying; a lost one is neither.
+   */
+  private buildMissedInboundBlock(
+    state: LaneState,
+    messages: readonly { role: string; content: string; createdAt: string }[],
+    currentPrompt: string,
+    afterRestart: boolean,
+    missedPath: string,
+  ): string {
+    const since = state.lastHandedUserAt;
+
+    const users = messages.filter(m => m.role === 'user');
+    const newestAt = users.reduce((a, m) => (m.createdAt > a ? m.createdAt : a), '');
+
+    const mine = selectMissedInbound(users, since, currentPrompt, newestAt);
+
+    // Advance the watermark past everything of hers we can see, including the
+    // message arriving now — otherwise the same one is offered again forever.
+    if (newestAt) state.lastHandedUserAt = newestAt > (since || '') ? newestAt : (since || newestAt);
+
+    if (mine.length === 0) return '';
+
+    // How late each one is. A miss found seconds after it was sent is the
+    // handover working; one found an hour later is the seam this exists for,
+    // and reading them the same way is what let a mislabel hide a real loss.
+    const now = Date.now();
+    const lateness = (m: { createdAt: string }): string => {
+      const ms = now - Date.parse(m.createdAt);
+      if (!Number.isFinite(ms) || ms < 0) return 'unknown';
+      const mins = Math.round(ms / 60_000);
+      return mins < 1 ? `${Math.round(ms / 1000)}s late` : `${mins}m late`;
+    };
+
+    try {
+      for (const m of mine) {
+        appendFileSync(missedPath, JSON.stringify({
+          found_at: new Date().toISOString(),
+          sent_at: m.createdAt,
+          late: lateness(m),
+          // Why it was late: the lane was being born, or a live lane was busy.
+          // Averaging those two together is what made a healthy median out of
+          // an outage.
+          reason: afterRestart ? 'session-birth' : 'race',
+          content: m.content,
+        }) + '\n', 'utf8');
+      }
+    } catch { /* the handover below is the point; the log is the backup */ }
+
+    const userName = this.options.userName || 'User';
+    return [
+      '',
+      missedInboundBanner(mine.length, afterRestart),
+      ...mine.map(m => `${userName} (${m.createdAt}, ${lateness(m)}): ${this.clampForSeed(m.content, 4_000)}`),
+      '[End of missed messages.]',
       '',
     ].join('\n');
   }
@@ -501,14 +749,122 @@ export class InteractiveCliRuntime implements AgentRuntime {
     // has one consumer at a time. Cleared in `finally`, which also fires when
     // the consumer abandons the generator mid-stream (.return()).
     state.turnActive = true;
+    // The other-lane mark is the newest row this turn's history read (see
+    // nextOtherLaneMark): a reply another lane writes after the snapshot is
+    // newer than it and is offered next turn. Own rows are excluded by lane
+    // tag, so the earlier mark cannot echo them.
+    const turnStartedIso = new Date().toISOString();
+    let turnCompleted = false;
+    // Mirror onto the session so the supervisor's watchdog can measure a live
+    // turn from its own start instead of a file older than it is.
+    session.turnActive = true;
+    session.turnStartedAt = Date.now();
+    session.turnThreadId = input.thread.id;
     try {
       if (state.idleDelivery) {
         try { await state.idleDelivery; } catch { /* watcher logs its own failures */ }
       }
-      yield* this.runTurnBody(input, key, session, state);
+      // Intercept the terminal 'done' so the context gauge rides every
+      // completed turn, ahead of it (the runtime contract keeps 'done'
+      // terminal). The gauge is observation-only and fail-quiet — a missing
+      // or unreadable transcript costs the turn its meter and nothing else.
+      for await (const event of this.runTurnBody(input, key, session, state)) {
+        if (event.type === 'done') {
+          if (event.finishReason !== 'aborted' && event.finishReason !== 'error') turnCompleted = true;
+          try {
+            yield* this.emitLaneGauge(key, state);
+          } catch { /* never let the gauge break a finished turn */ }
+        }
+        yield event;
+      }
     } finally {
+      // A guest's turn, or one that failed before delivering, does not move
+      // the mark: those replies are still owed to the owner's next turn.
+      const mark = nextOtherLaneMark({
+        prev: state.lastReadThreadAt.get(input.thread.id),
+        read: input.messages,
+        completed: turnCompleted,
+        guest: input.audience?.kind === 'guest',
+        fallback: turnStartedIso,
+      });
+      if (mark) state.lastReadThreadAt.set(input.thread.id, mark);
       state.turnActive = false;
+      session.turnActive = false;
+      session.turnStartedAt = 0;
+      session.turnThreadId = null;
     }
+  }
+
+  /**
+   * Read the lane's live CLI transcript and surface the same signals the SDK
+   * lane reports: a `context_usage` runtime event (the shared consumer in
+   * agent.ts broadcasts it to the existing ContextIndicator), a `usage`
+   * event carrying the DELTA this turn added (so the turn's usage_events row
+   * gets real numbers instead of zeros), and — when the
+   * transcript shows a NEW native compaction since the last look — a
+   * system-labeled `compaction_notice` WS banner plus a durable line in
+   * logs/compaction.log. The compaction itself is Claude Code's own in-place
+   * auto-compaction; nothing here (and nothing anywhere in this lane) writes
+   * summary content into the app DB or any thread.
+   */
+  private async *emitLaneGauge(key: string, state: LaneState): AsyncIterable<AgentRuntimeEvent> {
+    const file = latestTranscriptFile(key);
+    if (!file) return;
+    const usage = await readSessionUsage(file.path, file.size, file.mtime);
+    if (!usage) return;
+
+    const contextWindow = usage.model ? contextWindowFor(usage.model) : DEFAULT_CONTEXT_WINDOW_TOKENS;
+    yield { type: 'context_usage', used: usage.contextTokens, max: contextWindow };
+
+    const prev = state.lastUsage;
+    const sameFile = prev !== null && prev.path === file.path;
+    if (sameFile && usage.compactions > prev.compactions) {
+      const preTokens = prev.contextTokens || usage.contextTokens;
+      void logCompaction(key, preTokens, usage.contextTokens);
+      try {
+        const { registry } = await import('../ws.js');
+        registry.broadcast({
+          type: 'compaction_notice',
+          preTokens,
+          message: `Context compacted in place (was ${Math.round(preTokens / 1000)}K tokens) — warm session continues`,
+          isComplete: true,
+        });
+      } catch { /* banner is best-effort; the log line above is durable */ }
+      console.log(`[Heartbeat:${key}] native compaction observed — ${preTokens} → ${usage.contextTokens} tokens, same session`);
+    }
+
+    // File what this turn actually cost. This lane reports nothing per
+    // request — no streaming counts, no API response to read — so it filed
+    // no usage rows at all while every API lane had real figures.
+    // The numbers were never missing: Claude Code writes them into the
+    // transcript we already read for the gauge above. What goes on the row
+    // is the DELTA since this lane's last turn (Aerie 18ec6725). Input and
+    // cache reads are the whole conversation re-sent — the same measure
+    // every API lane on the Usage dashboard already reports as Input.
+    const delta = computeUsageDelta(prev ?? undefined, usage, file.path);
+    state.lastUsage = {
+      path: file.path,
+      contextTokens: usage.contextTokens,
+      compactions: usage.compactions,
+      inputTokens: usage.inputTokens,
+      outputTokens: usage.outputTokens,
+      cacheReadTokens: usage.cacheReadTokens,
+      cacheWriteTokens: usage.cacheWriteTokens,
+    };
+    // A turn that grew nothing (silent timeout, abort before any reply) files
+    // no row — an all-zeros row is the exact noise this event exists to end.
+    if (!delta.inputTokens && !delta.outputTokens && !delta.cacheReadTokens && !delta.cacheWriteTokens) return;
+    yield {
+      type: 'usage',
+      input: delta.inputTokens,
+      output: delta.outputTokens,
+      cacheRead: delta.cacheReadTokens,
+      cacheWrite: delta.cacheWriteTokens,
+      // Explicit null: this lane is subscription-billed — no per-turn dollar
+      // measurement exists, and estimating API-equivalent cost would invent
+      // one. The consumer files NULL, never a guess.
+      cost: null,
+    };
   }
 
   private async *runTurnBody(
@@ -530,7 +886,7 @@ export class InteractiveCliRuntime implements AgentRuntime {
     } catch (err) {
       yield {
         type: 'error',
-        message: `heartbeat session failed to start: ${err instanceof Error ? err.message : String(err)}`,
+        message: `heartbeat session failed to start: ${errMessage(err)}`,
         recoverable: false,
       };
       return;
@@ -569,14 +925,23 @@ export class InteractiveCliRuntime implements AgentRuntime {
 
     const fresh = session.consumeFreshFlag();
     if (fresh) {
-      // The relaunched session lost any in-flight work — late replies to old
-      // turns can no longer arrive, and a truncated outbox would make a stale
-      // offset read garbage. Clear the ledger, clamp the offset.
-      state.unresolved = [];
+      // A relaunched session has NOT lost its in-flight work — the relaunch
+      // resumes the transcript, so a session killed mid-turn finishes the
+      // thought it was holding and writes that line to the outbox afterwards.
+      // The ledger used to be cleared here on the opposite reasoning, which
+      // made exactly those finished replies unrecoverable: no owed turn, both
+      // readers skipped the line, offset advanced past it (Aerie 3b8bf231).
+      // Keep the ledger; stale ids age out at MAX_UNRESOLVED and delivery
+      // still requires a real matching outbox line. The offset clamps stay —
+      // a truncated outbox would make a stale offset read garbage.
       state.consumedOffset = Math.min(state.consumedOffset, session.outboxSize());
       state.activityOffset = Math.min(state.activityOffset, session.activitySize());
     }
+    const guestTurn = input.audience?.kind === 'guest';
     const contextBlock = fresh ? this.buildRecycleContext(input.messages) : '';
+    // The think-and-thin nudge rides ahead of the bridge, as it did at the
+    // source: the bridge's last line says the next thing is the owner's message.
+    const thinBlock = thinNudgeForTurn({ fresh, guest: guestTurn, autonomous: input.isAutonomous, laneKey: key });
 
     // Orientation cheat-sheet — agent.ts assembles it per-turn into
     // `input.orientation` with LIVE data (sticker catalog, mood, life status,
@@ -668,8 +1033,12 @@ export class InteractiveCliRuntime implements AgentRuntime {
     // never delay or drop a turn — but wrapped again here because this now
     // sits on the delivery path. Placed INSIDE deliveredContent deliberately,
     // so slice 1's payload instrumentation counts it like everything else.
+    // Not on a guest's turn (turn-audience.ts): the noticings are about the
+    // owner, and a guest's answer lands in a room the guest reads.
     let unfiledBlock = '';
-    try { unfiledBlock = unfiledNoticings(); } catch { /* never delay a turn */ }
+    if (!guestTurn) {
+      try { unfiledBlock = unfiledNoticings(); } catch { /* never delay a turn */ }
+    }
 
     // Ambient recall — archived memories resembling this message ride in ahead
     // of it. Timeboxed and fail-quiet inside ambientRecall(); a slow or
@@ -678,26 +1047,81 @@ export class InteractiveCliRuntime implements AgentRuntime {
     // to be carried on every turn.
     let whisperBlock = '';
     let recallSurfaced: import('./whisper.js').SurfacedRecall | null = null;
-    try {
+    // A guest's turn gets no recall at all: the guest's own words would choose
+    // which memories surfaced, into a room the guest reads.
+    if (!guestTurn) try {
       const recall = await ambientRecall(userContent, key, fresh);
       whisperBlock = recall.block;
       recallSurfaced = recall.surfaced;
     } catch { /* never delay a turn */ }
 
+    // Runs on every turn, autonomous or not — the seam it closes is exactly
+    // the one a recycle opens, and a live turn is the next chance to notice.
+    // A guest's turn is answered in the guest's room, and this block tells the
+    // lane to answer the owner's missed messages now. So on a guest's turn it
+    // hands none over and leaves the watermark where it is: they come with the
+    // owner's own next turn instead, late and never lost.
+    const missedBlock = guestTurn ? '' : this.buildMissedInboundBlock(
+      state, input.messages, userContent, fresh, session.missedInboundPath,
+    );
+
+    // Same net, other half: what the room said that this lane never heard.
+    // Not on a fresh session (the recycle seed already carries the history)
+    // and not on a guest's turn (household words do not ride into a guest's
+    // room).
+    const otherLaneBlock = (guestTurn || fresh) ? '' : this.buildOtherLaneBlock(state, key, input.thread.id, input.messages);
+
+    // Side notes sent while the last turn was working. The session may read
+    // them live from io/side-notes.jsonl, but nothing guarantees it looked —
+    // so whatever is still unread is handed over here. Late, never lost.
+    let sideNoteBlock = '';
+    // The owner's notes are the owner's. On a guest's turn they stay unread and
+    // the offset does not move, so they come with the owner's next turn
+    // instead, and an answer to one never lands in a guest's room.
+    if (!guestTurn) try {
+      const pending = session.readSideNotesFrom(state.sideNotesOffset);
+      state.sideNotesOffset = pending.newOffset;
+      if (pending.notes.length > 0) {
+        // The session may have read a note live and already answered it. That
+        // never suppresses the handover — the whole worth of this path is that
+        // her note does not depend on the session's judgement — but it should
+        // not come back dressed as unread either, or the session repeats
+        // itself and she cannot tell an echo from a miss. So: hand over every
+        // note exactly as before, and label the ones it says it already had.
+        // ISO-8601 UTC stamps compare lexicographically; an empty stamp on
+        // either side means no claim, which reads as unseen. Anything that
+        // goes wrong reading the mark degrades to an empty mark — every note
+        // unlabelled, i.e. exactly the blind-handover behaviour.
+        let readMark = '';
+        try { readMark = session.sideNotesReadMark?.() ?? ''; } catch { readMark = ''; }
+        const alreadySeen = (at: string): boolean => Boolean(readMark && at && at <= readMark);
+        const noteLines = pending.notes
+          .map((note) => `- ${note.text}${alreadySeen(note.at) ? '  [you picked this up live — already answered, no need to repeat it]' : ''}`)
+          .join('\n');
+        const anyUnseen = pending.notes.some((note) => !alreadySeen(note.at));
+        const header = anyUnseen
+          ? '[Sent to you while you were working and not read at the time — answer these too:]'
+          : '[Sent to you while you were working — you already picked these up live, so they are here for the record only:]';
+        sideNoteBlock = `${header}\n${noteLines}\n\n`;
+      }
+    } catch { /* a missing or unreadable file must never delay the turn */ }
+
     // Recall is the optional passenger. Everything else — the recycle bridge,
-    // the orientation cheat-sheet, the owner's message — has priority. Fit the
-    // two recall cards to the turn's headroom BEFORE assembly: if the payload
-    // would blow the delivery cap, recall trims FIRST (whisper, then noticings)
-    // so the hook never has to reach for the bridge floor or the conversation
-    // middle on recall's account. See fitRecallToCap above.
-    const baseChars = (contextBlock + orientationBlock + userContent).length;
+    // the orientation cheat-sheet, the owner's message, her side notes — has
+    // priority. Fit the two recall cards to the turn's headroom BEFORE
+    // assembly: if the payload would blow the delivery cap, recall trims FIRST
+    // (whisper, then noticings) so the hook never has to reach for the bridge
+    // floor or the conversation middle on recall's account.
+    const baseChars = (thinBlock + contextBlock + orientationBlock + otherLaneBlock + missedBlock + sideNoteBlock + userContent).length;
     const fitted = fitRecallToCap(whisperBlock, unfiledBlock, baseChars);
     whisperBlock = fitted.whisper;
     unfiledBlock = fitted.unfiled;
     const recallChars = whisperBlock.length + unfiledBlock.length;
 
+    // Her custom emojis arrive as shortcode text; name the file so we can look.
+    const emojiBlock = buildEmojiSightBlock(userContent, getEmojiByName, join(PROJECT_ROOT, 'data', 'emojis'));
     const deliveredContent =
-      contextBlock + orientationBlock + whisperBlock + unfiledBlock + userContent;
+      thinBlock + contextBlock + orientationBlock + otherLaneBlock + missedBlock + whisperBlock + unfiledBlock + sideNoteBlock + userContent + emojiBlock;
 
     // The shiver — tell the reply message what recall surfaced, but only when
     // the whisper actually SURVIVED the cap fit. If fitRecallToCap trimmed the
@@ -763,14 +1187,21 @@ export class InteractiveCliRuntime implements AgentRuntime {
       content: deliveredContent,
       turn: turnId,
       ...(images.length > 0 ? { images } : {}),
+      // Read by the Stop hook into io/.turn-audience, where the tool gate
+      // looks before every tool call. See services/turn-audience.ts.
+      ...(input.audience ? { audience: input.audience } : {}),
     });
 
-    let deadline = Date.now() + REPLY_TIMEOUT_MS;
+    const turnStartedAt = Date.now();
+    let deadline = turnStartedAt + REPLY_TIMEOUT_MS;
     let offset = state.consumedOffset;
     let chunks = 0;
     let activitySeq = 0;
     // Synthesized tool-use ids per tool name, for hook payloads without one.
     const pendingTools: Record<string, string[]> = {};
+    // Tools that sent a `pre` and haven't reported back — a running tool holds
+    // its turn open (bounded by WORKING_MAX_MS below).
+    const openTools = new Set<string>();
 
     // Wire abort-signal to the internal flag so byte-light's plumbing
     // (AbortSignal) can cancel a turn the same as an explicit abort() call.
@@ -816,11 +1247,13 @@ export class InteractiveCliRuntime implements AgentRuntime {
                 id = `cli-${turnId}-${activitySeq++}`;
                 (pendingTools[tool] ||= []).push(id);
               }
+              openTools.add(id);
               const detail = typeof ev.detail === 'string' && ev.detail ? ev.detail : '';
               yield { type: 'tool_start', id, name: tool, input: detail ? { detail } : {} };
             } else if (ev.phase === 'post') {
               sawActivity = true;
               const id = typeof ev.id === 'string' && ev.id ? ev.id : pendingTools[tool]?.shift();
+              if (id) openTools.delete(id);
               // Fill from the PostToolUse-captured tool_response when present;
               // old-format lines (no output/isError) fall back to empty/false.
               const output = typeof ev.output === 'string' ? ev.output : '';
@@ -831,19 +1264,55 @@ export class InteractiveCliRuntime implements AgentRuntime {
           if (sawActivity) deadline = Date.now() + REPLY_TIMEOUT_MS;
         }
 
+        // A running tool holds its turn open: one command that blocks for
+        // twenty minutes pings the activity mirror once — at the start — so
+        // without this the window closes on a session that is visibly
+        // mid-task. Bounded by the same per-turn cap as io/.busy, so a tool
+        // that never reports back can't zombie a turn.
+        if (openTools.size > 0 && Date.now() - turnStartedAt < WORKING_MAX_MS) {
+          const held = Date.now() + REPLY_TIMEOUT_MS;
+          if (held > deadline) deadline = held;
+        }
+
+        // Declared background work: a fresh io/.busy re-arms the window each
+        // poll while the flag stays fresh (background jobs run hooks-dark, so
+        // the activity mirror never sees them).
+        {
+          const busy = session.busyMtime();
+          if (
+            busy > 0 &&
+            Date.now() - busy < BUSY_FRESH_MS &&
+            Date.now() - turnStartedAt < WORKING_MAX_MS
+          ) {
+            const held = Date.now() + REPLY_TIMEOUT_MS;
+            if (held > deadline) deadline = held;
+          }
+        }
+
         const { lines, newOffset } = session.readOutboxFrom(offset);
         offset = newOffset;
         let fallback: { content: string; thinking: string | null; more: boolean } | null = null;
 
+        // parseOutboxLine recovers replies glued onto one line by a write that
+        // missed its newline — that used to throw and take BOTH replies with
+        // it — and reports anything genuinely unreadable instead of swallowing
+        // it. A dropped reply and a slow one look identical from her side, so
+        // silence here is the expensive kind.
+        const liveParsed: any[] = [];
         for (const line of lines) {
-          let parsed: any;
-          try {
-            parsed = JSON.parse(line);
-          } catch {
-            // Non-JSON line — better than dropping a reply, if nothing better lands.
+          const objs = parseOutboxLine(line, (fragment, error) => {
+            console.error(`[InteractiveCli] UNREADABLE OUTBOX LINE (a reply may be lost): ${error} :: ${fragment.slice(0, 160)}`);
+          });
+          if (objs.length === 0 && line.trim()) {
+            // Nothing readable at all — keep the old behaviour of offering the
+            // raw line rather than nothing, now logged on the way past.
             if (chunks === 0) fallback = { content: line, thinking: null, more: false };
             continue;
           }
+          for (const obj of objs) liveParsed.push(obj);
+        }
+
+        for (const parsed of liveParsed) {
           // Silent-completion sentinel: a turn that genuinely warrants no
           // visible output (rare — internal wakes still narrate) can end the
           // turn cleanly instead of stalling into a timeout by writing
@@ -853,6 +1322,7 @@ export class InteractiveCliRuntime implements AgentRuntime {
           if (parsed.silent === true && parsed.turn_id === turnId) {
             state.consumedOffset = offset;
             state.silentTimeouts = 0;
+            session.clearBusy();
             yield { type: 'done', finishReason: 'stop' };
             return;
           }
@@ -878,6 +1348,8 @@ export class InteractiveCliRuntime implements AgentRuntime {
             }
             state.consumedOffset = offset;
             state.silentTimeouts = 0;
+            // The final line landing ends the declared-busy window.
+            session.clearBusy();
             yield { type: 'done', finishReason: 'stop' };
             return;
           }
@@ -886,12 +1358,24 @@ export class InteractiveCliRuntime implements AgentRuntime {
             // A different turn_id: if it's a turn we timed out on, deliver it
             // late rather than dropping it; anything else is stale — skip.
             if (state.unresolved.includes(tid)) {
-              state.unresolved = state.unresolved.filter((t) => t !== tid);
+              // Pay the ledger on the FINAL chunk only. A late reply is as
+              // likely to be five lines as one, and clearing the entry on the
+              // first of them made every chunk after it read as owed to nobody
+              // and get dropped — Aerie measured five chunks written, one
+              // delivered (her 519945db). A late reply that never sends its
+              // final chunk leaves the entry behind, which costs one extra
+              // delivery attempt and never a drop.
+              if (!more) state.unresolved = state.unresolved.filter((t) => t !== tid);
               if (thinking) {
                 yield { type: 'thinking_delta', text: thinking, kind: 'authored' };
               }
               yield { type: 'text_delta', text: joined(content) };
               emittedText = true;
+            } else {
+              // Not owed, so it was written after that turn's final line. This
+              // used to skip on a bare continue and leave no trace at all —
+              // and the offset advance below the loop makes the skip permanent.
+              recordOrphanedReply(session.orphanedRepliesPath, tid, content);
             }
             continue;
           }
@@ -913,6 +1397,7 @@ export class InteractiveCliRuntime implements AgentRuntime {
           } else {
             state.consumedOffset = offset;
             state.silentTimeouts = 0;
+            session.clearBusy();
             yield { type: 'done', finishReason: 'stop' };
             return;
           }
@@ -1123,6 +1608,7 @@ async function deliverIdleOutbox(
     contentType: 'text',
     metadata: {
       source: 'heartbeat-idle-watcher',
+      lane: laneTagFor('claude-cli', key),
       ...(segments.length > 0 ? { segments } : {}),
     },
     createdAt: now,

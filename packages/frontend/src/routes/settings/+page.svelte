@@ -13,6 +13,7 @@
   import AppearancePanel from '$lib/components/AppearancePanel.svelte';
   import MindPanel from '$lib/components/MindPanel.svelte';
   import MemoryPanel from '$lib/components/MemoryPanel.svelte';
+  import SelfKnowledgePanel from '$lib/components/SelfKnowledgePanel.svelte';
   import ReceiptsPanel from '$lib/components/ReceiptsPanel.svelte';
   import XRayPanel from '$lib/components/XRayPanel.svelte';
   import ProvidersPanel from '$lib/components/ProvidersPanel.svelte';
@@ -28,7 +29,7 @@
   import { connect, send, getConnectionState } from '$lib/stores/websocket.svelte';
   import { goto } from '$app/navigation';
 
-  let activeTab = $state<'appearance' | 'profiles' | 'mind' | 'memory' | 'receipts' | 'xray' | 'preferences' | 'routing' | 'orchestrator' | 'system' | 'mcp' | 'skills' | 'notifications' | 'discord' | 'sessions' | 'providers' | 'keys'>('appearance');
+  let activeTab = $state<'appearance' | 'profiles' | 'mind' | 'memory' | 'selfknowledge' | 'receipts' | 'xray' | 'preferences' | 'routing' | 'orchestrator' | 'system' | 'mcp' | 'skills' | 'notifications' | 'discord' | 'sessions' | 'providers' | 'keys'>('appearance');
   let systemStatus = $derived(getSystemStatus());
   let loading = $derived(isLoading());
   let connectionState = $derived(getConnectionState());
@@ -107,6 +108,13 @@
       onclick={() => activeTab = 'memory'}
     >
       Memory
+    </button>
+    <button
+      class="tab"
+      class:active={activeTab === 'selfknowledge'}
+      onclick={() => activeTab = 'selfknowledge'}
+    >
+      Self-Knowledge
     </button>
     <button
       class="tab"
@@ -221,6 +229,8 @@
         <MindPanel />
       {:else if activeTab === 'memory'}
         <MemoryPanel />
+      {:else if activeTab === 'selfknowledge'}
+        <SelfKnowledgePanel />
       {:else if activeTab === 'receipts'}
         <ReceiptsPanel />
       {:else if activeTab === 'xray'}

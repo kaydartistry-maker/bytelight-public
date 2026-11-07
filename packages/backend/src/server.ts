@@ -12,13 +12,14 @@ import { initDb, deleteExpiredSessions } from './services/db.js';
 import { seedDefaultBlocks, ensureCompanionBlocks } from './services/memory-blocks.js';
 import { getSecret } from './services/secrets.js';
 import { loadVectorCache } from './services/vector-cache.js';
-import { createWebSocketServer, setVoiceService, setGatewayServices, registry } from './services/ws.js';
+import { createWebSocketServer, setVoiceService, setGatewayServices, registry, recoverCutOffTurns } from './services/ws.js';
+import { holdTurnLeases } from './services/db/turn-leases.js';
 import { startMemoryProfiler } from './services/memory-profiler.js';
 import { startMemoryMonitor } from './services/memory-monitor.js';
 import { Orchestrator } from './services/orchestrator.js';
 import { AgentService } from './services/agent.js';
 import { VoiceService } from './services/voice.js';
-import { PushService } from './services/push.js';
+import { PushService, setPushService } from './services/push.js';
 import { DiscordService } from './services/discord/index.js';
 import { TelegramService } from './services/telegram/index.js';
 import { rateLimiter, securityHeaders } from './middleware/security.js';
@@ -27,8 +28,13 @@ import { shutdownAllHeartbeats } from './services/heartbeat/supervisor.js';
 import { setHeartbeatPushService } from './services/heartbeat/runtime.js';
 import { codexSupervisor } from './services/runtimes/codex-supervisor.js';
 import { shutdownEmbeddings } from './services/embeddings.js';
+import { refreshSelfKnowledgeIndex } from './services/self-knowledge-index.js';
+import { startMemoryRounds, stopMemoryRounds } from './services/memory-rounds.js';
+import { startCompactionShelf } from './services/compaction-shelf.js';
 import apiRoutes from './routes/api.js';
 import mcpBeltRouter, { closeBeltMcpSessions } from './routes/mcp-belt.js';
+import clientErrorRoutes from './routes/client-errors.js';
+import appShellRoutes from './routes/app.js';
 
 // Load config FIRST — before any other initialization
 const config = loadConfig();
@@ -57,11 +63,21 @@ console.log('Initializing database...');
 const db = initDb(DB_PATH);
 deleteExpiredSessions();
 loadVectorCache();
+// Self-knowledge semantic index (Wave 2, Slice 3) — embed any entries added
+// while the process was down so manual semantic search is ready. Non-fatal on
+// failure; it only backs an on-demand search endpoint, nothing on the hot path.
+void refreshSelfKnowledgeIndex();
+// Memory integrity rounds (ported from Aerie): daily check-up of the
+// self-knowledge index, re-run every 6h, receipts in the memory ledger.
+startMemoryRounds();
+// The compactions shelf (ported from Aerie): copies each squash out of the
+// lanes' transcripts before Claude Code deletes them. First read after boot.
+startCompactionShelf();
 console.log('Database initialized');
 
 // Seed core-memory blocks (Slice 3, ported from reference implementation). The 013 migration
 // (run inside initDb) creates the table; this fills in the starter blocks so
-// the boys have something to see + edit from turn one. byte-light has no
+// the companions have something to see + edit from turn one. byte-light has no
 // listCompanions module (single house, two-in-one-brain), so the companion set
 // is the static [companion-a, companion-b]. seedDefaultBlocks is seed-if-empty (no-ops once
 // any block exists) and ensureCompanionBlocks is per-companion idempotent — so
@@ -94,9 +110,11 @@ app.use((req, _res, next) => {
 // Environment-conditional origins
 const IS_DEV = process.env.NODE_ENV !== 'production';
 const corsOrigins: string[] = [...config.cors.origins, `http://localhost:${PORT}`, `http://127.0.0.1:${PORT}`];
-if (IS_DEV) corsOrigins.push('http://localhost:5173');
+if (IS_DEV) corsOrigins.push('http://localhost:5173', 'http://localhost:5174');
 
-const connectSrc: string[] = ["'self'", "https://api.giphy.com"];
+// open-meteo and nominatim: the phone's Weather app, lock screen and home
+// widget call them straight from the page (ported from Aerie, which lists them).
+const connectSrc: string[] = ["'self'", "https://api.giphy.com", "https://api.open-meteo.com", "https://nominatim.openstreetmap.org"];
 // Derive WebSocket connect sources from CORS origins
 for (const origin of config.cors.origins) {
   const wsOrigin = origin.replace(/^https:/, 'wss:').replace(/^http:/, 'ws:');
@@ -110,7 +128,13 @@ app.use(helmet({
     directives: {
       defaultSrc: ["'self'"],
       connectSrc,
-      scriptSrc: ["'self'", "'unsafe-inline'"],
+      // 'unsafe-eval': the Artifacts preview frame (srcdoc, so it inherits this
+      // policy) runs each artifact's code with new Function, as Aerie allows.
+      // One owner behind a password; the code running is her own artifacts.
+      // blob:: the voice recorder's silence timer is an AudioWorklet loaded
+      // from a blob, so a call still hears her stop talking while the screen
+      // is hidden.
+      scriptSrc: ["'self'", "'unsafe-inline'", "'unsafe-eval'", "blob:"],
       styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
       imgSrc: ["'self'", "data:", "blob:", "https:"],
       mediaSrc: ["'self'", "blob:"],
@@ -140,6 +164,38 @@ app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 app.use(cookieParser());
 
+// Vendor assets for artifact viewer — completely public, no CSRF/auth (loaded by iframe)
+// Mounted at /vendor (NOT /api/vendor) to avoid auth middleware interference
+// (ported from Aerie server.ts). The phone's Artifacts app fetches
+// react.production.min.js, react-dom.production.min.js and babel.min.js from
+// here and inlines them into its sealed frame. The files are not in the repo:
+// drop them into data/vendor/ beside the database. A missing file answers a
+// plain 404 (the catch below) instead of falling through to the SPA's
+// index.html with a 200 — the phone checks res.ok, and an HTML page inlined
+// as a script would fail silently.
+const vendorDir = join(dataDir, 'vendor');
+mkdirSync(vendorDir, { recursive: true });
+const ALLOWED_VENDOR_FILES = ['react.production.min.js', 'react-dom.production.min.js'];
+app.use('/vendor', express.static(vendorDir, {
+  setHeaders: (res, path) => {
+    if (ALLOWED_VENDOR_FILES.some(f => path.endsWith(f))) {
+      res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+    }
+  }
+}));
+app.use('/vendor', (_req, res) => {
+  res.status(404).type('text/plain').send('Vendor file not found');
+});
+
+// Reports from the phone (its Spotify wake and the like), one bounded line
+// each in the error log, tagged [client-error]. Ported from Aerie.
+app.use('/api/client-errors', clientErrorRoutes);
+
+// The Android shell's own door: its update check (/version, /download) and
+// the crash it posts on the way out (/crash → app/crashes.log beside the
+// database). Ported from Aerie.
+app.use('/api/app', appShellRoutes);
+
 // All API routes — auth middleware is applied selectively inside the router
 app.use('/api', apiRoutes);
 
@@ -156,6 +212,27 @@ app.use('/mcp/belt', mcpBeltRouter);
 const stickersDir = join(PROJECT_ROOT, 'data', 'stickers');
 mkdirSync(stickersDir, { recursive: true });
 app.use('/stickers', express.static(stickersDir, { maxAge: '1d', fallthrough: true }));
+
+// Serve custom emoji files (ported from full-sweep)
+const emojisDir = join(PROJECT_ROOT, 'data', 'emojis');
+mkdirSync(emojisDir, { recursive: true });
+app.use('/emojis', express.static(emojisDir, { maxAge: '1d', fallthrough: true }));
+
+// Serve the React phone app at /phone while the UI flip is in progress. Svelte
+// keeps `/` until the flip. Mounted before Svelte's catch-all so /phone/* never
+// falls through to the Svelte index.
+const phonePaths = [
+  join(__dirname, '../../phone/dist'),         // From compiled dist/
+  join(__dirname, '../../../packages/phone/dist'), // From src/ via tsx
+];
+const phoneBuildPath = phonePaths.find(p => existsSync(p));
+if (phoneBuildPath) {
+  console.log(`Serving phone app at /phone from: ${phoneBuildPath}`);
+  app.use('/phone', express.static(phoneBuildPath));
+  app.get(['/phone', '/phone/*'], (_req, res) => {
+    res.sendFile(join(phoneBuildPath, 'index.html'));
+  });
+}
 
 // Serve frontend static build (works in dev too if frontend is pre-built)
 const frontendPaths = [
@@ -198,6 +275,8 @@ const pushService = new PushService(
   getSecret('vapid_contact'),
 );
 agentService.setPushService(pushService);
+// The Discord gateway's mention notifications reach it through getPushService().
+setPushService(pushService);
 import('./services/limit-watch.js').then(m => m.startLimitWatch({
   push: pushService,
   voiceUsage: () => voiceService.getElevenLabsUsage(),
@@ -229,7 +308,9 @@ if (telegramEnabled && getSecret('telegram_bot_token')) {
 
 // Initialize orchestrator
 const orchestrator = new Orchestrator(agentService, pushService);
-orchestrator.start();
+// The Integrations switch can stop the orchestrator; a stop has to survive
+// a restart, so boot only starts it when the flag is on.
+if (config.orchestrator.enabled !== false) orchestrator.start();
 
 // Make orchestrator, agent, voice, push, and discord services available to route handlers
 app.locals.orchestrator = orchestrator;
@@ -255,6 +336,11 @@ server.listen(PORT, HOST, () => {
   console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
   console.log(`Auth enabled: ${config.auth.password ? 'yes' : 'no'}`);
   console.log(`Companion: ${config.identity.companion_name} | User: ${config.identity.user_name}`);
+  // Phone turns the last restart cut off. A short wait first, so the lanes
+  // and MCP servers have come up before anyone answers.
+  setTimeout(() => {
+    recoverCutOffTurns(agentService).catch((err) => console.error('[turn-leases] Recovery failed:', err));
+  }, 10_000).unref();
 });
 
 // Graceful shutdown — unified handler
@@ -263,6 +349,10 @@ async function gracefulShutdown(signal: string): Promise<void> {
   if (shuttingDown) return; // Prevent double-shutdown
   shuttingDown = true;
   console.log(`${signal} received, shutting down gracefully...`);
+
+  // 0. Keep the leases of turns still running: the abort below cuts them off,
+  // and the next boot picks them back up (services/db/turn-leases.ts).
+  holdTurnLeases();
 
   // 1. Abort any active Claude query first (prevents orphaned SDK subprocess)
   agentService.stopGeneration();
@@ -280,6 +370,7 @@ async function gracefulShutdown(signal: string): Promise<void> {
   // 1d. Close MCP transports owned by this HTTP process. The Codex daemon
   // reconnects to the next backend using the persisted private credential.
   try { await closeBeltMcpSessions(); } catch { /* best-effort */ }
+  try { stopMemoryRounds(); } catch { /* best-effort */ }
   try { shutdownEmbeddings(); } catch { /* best-effort */ }
 
   // 2. Stop orchestrator (clears all intervals/crons)

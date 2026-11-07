@@ -14,6 +14,7 @@
   re-fetches the list whenever it bumps, so the panel stays fresh while open.
 -->
 <script lang="ts">
+  import { timeAgo } from '$lib/utils/time';
   import { onMount } from 'svelte';
   import { api, apiFetch } from '$lib/utils/api';
   import { getMemoryBlockVersion } from '$lib/stores/websocket.svelte';
@@ -214,19 +215,6 @@
     }
   }
 
-  function timeAgo(dateStr: string): string {
-    const d = new Date(dateStr.includes('Z') || dateStr.includes('T') ? dateStr : dateStr.replace(' ', 'T') + 'Z');
-    const diff = Date.now() - d.getTime();
-    if (isNaN(diff)) return dateStr;
-    const mins = Math.floor(diff / 60000);
-    if (mins < 1) return 'just now';
-    if (mins < 60) return `${mins}m ago`;
-    const hours = Math.floor(mins / 60);
-    if (hours < 24) return `${hours}h ago`;
-    const days = Math.floor(hours / 24);
-    return `${days}d ago`;
-  }
-
   onMount(loadBlocks);
 
   // Live updates: re-fetch whenever a memory_block_updated event bumps the
@@ -253,7 +241,7 @@
     <p class="panel-desc">
       Letta-style core memory. Blocks scoped <code>shared</code> are seen by
       every companion; a companion slug scopes a block to that companion alone.
-      The boys edit these in place mid-conversation — this is your window to do
+      The companions edit these in place mid-conversation — this is your window to do
       the same, and to run the Archivist by hand.
     </p>
   </header>
@@ -293,7 +281,7 @@
                 <div class="block-meta">
                   <span>{block.content.length} chars</span>
                   <span class="dot">·</span>
-                  <span>updated {timeAgo(block.updated_at)}</span>
+                  <span>updated {timeAgo(block.updated_at, { sqliteUtc: true })}</span>
                 </div>
               </div>
               <svg class="chevron" class:open={expandedKey === key} width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">

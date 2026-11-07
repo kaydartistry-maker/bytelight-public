@@ -174,7 +174,7 @@
   }
 
   .mic-button.recording {
-    color: #ef4444;
+    color: var(--color-error);
     animation: pulse 1.5s ease-in-out infinite;
   }
 
@@ -190,13 +190,13 @@
   .recording-duration {
     font-size: 0.8125rem;
     font-family: var(--font-mono, monospace);
-    color: #ef4444;
+    color: var(--color-error);
     min-width: 2.5rem;
   }
 
   .voice-error {
     font-size: 0.75rem;
-    color: var(--error, #ef4444);
+    color: var(--error, var(--color-error));
     max-width: 10rem;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -215,10 +215,6 @@
   @keyframes pulse {
     0%, 100% { opacity: 1; }
     50% { opacity: 0.5; }
-  }
-
-  @keyframes spin {
-    to { transform: rotate(360deg); }
   }
 
   @media (max-width: 768px) {

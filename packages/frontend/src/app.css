@@ -655,3 +655,8 @@ input:focus-visible, textarea:focus-visible, select:focus-visible {
 .canvas-chip:hover {
   background: rgba(139, 92, 246, 0.25);
 }
+
+/* Shared rotation for loading spinners (animation: spin ...). */
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}

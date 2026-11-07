@@ -623,7 +623,7 @@
   .upload-error {
     padding: 0.5rem 1rem;
     font-size: 0.875rem;
-    color: var(--error, #ef4444);
+    color: var(--error, var(--color-error));
     background: rgba(239, 68, 68, 0.1);
     border-bottom: 1px solid var(--border);
   }
@@ -764,10 +764,6 @@
     border-top-color: var(--gold);
     border-radius: 50%;
     animation: spin 0.6s linear infinite;
-  }
-
-  @keyframes spin {
-    to { transform: rotate(360deg); }
   }
 
   textarea {

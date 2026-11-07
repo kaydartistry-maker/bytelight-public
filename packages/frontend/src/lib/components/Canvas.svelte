@@ -394,7 +394,7 @@
 
   .canvas-tag-remove:hover {
     opacity: 1;
-    color: var(--error, #ef4444);
+    color: var(--error, var(--color-error));
   }
 
   .canvas-tag-input {
@@ -569,7 +569,7 @@
   }
 
   .canvas-btn-danger:hover {
-    color: var(--error, #ef4444);
+    color: var(--error, var(--color-error));
   }
 
   .canvas-body {

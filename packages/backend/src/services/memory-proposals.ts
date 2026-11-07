@@ -1,3 +1,4 @@
+// Copyright 2026 Aerie Systems. Licensed under the Apache License 2.0. Porting code from here? Keep this line, and credit Aerie in your NOTICE file for this and anything ported before.
 // memory-proposals.ts — the Archivist proposes, the companions decide.
 //
 // The Archivist used to append straight onto the memory blocks, including the
@@ -15,10 +16,13 @@
 // after SURFACE_LIMIT passes without anyone picking it up, the proposal retires
 // itself. A memory nobody reached for three times over was not load-bearing.
 //
-// GATED. This table fills only when `memext.mode` is set to 'propose'. The
-// default is 'write' — the Archivist's existing straight-to-block behaviour —
-// so landing this module changes nothing until the owner flips the knob. See
-// `archivistMode()` in memory-extraction.ts.
+// OPERATOR'S GATE. Since the Aerie Archivist swap, 'propose' is the default
+// (`archivistMode()` in memory-extraction.ts): every Archivist edit lands here.
+// The operator sees every row — pending, faded, filed, dropped — on the phone (Memory
+// Blocks → Review) and can approve one (`approveProposalForOwner`: the line is
+// written onto its block and the row closes as 'filed' by her) or reject it
+// ('dropped' by her). A faded row is still in her queue: fading only stops it
+// riding into the companions' turns, it does not take it away from her.
 //
 // Ported from an reference implementation, Apache 2.0 — adapted for byte-light.
 // Adaptations vs. the source:
@@ -26,11 +30,12 @@
 //       canonical numbered-migration pattern). `initMemoryProposals` stays
 //       exported as an idempotent belt-and-braces no-op, mirroring how
 //       `initMemoryBlocks` is kept in memory-blocks.ts.
-//   (b) The source's default mode was 'propose'; byte-light's is 'write'. See
-//       the note in memory-extraction.ts — this house does not flip runtime
-//       behaviour on deploy.
+//   (b) Owner review added (listForOwnerReview / approveProposalForOwner /
+//       rejectProposalForOwner) on the same table — no new columns: the
+//       decision is status + resolved_by + resolved_at, as for a companion.
 
 import { getDb } from './db.js';
+import { appendToBlock, replaceInBlock } from './memory-blocks.js';
 
 export type ProposalStatus = 'pending' | 'filed' | 'dropped' | 'faded';
 
@@ -171,4 +176,72 @@ export function countPending(): number {
     .prepare(`SELECT COUNT(*) AS n FROM memory_proposals WHERE status = 'pending'`)
     .get() as { n: number };
   return row?.n ?? 0;
+}
+
+// --- Owner review (the operator's gate) ---------------------------------------------
+
+/** Statuses still waiting on the operator: never chosen by anyone. */
+const OWNER_REVIEWABLE = ['pending', 'faded'] as const;
+
+/** The operator's queue: everything nobody has filed or dropped yet, oldest first. */
+export function listForOwnerReview(limit = 200): MemoryProposal[] {
+  return getDb()
+    .prepare(
+      `SELECT * FROM memory_proposals WHERE status IN ('pending', 'faded')
+        ORDER BY created_at ASC, id ASC LIMIT ?`
+    )
+    .all(limit) as MemoryProposal[];
+}
+
+export function countForOwnerReview(): number {
+  const row = getDb()
+    .prepare(`SELECT COUNT(*) AS n FROM memory_proposals WHERE status IN ('pending', 'faded')`)
+    .get() as { n: number };
+  return row?.n ?? 0;
+}
+
+function ownerResolve(id: number, status: 'filed' | 'dropped', by: string): boolean {
+  const info = getDb()
+    .prepare(
+      `UPDATE memory_proposals SET status = ?, resolved_at = datetime('now'), resolved_by = ?
+        WHERE id = ? AND status IN (${OWNER_REVIEWABLE.map(() => '?').join(', ')})`
+    )
+    .run(status, by, id, ...OWNER_REVIEWABLE);
+  return info.changes > 0;
+}
+
+export type OwnerDecision =
+  | { ok: true; proposal: MemoryProposal }
+  | { ok: false; reason: 'not_found' | 'already_resolved'; proposal: MemoryProposal | null };
+
+/**
+ * The operator approves: the proposed edit is applied to its block and the row closes
+ * as 'filed' by her, in one transaction — if the write throws (e.g. a replace
+ * whose old text is no longer on the block) the row stays open and the error
+ * reaches the caller.
+ */
+export function approveProposalForOwner(id: number, by: string): OwnerDecision {
+  const db = getDb();
+  const proposal = getProposal(id);
+  if (!proposal) return { ok: false, reason: 'not_found', proposal: null };
+  const meta = { actor: 'extraction', metadata: { approved_by: by, proposal_id: id } };
+  const done = db.transaction(() => {
+    if (!ownerResolve(id, 'filed', by)) return false;
+    if (proposal.op === 'replace' && proposal.old_text) {
+      replaceInBlock(proposal.scope, proposal.label, proposal.old_text, proposal.content, meta);
+    } else {
+      appendToBlock(proposal.scope, proposal.label, proposal.content, meta);
+    }
+    return true;
+  })();
+  if (!done) return { ok: false, reason: 'already_resolved', proposal: getProposal(id) };
+  return { ok: true, proposal: getProposal(id)! };
+}
+
+/** The operator rejects: the row closes as 'dropped' by her and never surfaces again. */
+export function rejectProposalForOwner(id: number, by: string): OwnerDecision {
+  const proposal = getProposal(id);
+  if (!proposal) return { ok: false, reason: 'not_found', proposal: null };
+  if (!ownerResolve(id, 'dropped', by)) return { ok: false, reason: 'already_resolved', proposal: getProposal(id) };
+  return { ok: true, proposal: getProposal(id)! };
 }

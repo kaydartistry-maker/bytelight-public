@@ -48,27 +48,8 @@ import type {
   CapabilityKey,
   ThreadHandle,
 } from './types.js';
-
-/**
- * Extract a short summary (first sentence, ~120 chars) from a thinking
- * block. Used to surface the headline of a thinking event in the WS
- * `thinking` broadcast — the full text rides as `text`, the surfaced
- * lead-in rides as `summary`. Mirrors `extractThinkingSummary` in
- * `agent.ts` so post-Step-2 broadcasts carry the same summary string.
- */
-function extractThinkingSummary(text: string): string {
-  if (!text) return '';
-  // Strip leading whitespace/newlines.
-  const trimmed = text.trim();
-  // First sentence: split on `.`, `!`, `?` followed by whitespace or end.
-  const sentenceMatch = trimmed.match(/^[^.!?]*[.!?]/);
-  let summary = sentenceMatch ? sentenceMatch[0].trim() : trimmed;
-  // Hard cap at 120 chars with ellipsis.
-  if (summary.length > 120) {
-    summary = summary.slice(0, 117).trimEnd() + '…';
-  }
-  return summary;
-}
+import { errMessage } from '../../util/errors.js';
+import { extractThinkingSummary } from '../thinking-summary.js';
 
 /**
  * Claude-flavored intermediate input shape for the SDK adapter. NOT
@@ -500,7 +481,7 @@ export class ClaudeAgentRuntime implements AgentRuntime {
         // timeout) based on the `agentTimedOut` module flag.
         yield { type: 'done', finishReason: 'aborted' };
       } else {
-        const message = err instanceof Error ? err.message : String(err);
+        const message = errMessage(err);
         // Heuristic: rate-limit / transient / network errors get
         // `recoverable: true`. Auth / config / parse errors get
         // `recoverable: false`. Stale-session ("No conversation found

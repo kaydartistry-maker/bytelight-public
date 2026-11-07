@@ -188,10 +188,10 @@ describe('memory diet side effects', () => {
   // "dated entries" — the fail-closed parser must protect them.
   const postSmooshHotCore = [
     '## Rules',
-    'Presence before analysis. Never send-off language.',
-    'LESSON (2026-07-12): recognition is not repair.',
+    'Prefers short replies.',
+    'LESSON (2026-07-12): check the calendar first.',
     "the operator's :user_side_eye: reaction named 2026-07-10.",
-    'Relationship structure: girlfriend/partner. Boys lead spice.',
+    'Prefers mornings for planning.',
   ].join('\n');
   const freshDatedAppends = '\n2026-08-11 archivist noticing one\n2026-08-12 archivist noticing two';
 

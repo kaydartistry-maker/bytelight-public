@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { apiFetch } from '$lib/utils/api';
   import { onMount } from 'svelte';
   import { CC_API } from '$lib/utils/cc';
 
@@ -48,7 +49,7 @@
 
   async function load() {
     try {
-      const res = await fetch(`${CC_API}/scratchpad`);
+      const res = await apiFetch(`${CC_API}/scratchpad`);
       const data = await res.json();
       if (data.ok) {
         items = buildList(data.events || [], data.tasks || [], data.notes || []);
@@ -62,20 +63,20 @@
     if (!text) return;
 
     if (mode === 'note') {
-      await fetch(`${CC_API}/scratchpad/notes`, {
+      await apiFetch(`${CC_API}/scratchpad/notes`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ text, created_by: 'user' }),
       });
     } else if (mode === 'task') {
-      await fetch(`${CC_API}/tasks`, {
+      await apiFetch(`${CC_API}/tasks`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ text, created_by: 'user' }),
       });
     } else {
       const today = new Date().toLocaleDateString('en-CA');
-      await fetch(`${CC_API}/events`, {
+      await apiFetch(`${CC_API}/events`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ title: text, start_date: today, start_time: inputTime || null, created_by: 'user' }),
@@ -89,25 +90,25 @@
 
   async function toggleTask(item: ScratchItem) {
     if (item.status === 'completed') {
-      await fetch(`${CC_API}/tasks/${item.id}`, {
+      await apiFetch(`${CC_API}/tasks/${item.id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ status: 'active' }),
       });
     } else {
-      await fetch(`${CC_API}/tasks/${item.id}/complete`, { method: 'PUT' });
+      await apiFetch(`${CC_API}/tasks/${item.id}/complete`, { method: 'PUT' });
     }
     await load();
   }
 
   async function deleteNote(id: string) {
-    await fetch(`${CC_API}/scratchpad/notes/${id}`, { method: 'DELETE' });
+    await apiFetch(`${CC_API}/scratchpad/notes/${id}`, { method: 'DELETE' });
     await load();
   }
 
   async function saveEdit(id: string) {
     if (!editText.trim()) return;
-    await fetch(`${CC_API}/scratchpad/notes/${id}`, {
+    await apiFetch(`${CC_API}/scratchpad/notes/${id}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ text: editText.trim() }),

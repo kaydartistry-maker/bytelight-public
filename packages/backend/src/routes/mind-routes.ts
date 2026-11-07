@@ -1,11 +1,7 @@
 import { Router } from 'express';
-import { getSecret } from '../services/secrets.js';
+import { mindUrl, mindKey } from '../services/mind-secrets.js';
 
 // ─── Mind Bridge proxy ───────────────────────────────────────────
-// Resolved per-call through the BYOK secrets store (DB → env), so a value
-// saved via /api/secrets takes effect on the next request without restart.
-const mindUrl = (): string => getSecret('mind_api_url') || '';
-const mindKey = (): string => getSecret('mind_api_key') || '';
 
 async function mindFetch(path: string): Promise<unknown> {
   const res = await fetch(`${mindUrl()}${path}`, {

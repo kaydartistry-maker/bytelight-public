@@ -21,12 +21,21 @@
   import { apiFetch } from '../utils/api.js';
   import { getActiveThreadId } from '$lib/stores/websocket.svelte';
   import { MODEL_VARIANTS, getVariant, type ProviderId, type ThinkingEffort } from '@bytelight/shared';
+  import { getProfile } from '$lib/stores/profiles.svelte';
 
-  // Companion id is hard-coded for byte-light — there's a single companion
-  // identity in this build. If a future build adds multiple companions,
-  // pass it in as a prop.
+  // The shared brain the two residents run on (migrations/014_companions.sql).
+  // A pick can be for the brain as a whole or for one companion alone; a
+  // companion with no pick of its own follows the brain's (the resolver falls
+  // through companion → brain at every scope), and a brain-wide thread pick
+  // still beats any one companion's default.
   const COMPANION_ID = 'companion-a-b';
+  const MEMBERS = ['companion-a', 'companion-b'] as const;
   const TIER = 'interactive' as const;
+
+  const memberName = (id: string) => getProfile(id).name || id.charAt(0).toUpperCase() + id.slice(1);
+  let brainName = $derived(MEMBERS.map(memberName).join(' & '));
+  let target = $state<string>(COMPANION_ID);
+  let targetIsMember = $derived(target !== COMPANION_ID);
 
   // ---------- Effort options ----------
   // Mirrors VALID_EFFORT in @bytelight/shared (and preferences-routes.ts).
@@ -77,7 +86,20 @@
     model: string;
     thinkingEffort: ThinkingEffort;
     source: 'thread' | 'companion' | 'system';
+    /** Whose row answered — a companion may be following the brain's. */
+    matchedCompanionId: string | null;
   }>(null);
+
+  type Effective = NonNullable<typeof effective>;
+  // Each companion's effective engine, for the closed pill's split label.
+  let memberEffective = $state<Array<{ id: string; eff: Effective }>>([]);
+  let split = $derived(
+    memberEffective.length > 1 &&
+      memberEffective.some((m) =>
+        m.eff.provider !== memberEffective[0].eff.provider ||
+        m.eff.model !== memberEffective[0].eff.model ||
+        m.eff.thinkingEffort !== memberEffective[0].eff.thinkingEffort),
+  );
 
   // Provider availability + routing mode from /api/models/status.
   // 6B-C Slice 4: 'openai-codex' field added (Slice 2 backend truth).
@@ -178,6 +200,11 @@
   // operator gave: "A/O4.7 MAX", "GPT 5.5 HIGH", "OL GLM 5.1 AUTO".
   // Display-only — reads `effective`, mutates nothing.
   let compactPillLabel = $derived.by(() => {
+    if (split) {
+      return memberEffective
+        .map((m) => `${memberName(m.id)} ${compactProviderPrefix(m.eff.provider)}${compactModelRef(m.eff.provider, m.eff.model)}`.replace(/\s+/g, ' ').trim())
+        .join(' | ');
+    }
     if (!effective) return 'Model…';
     const prefix = compactProviderPrefix(effective.provider);
     const model = compactModelRef(effective.provider, effective.model);
@@ -185,7 +212,18 @@
     return `${prefix}${model} ${effort}`.replace(/\s+/g, ' ').trim();
   });
 
-  let canClearOverride = $derived(effective?.source === 'thread');
+  // Only a thread pick that belongs to THIS target can be cleared here; one
+  // it inherits from the brain is cleared from the brain's chip.
+  let canClearOverride = $derived(
+    effective?.source === 'thread' && (effective.matchedCompanionId ?? target) === target,
+  );
+  let targetNote = $derived.by(() => {
+    if (!targetIsMember || !effective) return null;
+    const name = memberName(target);
+    if (canClearOverride) return `${name} has his own engine in this thread.`;
+    if (effective.source === 'thread') return `${name} is following ${brainName}'s pick here. Apply sets his alone.`;
+    return `${name} is following the default. Apply sets his alone, in this thread only.`;
+  });
 
   // Routing 'sdk' means non-Claude providers throw at dispatch. UI must
   // gate them off so we never write a row the dispatcher would refuse.
@@ -348,29 +386,35 @@
   }
 
   // ---------- Fetchers ----------
-  async function fetchEffective(): Promise<void> {
+  async function readEffective(companionId: string): Promise<Effective | null> {
     const threadId = getActiveThreadId();
-    const qs = new URLSearchParams({
-      companionId: COMPANION_ID,
-      tier: TIER,
-    });
+    const qs = new URLSearchParams({ companionId, tier: TIER });
     if (threadId) qs.set('threadId', threadId);
+    // Read-only GET — apiFetch gives us credentials:'include'.
+    const res = await apiFetch(`/api/companion-settings/effective?${qs.toString()}`);
+    if (!res.ok) return null;
+    const data = await res.json();
+    return {
+      provider: data.provider,
+      model: data.model,
+      thinkingEffort: data.thinkingEffort,
+      source: data.source,
+      matchedCompanionId: data.matchedCompanionId ?? null,
+    };
+  }
+
+  async function fetchEffective(): Promise<void> {
     try {
-      // Read-only GET — apiFetch gives us credentials:'include'.
-      // fetch() would work too but staying consistent.
-      const res = await apiFetch(`/api/companion-settings/effective?${qs.toString()}`);
-      if (!res.ok) return;
-      const data = await res.json();
-      effective = {
-        provider: data.provider,
-        model: data.model,
-        thinkingEffort: data.thinkingEffort,
-        source: data.source,
-      };
-      // Sync the draft to the effective view whenever we re-pull.
-      draftProvider = effective.provider;
-      draftModel = effective.model;
-      draftEffort = effective.thinkingEffort;
+      const next = await readEffective(target);
+      if (next) {
+        effective = next;
+        // Sync the draft to the effective view whenever we re-pull.
+        draftProvider = next.provider;
+        draftModel = next.model;
+        draftEffort = next.thinkingEffort;
+      }
+      const reads = await Promise.all(MEMBERS.map(async (id) => ({ id, eff: await readEffective(id) })));
+      memberEffective = reads.filter((r): r is { id: (typeof MEMBERS)[number]; eff: Effective } => !!r.eff);
     } catch (err) {
       console.warn('Failed to fetch effective companion settings:', err);
     }
@@ -615,7 +659,7 @@
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          companionId: COMPANION_ID,
+          companionId: target,
           tier: TIER,
           threadId,
           providerId: draftProvider,
@@ -650,7 +694,7 @@
         method: 'DELETE',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          companionId: COMPANION_ID,
+          companionId: target,
           tier: TIER,
           threadId,
         }),
@@ -673,6 +717,7 @@
   // so the pill reflects the model this specific thread is running (not the mount-time one).
   $effect(() => {
     getActiveThreadId(); // track active thread id
+    target; // and whose engine is being shown
     void fetchEffective();
   });
 
@@ -697,6 +742,22 @@
 
   {#if open}
     <div class="model-dropdown" role="dialog" aria-label="Thread model override">
+      <!-- Whose engine: both residents, or one of them alone -->
+      <div class="section">
+        <div class="section-title">For</div>
+        <div class="target-chips">
+          {#each [COMPANION_ID, ...MEMBERS] as id}
+            <button class="target-chip" class:active={target === id} onclick={() => (target = id)}>
+              {id === COMPANION_ID ? brainName : memberName(id)}
+            </button>
+          {/each}
+        </div>
+        {#if targetNote}
+          <div class="target-note">{targetNote}</div>
+          <div class="target-note">In one shared lane, {brainName}'s pick runs both voices. His own pick takes over when he has a lane of his own.</div>
+        {/if}
+      </div>
+
       <!-- Provider section -->
       <div class="section">
         <div class="section-title">Provider</div>
@@ -895,7 +956,7 @@
           disabled={!canClearOverride || clearing}
           onclick={clearOverride}
         >
-          {clearing ? 'Clearing…' : 'Clear thread override'}
+          {clearing ? 'Clearing…' : targetIsMember ? `${memberName(target)} follows ${brainName} again` : 'Clear thread override'}
         </button>
         <a class="action link" href="/settings">Open Settings</a>
       </div>
@@ -975,6 +1036,44 @@
     color: var(--text-muted);
     padding: 0.25rem 0.5rem 0.125rem;
     opacity: 0.6;
+  }
+
+  .target-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.25rem;
+    padding: 0 0.5rem 0.25rem;
+  }
+
+  .target-chip {
+    font-family: var(--font-heading);
+    font-size: 0.6875rem;
+    letter-spacing: 0.04em;
+    color: var(--text-muted);
+    background: transparent;
+    border: 1px solid var(--border, rgba(255, 255, 255, 0.12));
+    border-radius: 999px;
+    padding: 0.2rem 0.6rem;
+    cursor: pointer;
+    transition: all var(--transition);
+  }
+
+  .target-chip:hover {
+    color: var(--text-primary);
+  }
+
+  .target-chip.active {
+    color: var(--gold);
+    border-color: var(--gold);
+    background: rgba(245, 197, 66, 0.1);
+  }
+
+  .target-note {
+    font-size: 0.6875rem;
+    line-height: 1.35;
+    color: var(--text-muted);
+    padding: 0.125rem 0.5rem;
+    white-space: normal;
   }
 
   .row {

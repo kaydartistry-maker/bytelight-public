@@ -34,6 +34,8 @@ import {
   type CodexDaemonRuntimeOptions,
 } from './codex-daemon.js';
 import type { AgentRuntimeEvent, AgentTurnInput } from './types.js';
+// A limit notification can set the Codex brake; lift it between tests.
+import { releaseCodexHold } from '../codex-breaker.js';
 
 // ─── Fake daemon connection ─────────────────────────────────────────────
 
@@ -187,6 +189,7 @@ beforeEach(() => {
 
 afterEach(() => {
   _resetDaemonTestOverrides();
+  releaseCodexHold();
 });
 
 // ─── Slice 0: characterization ──────────────────────────────────────────
@@ -475,6 +478,17 @@ describe('InteractiveCodexRuntime — turn lifecycle (characterization)', () => 
     assert.doesNotMatch(context, /message-4\b/);
     assert.match(context, /message-5\b/);
     assert.match(context, /message-34\b/);
+  });
+
+  test('recovery seed names a visitor by who he is, not as this lane', () => {
+    const at = '2026-11-01T00:00:00.000Z';
+    const context = buildCodexRecoveryHistory([
+      { role: 'user', content: 'Who is cooking?', createdAt: at },
+      { role: 'assistant', content: 'Not me.', createdAt: at, companionId: 'companion-c' },
+      { role: 'assistant', content: 'We are.', createdAt: at },
+    ], 'live message');
+    assert.match(context, /Companion-c: Not me\./);
+    assert.match(context, /Assistant: We are\./);
   });
 
   test('abort via AbortSignal → done{aborted}, no text emitted', async () => {

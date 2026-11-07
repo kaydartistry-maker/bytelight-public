@@ -8,6 +8,7 @@ import { join, basename, extname } from 'path';
 import { mkdirSync, existsSync, readFileSync, readdirSync, renameSync, unlinkSync, writeFileSync, statSync, rmSync } from 'fs';
 import { randomUUID, createHash } from 'crypto';
 import multer from 'multer';
+import sharp from 'sharp';
 import { getBytelightConfig, PROJECT_ROOT } from '../config.js';
 import { copyToGallery } from '../services/image-gen.js';
 
@@ -25,6 +26,22 @@ const MASK_PAINT_SCRIPT = join(TOOLS_DIR, 'mask-paint.py');
 function attachmentFilename(name: string): string {
   const cleaned = name.replace(/[^\w.\- ]+/g, '_').replace(/\s+/g, ' ').trim();
   return cleaned || 'download';
+}
+
+// Several routes interpolate request-supplied values straight into an
+// ffmpeg -vf filtergraph string (crop=W:H:X:Y, scale=W:H, colorkey/chromakey).
+// A value that isn't actually a finite number or a 6-digit hex string can
+// smuggle extra filter syntax into that graph, so every value crossing that
+// boundary goes through one of these two checks first.
+function finiteNumberOrNull(value: unknown): number | null {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
+}
+
+function hexColorOrNull(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const hex = value.replace('#', '');
+  return /^[0-9a-fA-F]{6}$/.test(hex) ? hex : null;
 }
 
 /** The exporter needs only Pillow, so the system interpreter usually suffices. */
@@ -107,13 +124,23 @@ function clamp01(n: number): number {
   return Math.min(1, Math.max(0, n));
 }
 
-function drawTextArgs(input: string, drawTextFilter: string, output: string): string[] {
+/**
+ * ffmpeg's paletteuse dithers by default (sierra2_4a). Left unspecified, "dither
+ * off" in the Studio only reached the later gifsicle pass — by then the speckle
+ * was already encoded into the frames and could never be removed. The choice has
+ * to be made here, at the first quantization, or it is not a choice at all.
+ */
+export function paletteUseChain(dither: boolean): string {
+  return `paletteuse=alpha_threshold=128:dither=${dither ? 'sierra2_4a' : 'none'}`;
+}
+
+export function drawTextArgs(input: string, drawTextFilter: string, output: string, dither: boolean): string[] {
   return [
     '-i', input,
     '-filter_complex',
     `[0:v]format=rgba,${drawTextFilter},split[a][b];`
       + '[b]palettegen=reserve_transparent=1:stats_mode=diff[p];'
-      + '[a][p]paletteuse=alpha_threshold=128',
+      + `[a][p]${paletteUseChain(dither)}`,
     '-gifflags', '-offsetting',
     '-y', output,
   ];
@@ -224,22 +251,12 @@ router.post('/gif/extract-frames', upload.single('file'), async (req, res) => {
     const outputPattern = join(sessionDir, 'frame-%04d.png');
 
     // Use ffmpeg to extract frames
-    await new Promise<void>((resolve, reject) => {
-      const args = [
-        '-i', inputPath,
-        '-vf', `fps=${fps}`,
-        '-frames:v', String(maxFrames),
-        outputPattern,
-      ];
-      const proc = spawn('ffmpeg', args);
-      let stderr = '';
-      proc.stderr.on('data', (d) => stderr += d.toString());
-      proc.on('close', (code) => {
-        if (code === 0) resolve();
-        else reject(new Error(`ffmpeg exited ${code}: ${stderr.slice(-500)}`));
-      });
-      proc.on('error', reject);
-    });
+    await runProc('ffmpeg', [
+      '-i', inputPath,
+      '-vf', `fps=${fps}`,
+      '-frames:v', String(maxFrames),
+      outputPattern,
+    ], (r) => `ffmpeg exited ${r.code}: ${r.stderr.slice(-500)}`);
 
     // Clean up uploaded file
     try { unlinkSync(inputPath); } catch {}
@@ -318,11 +335,7 @@ router.post('/gif/upload-frame', upload.single('file'), async (req, res) => {
       writeFileSync(destPath, data);
     } else {
       // Convert with ffmpeg
-      await new Promise<void>((resolve, reject) => {
-        const proc = spawn('ffmpeg', ['-i', req.file!.path, '-y', destPath]);
-        proc.on('close', (code) => code === 0 ? resolve() : reject(new Error(`Convert failed: ${code}`)));
-        proc.on('error', reject);
-      });
+      await runProc('ffmpeg', ['-i', req.file!.path, '-y', destPath], (r) => `Convert failed: ${r.code}`);
     }
 
     // Clean up temp file
@@ -383,20 +396,27 @@ router.post('/gif/save-frame/:sessionId/:filename', (req, res) => {
 });
 
 /**
- * Crop all frames in a session
+ * Crop frames in a session
  * POST /api/gif/crop/:sessionId
- * Body: { x: number, y: number, width: number, height: number }
+ * Body: { x: number, y: number, width: number, height: number, filename? }
+ * With filename, only that frame is cropped; without it, every frame is.
+ * Stashed original-* counterparts are cropped alongside so revert and
+ * mask-paint stay aligned with the frames they back.
  */
 router.post('/gif/crop/:sessionId', async (req, res) => {
   const { sessionId } = req.params;
-  const { x = 0, y = 0, width, height } = req.body;
+  const { x: rawX = 0, y: rawY = 0, width, height, filename } = req.body;
 
-  if (!width || !height) {
-    res.status(400).json({ error: 'width and height required' });
+  const cropWidth = finiteNumberOrNull(width);
+  const cropHeight = finiteNumberOrNull(height);
+  const cropX = finiteNumberOrNull(rawX);
+  const cropY = finiteNumberOrNull(rawY);
+  if (cropWidth === null || cropHeight === null || cropX === null || cropY === null) {
+    res.status(400).json({ error: 'x, y, width, and height must be numbers' });
     return;
   }
 
-  if (sessionId.includes('..')) {
+  if (sessionId.includes('..') || (typeof filename === 'string' && filename.includes('..'))) {
     res.status(400).json({ error: 'Invalid path' });
     return;
   }
@@ -408,29 +428,24 @@ router.post('/gif/crop/:sessionId', async (req, res) => {
   }
 
   try {
-    const frames = readdirSync(sessionDir).filter(f => f.startsWith('frame-') && f.endsWith('.png'));
+    const frames = readdirSync(sessionDir).filter(f => f.startsWith('frame-') && f.endsWith('.png'))
+      .filter(f => typeof filename !== 'string' || f === filename);
+    const targets = frames.flatMap(frame => {
+      const original = `original-${frame}`;
+      return existsSync(join(sessionDir, original)) ? [frame, original] : [frame];
+    });
 
-    for (const frame of frames) {
+    for (const frame of targets) {
       const framePath = join(sessionDir, frame);
       const tempPath = join(sessionDir, `crop-temp-${frame}`);
 
-      await new Promise<void>((resolve, reject) => {
-        const args = [
-          '-i', framePath,
-          '-vf', `crop=${width}:${height}:${x}:${y}`,
-          '-c:v', 'png',
-          '-y',
-          tempPath,
-        ];
-        const proc = spawn('ffmpeg', args);
-        let stderr = '';
-        proc.stderr.on('data', (d) => stderr += d.toString());
-        proc.on('close', (code) => {
-          if (code === 0) resolve();
-          else reject(new Error(`ffmpeg crop failed: ${stderr.slice(-500)}`));
-        });
-        proc.on('error', reject);
-      });
+      await runProc('ffmpeg', [
+        '-i', framePath,
+        '-vf', `crop=${cropWidth}:${cropHeight}:${cropX}:${cropY}`,
+        '-c:v', 'png',
+        '-y',
+        tempPath,
+      ], (r) => `ffmpeg crop failed: ${r.stderr.slice(-500)}`);
 
       // Replace original with cropped version
       const data = readFileSync(tempPath);
@@ -559,13 +574,7 @@ router.post('/gif/cutout/:sessionId/:filename', async (req, res) => {
   if (Number.isFinite(cut) && cut > 0) args.push('--threshold', String(Math.min(1, cut)));
 
   try {
-    const stderr = await new Promise<string>((resolve, reject) => {
-      const proc = spawn(runtime.python, args);
-      let err = '';
-      proc.stderr.on('data', (chunk) => { err += chunk.toString(); });
-      proc.on('close', (code) => code === 0 ? resolve(err) : reject(new Error(err.trim() || `cutout exited ${code}`)));
-      proc.on('error', reject);
-    });
+    const { stderr } = await runProc(runtime.python, args, (r) => r.stderr.trim() || `cutout exited ${r.code}`);
     if (stderr.trim()) console.warn('[gif] cutout notes:', stderr.trim());
 
     writeFileSync(framePath, readFileSync(outputPath));
@@ -651,15 +660,7 @@ router.post('/gif/still-export/:sessionId/:filename', async (req, res) => {
   if (!allowReduce) args.push('--no-reduce');
 
   try {
-    const stdout = await new Promise<string>((resolve, reject) => {
-      const proc = spawn(stillExportPython(), args);
-      let out = '';
-      let err = '';
-      proc.stdout.on('data', (chunk) => { out += chunk.toString(); });
-      proc.stderr.on('data', (chunk) => { err += chunk.toString(); });
-      proc.on('close', (code) => code === 0 ? resolve(out) : reject(new Error(err.trim() || `export exited ${code}`)));
-      proc.on('error', reject);
-    });
+    const { stdout } = await runProc(stillExportPython(), args, (r) => r.stderr.trim() || `export exited ${r.code}`);
 
     let stats: Record<string, unknown> = {};
     try { stats = JSON.parse(stdout.trim().split('\n').pop() || '{}'); } catch { /* report what we can */ }
@@ -735,13 +736,7 @@ router.post(
     if (erase) args.push('--erase', erase.path);
 
     try {
-      await new Promise<void>((resolve, reject) => {
-        const proc = spawn(stillExportPython(), args);
-        let err = '';
-        proc.stderr.on('data', (chunk) => { err += chunk.toString(); });
-        proc.on('close', (code) => code === 0 ? resolve() : reject(new Error(err.trim() || `mask-paint exited ${code}`)));
-        proc.on('error', reject);
-      });
+      await runProc(stillExportPython(), args, (r) => r.stderr.trim() || `mask-paint exited ${r.code}`);
 
       writeFileSync(framePath, readFileSync(outputPath));
       try { unlinkSync(outputPath); } catch { /* best effort */ }
@@ -763,8 +758,9 @@ router.post('/gif/chroma-key/:sessionId/:filename', async (req, res) => {
   const { sessionId, filename } = req.params;
   const { color, tolerance = 0.3, blend = 0.1, mode = 'chroma' } = req.body;
 
-  if (!color) {
-    res.status(400).json({ error: 'color required (hex format)' });
+  const hex = hexColorOrNull(color);
+  if (!hex) {
+    res.status(400).json({ error: 'color required as a 6-digit hex string' });
     return;
   }
 
@@ -783,12 +779,6 @@ router.post('/gif/chroma-key/:sessionId/:filename', async (req, res) => {
   try {
     const outputPath = join(sessionDir, `chroma-${filename}`);
 
-    // Parse hex color to RGB
-    const hex = color.replace('#', '');
-    const r = parseInt(hex.slice(0, 2), 16);
-    const g = parseInt(hex.slice(2, 4), 16);
-    const b = parseInt(hex.slice(4, 6), 16);
-
     // Similarity is 0-1 where 0.01 is very tight and 0.5 is loose
     const similarity = Math.min(1, Math.max(0.01, Number(tolerance)));
     const softness = Math.min(1, Math.max(0, Number(blend)));
@@ -799,23 +789,13 @@ router.post('/gif/chroma-key/:sessionId/:filename', async (req, res) => {
     const keyOriginal = join(sessionDir, `original-${filename}`);
     if (!existsSync(keyOriginal)) writeFileSync(keyOriginal, readFileSync(framePath));
 
-    await new Promise<void>((resolve, reject) => {
-      const args = [
-        '-i', keyOriginal,
-        '-vf', `${filter}=0x${hex.toUpperCase()}:${similarity}:${softness}`,
-        '-c:v', 'png',
-        '-y',
-        outputPath,
-      ];
-      const proc = spawn('ffmpeg', args);
-      let stderr = '';
-      proc.stderr.on('data', (d) => stderr += d.toString());
-      proc.on('close', (code) => {
-        if (code === 0) resolve();
-        else reject(new Error(`ffmpeg chromakey failed: ${stderr.slice(-500)}`));
-      });
-      proc.on('error', reject);
-    });
+    await runProc('ffmpeg', [
+      '-i', keyOriginal,
+      '-vf', `${filter}=0x${hex.toUpperCase()}:${similarity}:${softness}`,
+      '-c:v', 'png',
+      '-y',
+      outputPath,
+    ], (r) => `ffmpeg chromakey failed: ${r.stderr.slice(-500)}`);
 
     // Replace original with keyed version
     const data = readFileSync(outputPath);
@@ -838,26 +818,153 @@ const FIT_LADDER: Array<[colors: number, lossy: number]> = [
   [256, 60], [200, 90], [128, 120], [96, 160], [64, 200], [48, 200], [32, 200],
 ];
 
-async function compressToFit(final: string, maxBytes: number, dir: string): Promise<boolean> {
-  if (statSync(final).size <= maxBytes) return false;
-  let best: { path: string; size: number } | null = null;
+export type FitOptions = {
+  colors?: number;
+  lossy?: number;
+  dither?: boolean;
+  /** Explicit permission to reduce colors / raise lossy beyond the user's settings. */
+  allowDegrade?: boolean;
+};
+
+export type FitReport = {
+  /** The file was over target, so fitting ran. */
+  attempted: boolean;
+  /** The file on disk was replaced by a smaller candidate. */
+  applied: boolean;
+  /** True when a plain lossless re-optimization was the pass that got kept. */
+  lossless: boolean;
+  /** Degradation actually used by the kept candidate; null = user's own settings untouched. */
+  colors: number | null;
+  lossy: number | null;
+  dither: boolean;
+  fit: boolean;
+  sizeBytes: number;
+};
+
+/**
+ * The ladder never grants itself more quality than the user chose: colors only
+ * go down from the user's slider, lossy only up from it, and dither follows the
+ * user's checkbox instead of being forced on. Degrading past the user's own
+ * settings at all requires allowDegrade — the old ladder's silent march to
+ * lossy 200 is the specific behavior this replaces.
+ */
+export function buildFitLadder(opts: FitOptions): Array<{ colors: number; lossy: number; dither: boolean }> {
+  const userColors = typeof opts.colors === 'number' && opts.colors >= 2 && opts.colors <= 256 ? opts.colors : 256;
+  const userLossy = typeof opts.lossy === 'number' && opts.lossy > 0 ? Math.min(200, opts.lossy) : 0;
+  const dither = opts.dither === true;
+  const rungs: Array<{ colors: number; lossy: number; dither: boolean }> = [];
+  for (const [colors, lossy] of FIT_LADDER) {
+    const rung = { colors: Math.min(colors, userColors), lossy: Math.min(200, Math.max(lossy, userLossy)), dither };
+    const last = rungs[rungs.length - 1];
+    if (!last || last.colors !== rung.colors || last.lossy !== rung.lossy) rungs.push(rung);
+  }
+  return rungs;
+}
+
+async function compressToFit(final: string, maxBytes: number, dir: string, opts: FitOptions = {}): Promise<FitReport> {
+  const originalSize = statSync(final).size;
+  const report: FitReport = {
+    attempted: false, applied: false, lossless: false,
+    colors: null, lossy: null, dither: false,
+    fit: originalSize <= maxBytes, sizeBytes: originalSize,
+  };
+  if (report.fit) return report;
+  report.attempted = true;
+
+  type Candidate = { path: string; size: number; rung: { colors: number; lossy: number; dither: boolean } | null };
+  let best: Candidate | null = null;
   const temps: string[] = [];
   try {
-    for (const [colors, lossy] of FIT_LADDER) {
-      const tmp = join(dir, `${randomUUID()}-fit.gif`);
-      temps.push(tmp);
-      await runGifsicle(['-O3', '--colors', String(colors), '--dither', `--lossy=${lossy}`, '-o', tmp, final]);
-      const size = statSync(tmp).size;
-      if (!best || size < best.size) best = { path: tmp, size };
-      if (size <= maxBytes) break;
+    // Lossless first: the create pass runs gifsicle without -O, so a plain -O3
+    // re-optimization often buys real bytes without touching quality at all.
+    const losslessTmp = join(dir, `${randomUUID()}-fit.gif`);
+    temps.push(losslessTmp);
+    await runGifsicle(['-O3', '-o', losslessTmp, final]);
+    const losslessSize = statSync(losslessTmp).size;
+    if (losslessSize < originalSize) best = { path: losslessTmp, size: losslessSize, rung: null };
+
+    if ((!best || best.size > maxBytes) && opts.allowDegrade) {
+      for (const rung of buildFitLadder(opts)) {
+        const tmp = join(dir, `${randomUUID()}-fit.gif`);
+        temps.push(tmp);
+        const args = ['-O3', '--colors', String(rung.colors)];
+        if (rung.dither) args.push('--dither');
+        if (rung.lossy > 0) args.push(`--lossy=${rung.lossy}`);
+        args.push('-o', tmp, final);
+        await runGifsicle(args);
+        const size = statSync(tmp).size;
+        if (!best || size < best.size) best = { path: tmp, size, rung };
+        if (size <= maxBytes) break;
+      }
     }
-    if (!best) return false;
+
+    if (!best) return report; // nothing beat the original; keep it and report honestly
     renameSync(best.path, final);
-    return true;
+    report.applied = true;
+    report.lossless = best.rung === null;
+    report.colors = best.rung?.colors ?? null;
+    report.lossy = best.rung?.lossy ?? null;
+    report.dither = best.rung?.dither ?? false;
+    report.sizeBytes = best.size;
+    report.fit = best.size <= maxBytes;
+    return report;
   } finally {
     for (const tmp of temps) {
       if (tmp !== best?.path) rmSync(tmp, { force: true });
     }
+  }
+}
+
+/** Actual pixel dimensions of a rendered output, however it was encoded. */
+async function imageDimensions(path: string): Promise<{ width: number | null; height: number | null }> {
+  if (path.toLowerCase().endsWith('.gif')) {
+    try {
+      const info = await runGifsicle(['--info', path]);
+      const match = info.match(/logical screen (\d+)x(\d+)/);
+      if (match) return { width: Number(match[1]), height: Number(match[2]) };
+    } catch { /* fall through to ffprobe */ }
+  }
+  try {
+    const { stdout: out } = await runProc('ffprobe', [
+      '-v', 'error', '-select_streams', 'v:0',
+      '-show_entries', 'stream=width,height', '-of', 'csv=p=0', path,
+    ], (r) => `ffprobe exited ${r.code}`);
+    const [w, h] = out.trim().split(/[,\n]/).map(Number);
+    if (Number.isFinite(w) && Number.isFinite(h)) return { width: w, height: h };
+  } catch { /* dimensions stay unknown */ }
+  return { width: null, height: null };
+}
+
+/**
+ * Scale every frame's own delay instead of flattening the animation to one
+ * uniform delay read off the first frame. Duplicate removal folds delays into
+ * the surviving frames, so a uniform -d silently destroys that timing.
+ * Explode-and-reassemble is the same pattern dropDuplicateFrames uses; disposal
+ * and loop count are restated because gifsicle does not reliably carry them.
+ */
+async function scaleFrameDelays(inputPath: string, outputPath: string, workDir: string, multiplier: number): Promise<boolean> {
+  const scratch = join(workDir, `speed-${randomUUID()}`);
+  mkdirSync(scratch, { recursive: true });
+  try {
+    const info = await runGifsicle(['--info', inputPath]);
+    const delays = parseDelays(info);
+    const loopsForever = /loop forever/.test(info);
+    await runGifsicle(['--unoptimize', '--explode', '-o', join(scratch, 'f'), inputPath]);
+    const gifFrames = readdirSync(scratch).filter(f => f.startsWith('f.')).sort();
+    if (gifFrames.length < 1) return false;
+
+    const args: string[] = ['--disposal=background'];
+    if (loopsForever) args.push('--loopcount=forever');
+    gifFrames.forEach((frame, index) => {
+      const delay = delays[index] ?? 10;
+      // Browsers treat <2cs as "ignore and play at ~10fps", so 2 is the floor.
+      args.push(`--delay=${Math.max(2, Math.round(delay * multiplier))}`, join(scratch, frame));
+    });
+    args.push('-o', outputPath);
+    await runGifsicle(args);
+    return true;
+  } finally {
+    rmSync(scratch, { recursive: true, force: true });
   }
 }
 
@@ -871,10 +978,15 @@ router.post('/gif/create', async (req, res) => {
   const {
     sessionId, frames, fps = 10, loop = true, optimize = true, width, height,
     fit = false, speed, lossy, colors, dither = false, text, maxBytes,
+    preserveColors, autoFit = false, format = 'gif',
   } = req.body;
 
   if (!sessionId || !frames?.length) {
     res.status(400).json({ error: 'sessionId and frames required' });
+    return;
+  }
+  if (format !== 'gif' && format !== 'apng') {
+    res.status(400).json({ error: "format must be 'gif' or 'apng'" });
     return;
   }
 
@@ -887,18 +999,28 @@ router.post('/gif/create', async (req, res) => {
   if (!sessionHasRoom(res, sessionDir, 0)) return;
   const requestedMaxBytes = Number(maxBytes);
   const hasTarget = Number.isFinite(requestedMaxBytes) && requestedMaxBytes > 0;
+  // `fit` historically meant both "pad to the box" and "keep colors / skip the
+  // ladder". Padding stays on `fit`; quality preservation reads the explicit
+  // field when a caller sends it and falls back to `fit` for older callers.
+  const preserve = typeof preserveColors === 'boolean' ? preserveColors : fit;
 
   try {
     const outputId = randomUUID();
     const rawGif = join(sessionDir, `${outputId}-raw.gif`);
-    const finalGif = join(sessionDir, `${outputId}.gif`);
+    const finalGif = join(sessionDir, `${outputId}.${format}`);
     const paletteFile = join(sessionDir, `${outputId}-palette.png`);
 
     // Build filter string with optional scaling
     let scaleFilter = '';
     if (width || height) {
-      const w = width || -1;
-      const h = height || -1;
+      const parsedWidth = width ? finiteNumberOrNull(width) : null;
+      const parsedHeight = height ? finiteNumberOrNull(height) : null;
+      if ((width && parsedWidth === null) || (height && parsedHeight === null)) {
+        res.status(400).json({ error: 'width and height must be numbers' });
+        return;
+      }
+      const w = parsedWidth ?? -1;
+      const h = parsedHeight ?? -1;
       scaleFilter = fit && width && height
         ? `scale=${w}:${h}:force_original_aspect_ratio=decrease:flags=lanczos,pad=${w}:${h}:(ow-iw)/2:(oh-ih)/2:color=0x00000000,`
         : `scale=${w}:${h}:flags=lanczos,`;
@@ -908,35 +1030,100 @@ router.post('/gif/create', async (req, res) => {
     // First, create symlinks with sequential names to handle arbitrary filenames
     const seqDir = join(sessionDir, `seq-${outputId}`);
     mkdirSync(seqDir, { recursive: true });
+
+    // EVERY FRAME HAS TO BE THE SAME SIZE BEFORE FFMPEG SEES IT.
+    // The image2 demuxer reads the first picture, fixes the stream size from it,
+    // and dies on the first one that differs — with an "internal bug, should not
+    // have happened" and a frame number, which is the only clue that the picture
+    // at that index was a different shape. Extracted video frames always match;
+    // hand-picked images almost never do. So the canvas is the largest width and
+    // the largest height across the set, and anything smaller is centred on it
+    // with transparent padding rather than stretched.
+    const sizes = await Promise.all(frames.map(async (f: string) => {
+      const src = join(sessionDir, f);
+      if (!existsSync(src)) return null;
+      try {
+        const meta = await sharp(src).metadata();
+        return { width: meta.width || 0, height: meta.height || 0 };
+      } catch {
+        return null;
+      }
+    }));
+    const canvasW = Math.max(1, ...sizes.map((s) => s?.width || 0));
+    const canvasH = Math.max(1, ...sizes.map((s) => s?.height || 0));
+
     for (let i = 0; i < frames.length; i++) {
       const src = join(sessionDir, frames[i]);
       const dst = join(seqDir, `frame${String(i).padStart(5, '0')}.png`);
-      if (existsSync(src)) {
-        const data = readFileSync(src);
-        writeFileSync(dst, data);
+      if (!existsSync(src)) continue;
+      const size = sizes[i];
+      if (size && size.width === canvasW && size.height === canvasH) {
+        // THE SAME SIZE IS NOT THE SAME FORMAT, and ffmpeg cares about both.
+        // This used to copy the bytes straight through, which is faster and
+        // wrong: frames extracted from a video are RGB, while anything sharp
+        // has touched comes back RGBA. Mix the two in one sequence and the
+        // filter graph reconfigures halfway and dies with "Internal bug, should
+        // not have happened" — which explainFfmpegFailure reads as a size
+        // mismatch, sending the user to fix a thing that was never broken. Import a
+        // video, add a still, press create: that was the whole bug.
+        await sharp(src).ensureAlpha().png().toFile(dst);
+        continue;
       }
+      // withoutEnlargement: a smaller picture sits on the canvas at its own
+      // size rather than being blown up to fill it. Upscaling a 200px sticker
+      // to sit beside a 1000px photo makes the whole set soft to rescue one
+      // frame's framing, and softness cannot be undone later. Flip this to
+      // false if filling the canvas ever matters more than staying sharp.
+      await sharp(src)
+        .resize(canvasW, canvasH, {
+          fit: 'contain',
+          withoutEnlargement: true,
+          background: { r: 0, g: 0, b: 0, alpha: 0 },
+        })
+        .ensureAlpha()
+        .png()
+        .toFile(dst);
     }
 
+
     const inputPattern = join(seqDir, 'frame%05d.png');
+    const adjustments: string[] = [];
+
+    // Build the caption filter once — the GIF path applies it in its own
+    // palette-preserving pass, the APNG path inlines it into the render.
+    let drawTextFilter = '';
+    if (text?.content) {
+      const { content, position = 'bottom', fontSize = 24, fontColor = 'white', borderColor = 'black', fontFamily = 'DejaVu Sans', anchor } = text;
+      const { posX, posY } = textPositionExprs({ position, anchor });
+      const escapedText = content.replace(/\\/g, '\\\\').replace(/'/g, "'\\''").replace(/:/g, '\\:');
+      const escapedFont = fontFamily.replace(/:/g, '\\:');
+      drawTextFilter = `drawtext=text='${escapedText}':font='${escapedFont}':fontsize=${fontSize}:fontcolor=${fontColor}:${posX}:${posY}:borderw=2:bordercolor=${borderColor}`;
+    }
+
+    if (format === 'apng') {
+      // APNG is genuinely full color — there is no palette step to limit it, and
+      // it is the animated format Discord actually accepts for full-color
+      // stickers. A "keep colors" GIF was never able to keep this promise.
+      const clampedSpeed = typeof speed === 'number' && speed !== 1 ? Math.min(4, Math.max(0.25, speed)) : 1;
+      const chain = `${scaleFilter}format=rgba${drawTextFilter ? `,${drawTextFilter}` : ''}`;
+      await runProc('ffmpeg', [
+        '-framerate', String((Number(fps) || 10) * clampedSpeed),
+        '-i', inputPattern,
+        '-lavfi', chain,
+        '-plays', loop ? '0' : '1',
+        '-f', 'apng',
+        '-y', finalGif,
+      ], (r) => `ffmpeg apng failed: ${r.stderr.slice(-500)}`);
+    } else {
 
     // Step 1: Generate palette (needed for transparency)
-    await new Promise<void>((resolve, reject) => {
-      const args = [
-        '-framerate', String(fps),
-        '-i', inputPattern,
-        '-vf', `${scaleFilter}palettegen=reserve_transparent=1`,
-        '-y',
-        paletteFile,
-      ];
-      const proc = spawn('ffmpeg', args);
-      let stderr = '';
-      proc.stderr.on('data', (d) => stderr += d.toString());
-      proc.on('close', (code) => {
-        if (code === 0) resolve();
-        else reject(new Error(`ffmpeg palette failed: ${stderr.slice(-500)}`));
-      });
-      proc.on('error', reject);
-    });
+    await runProc('ffmpeg', [
+      '-framerate', String(fps),
+      '-i', inputPattern,
+      '-vf', `${scaleFilter}palettegen=reserve_transparent=1`,
+      '-y',
+      paletteFile,
+    ], (r) => `ffmpeg palette failed: ${r.stderr.slice(-500)}`);
 
     // Step 2: Create GIF using palette
     // ffmpeg's gif encoder enables `transdiff` and `offsetting` BY DEFAULT — it writes
@@ -945,33 +1132,16 @@ router.post('/gif/create', async (req, res) => {
     // opaque GIF and catastrophic on a transparent one: the areas that should be see-through
     // get filled by the previous frame instead. Removing flags we never passed does nothing —
     // these have to be switched OFF explicitly so every frame is written whole.
-    await new Promise<void>((resolve, reject) => {
-      const args = [
-        '-framerate', String(fps),
-        '-i', inputPattern,
-        '-i', paletteFile,
-        '-lavfi', `${scaleFilter}paletteuse=alpha_threshold=128`,
-        '-gifflags', '-transdiff-offsetting',
-        '-loop', loop ? '0' : '-1',
-        '-y',
-        rawGif,
-      ];
-      const proc = spawn('ffmpeg', args);
-      let stderr = '';
-      proc.stderr.on('data', (d) => stderr += d.toString());
-      proc.on('close', (code) => {
-        if (code === 0) resolve();
-        else reject(new Error(`ffmpeg gif failed: ${stderr.slice(-500)}`));
-      });
-      proc.on('error', reject);
-    });
-
-    // Cleanup temp files
-    try { unlinkSync(paletteFile); } catch {}
-    try {
-      for (const f of readdirSync(seqDir)) unlinkSync(join(seqDir, f));
-      require('fs').rmdirSync(seqDir);
-    } catch {}
+    await runProc('ffmpeg', [
+      '-framerate', String(fps),
+      '-i', inputPattern,
+      '-i', paletteFile,
+      '-lavfi', `${scaleFilter}${paletteUseChain(dither === true)}`,
+      '-gifflags', '-transdiff-offsetting',
+      '-loop', loop ? '0' : '-1',
+      '-y',
+      rawGif,
+    ], (r) => `ffmpeg gif failed: ${r.stderr.slice(-500)}`);
 
     // GIF transparency means "keep whatever pixel was already there", so every frame of a
     // transparent animation needs disposal method 2 (restore to background) or the previous
@@ -991,96 +1161,95 @@ router.post('/gif/create', async (req, res) => {
     }
     gifsicleArgs.push('-o', finalGif, rawGif);
 
-    await new Promise<void>((resolve, reject) => {
-      const proc = spawn('gifsicle', gifsicleArgs);
-      let stderr = '';
-      proc.stderr.on('data', (d) => stderr += d.toString());
-      proc.on('close', (code) => {
-        if (code === 0) resolve();
-        else reject(new Error(`gifsicle failed: ${stderr || code}`));
-      });
-      proc.on('error', reject);
-    });
+    await runProc('gifsicle', gifsicleArgs, (r) => `gifsicle failed: ${r.stderr || r.code}`);
     try { unlinkSync(rawGif); } catch {}
 
-    // Apply speed change if requested
+    // Apply speed change if requested — scaling every frame's own delay rather
+    // than flattening the animation to one delay read off the first frame.
     if (typeof speed === 'number' && speed !== 1) {
       const clampedSpeed = Math.min(4, Math.max(0.25, speed));
-      const delayMultiplier = 1 / clampedSpeed;
       const speedTempGif = join(sessionDir, `${outputId}-speed.gif`);
-
-      // Get current delay
-      const infoProc = spawn('gifsicle', ['--info', finalGif]);
-      let info = '';
-      infoProc.stdout.on('data', d => info += d.toString());
-      infoProc.stderr.on('data', d => info += d.toString());
-      await new Promise<void>((resolve) => infoProc.on('close', resolve));
-
-      const delayMatch = info.match(/delay (\d+\.?\d*)s/);
-      const currentDelay = delayMatch ? parseFloat(delayMatch[1]) : 0.1;
-      const newDelay = Math.round(currentDelay * delayMultiplier * 100);
-
-      await new Promise<void>((resolve, reject) => {
-        const args = ['-d', String(Math.max(2, newDelay)), '-O3', '-o', speedTempGif, finalGif];
-        const proc = spawn('gifsicle', args);
-        proc.on('close', (code) => {
-          if (code === 0) resolve();
-          else reject(new Error(`gifsicle speed failed: ${code}`));
-        });
-        proc.on('error', reject);
-      });
-      // Replace original
-      const data = readFileSync(speedTempGif);
-      writeFileSync(finalGif, data);
-      try { unlinkSync(speedTempGif); } catch {}
+      if (await scaleFrameDelays(finalGif, speedTempGif, sessionDir, 1 / clampedSpeed)) {
+        writeFileSync(finalGif, readFileSync(speedTempGif));
+        try { unlinkSync(speedTempGif); } catch {}
+      }
     }
 
     // Apply text overlay if requested
-    if (text?.content) {
+    if (drawTextFilter) {
       const textTempGif = join(sessionDir, `${outputId}-text.gif`);
-      const { content, position = 'bottom', fontSize = 24, fontColor = 'white', borderColor = 'black', fontFamily = 'DejaVu Sans', anchor } = text;
-
-      const { posX, posY } = textPositionExprs({ position, anchor });
-
-      const escapedText = content.replace(/\\/g, '\\\\').replace(/'/g, "'\\''").replace(/:/g, '\\:');
-      const escapedFont = fontFamily.replace(/:/g, '\\:');
-      const drawTextFilter = `drawtext=text='${escapedText}':font='${escapedFont}':fontsize=${fontSize}:fontcolor=${fontColor}:${posX}:${posY}:borderw=2:bordercolor=${borderColor}`;
-
-      await new Promise<void>((resolve, reject) => {
-        const args = drawTextArgs(finalGif, drawTextFilter, textTempGif);
-        const proc = spawn('ffmpeg', args);
-        let stderr = '';
-        proc.stderr.on('data', d => stderr += d.toString());
-        proc.on('close', (code) => {
-          if (code === 0) resolve();
-          else reject(new Error(`ffmpeg text failed: ${stderr.slice(-500)}`));
-        });
-        proc.on('error', reject);
-      });
+      await runProc('ffmpeg', drawTextArgs(finalGif, drawTextFilter, textTempGif, dither === true),
+        (r) => `ffmpeg text failed: ${r.stderr.slice(-500)}`);
       // Replace original
       const data = readFileSync(textTempGif);
       writeFileSync(finalGif, data);
       try { unlinkSync(textTempGif); } catch {}
     }
 
-    // Preserve-color renders report the target without palette reduction; regular presets use the fit ladder.
-    const fitApplied = hasTarget && !fit ? await compressToFit(finalGif, requestedMaxBytes, sessionDir) : false;
+    } // end GIF-specific pipeline
 
-    // Get file size
+    // Cleanup temp files
+    try { unlinkSync(paletteFile); } catch {}
+    try {
+      for (const f of readdirSync(seqDir)) unlinkSync(join(seqDir, f));
+      rmSync(seqDir, { recursive: true });
+    } catch {}
+
+    // Fitting runs whenever a GIF has a byte target. Without explicit permission
+    // (autoFit) it is limited to lossless re-optimization — quality degradation
+    // past the user's own settings never happens silently, and the ladder that
+    // does run is capped by those settings instead of a hardcoded march to
+    // lossy 200. APNG has no palette to reduce, so it reports honestly instead.
+    let fitReport: FitReport | null = null;
+    if (hasTarget && format === 'gif') {
+      fitReport = await compressToFit(finalGif, requestedMaxBytes, sessionDir, {
+        colors: typeof colors === 'number' ? colors : undefined,
+        lossy: typeof lossy === 'number' ? lossy : undefined,
+        dither: dither === true,
+        allowDegrade: autoFit === true && !preserve,
+      });
+      if (fitReport.applied && fitReport.lossless) adjustments.push('lossless re-optimization applied');
+      if (fitReport.colors !== null) {
+        adjustments.push(`auto-fit reduced quality to ${fitReport.colors} colors, lossy ${fitReport.lossy}`);
+      }
+      if (fitReport.attempted && !fitReport.fit) {
+        adjustments.push(autoFit === true && !preserve
+          ? 'still over target at the lowest permitted quality'
+          : 'over target — enable auto-fit to allow quality reduction, or lower colors/size yourself');
+      }
+    }
+
+    // Get file size and real dimensions — never report a size the file doesn't have.
     const stats = statSync(finalGif);
     const sizeBytes = stats.size;
     const sizeKb = Math.round(sizeBytes / 1024);
     const discordOk = hasTarget ? sizeBytes <= requestedMaxBytes : sizeBytes <= 256 * 1024;
+    const dims = await imageDimensions(finalGif);
+    if (hasTarget && format === 'apng' && sizeBytes > requestedMaxBytes) {
+      adjustments.push('APNG keeps full color and cannot be auto-compressed — reduce dimensions, frames, or fps to fit');
+    }
 
     res.json({
-      url: `/api/gif/output/${sessionId}/${outputId}.gif`,
-      filename: `${outputId}.gif`,
+      url: `/api/gif/output/${sessionId}/${outputId}.${format}`,
+      filename: `${outputId}.${format}`,
+      format,
+      width: dims.width,
+      height: dims.height,
       sizeBytes,
       sizeKb,
       discordOk,
-      fitApplied,
+      fitApplied: fitReport?.applied ?? false,
       targetKb: hasTarget ? Math.round(requestedMaxBytes / 1024) : null,
       fitMet: hasTarget ? sizeBytes <= requestedMaxBytes : null,
+      effective: format === 'apng'
+        ? { colors: null, lossy: 0, dither: false, autoFit: false }
+        : {
+            colors: fitReport?.colors ?? (typeof colors === 'number' ? colors : 256),
+            lossy: fitReport?.lossy ?? (typeof lossy === 'number' ? Math.min(200, Math.max(0, lossy)) : 0),
+            dither: dither === true,
+            autoFit: autoFit === true,
+          },
+      adjustments,
     });
   } catch (err: any) {
     console.error('[gif] create error:', err);
@@ -1088,20 +1257,38 @@ router.post('/gif/create', async (req, res) => {
   }
 });
 
-/** Run gifsicle and resolve with its combined output (--info writes to stdout). */
-function runGifsicle(args: string[]): Promise<string> {
+interface ProcResult {
+  code: number | null;
+  stdout: string;
+  stderr: string;
+}
+
+/**
+ * Spawn a tool, buffer both streams, and settle when it exits. A zero exit
+ * resolves with the output; anything else rejects with the message `failure`
+ * builds, so each call site keeps its own error wording.
+ */
+function runProc(cmd: string, args: string[], failure: (result: ProcResult) => string): Promise<ProcResult> {
   return new Promise((resolve, reject) => {
-    const proc = spawn('gifsicle', args);
-    let out = '';
-    let err = '';
-    proc.stdout.on('data', d => out += d.toString());
-    proc.stderr.on('data', d => err += d.toString());
+    const proc = spawn(cmd, args);
+    let stdout = '';
+    let stderr = '';
+    proc.stdout.on('data', (d) => stdout += d.toString());
+    proc.stderr.on('data', (d) => stderr += d.toString());
     proc.on('close', (code) => {
-      if (code === 0) resolve(out + err);
-      else reject(new Error(`gifsicle failed: ${err.trim() || `exit ${code}`}`));
+      const result = { code, stdout, stderr };
+      if (code === 0) resolve(result);
+      else reject(new Error(failure(result)));
     });
     proc.on('error', reject);
   });
+}
+
+/** Run gifsicle and resolve with its combined output (--info writes to stdout). */
+async function runGifsicle(args: string[]): Promise<string> {
+  const { stdout, stderr } = await runProc('gifsicle', args,
+    (r) => `gifsicle failed: ${r.stderr.trim() || `exit ${r.code}`}`);
+  return stdout + stderr;
 }
 
 /** Per-frame delays in hundredths of a second, in frame order, from `gifsicle --info`. */
@@ -1135,16 +1322,10 @@ async function dropDuplicateFrames(inputPath: string, outputPath: string, workDi
     const delays = parseDelays(info);
     const loopsForever = /loop forever/.test(info);
 
-    await new Promise<void>((resolve, reject) => {
-      const proc = spawn('ffmpeg', [
-        '-loglevel', 'error', '-i', inputPath,
-        '-vsync', 'passthrough', join(scratch, 'p-%05d.png'),
-      ]);
-      let stderr = '';
-      proc.stderr.on('data', d => stderr += d.toString());
-      proc.on('close', code => code === 0 ? resolve() : reject(new Error(`ffmpeg failed: ${stderr.trim() || code}`)));
-      proc.on('error', reject);
-    });
+    await runProc('ffmpeg', [
+      '-loglevel', 'error', '-i', inputPath,
+      '-vsync', 'passthrough', join(scratch, 'p-%05d.png'),
+    ], (r) => `ffmpeg failed: ${r.stderr.trim() || r.code}`);
 
     await runGifsicle(['--unoptimize', '--explode', '-o', join(scratch, 'g'), inputPath]);
 
@@ -1351,10 +1532,14 @@ router.post('/gif/optimize/:sessionId/:filename', async (req, res) => {
     const requestedMaxBytes = Number(maxBytes);
     const hasTarget = Number.isFinite(requestedMaxBytes) && requestedMaxBytes > 0;
     const targetBytes = hasTarget ? Math.min(512 * 1024, requestedMaxBytes) : 256 * 1024;
+    const dims = await imageDimensions(outputPath);
 
     res.json({
       url: `/api/gif/output/${sessionId}/${outputId}.gif`,
       filename: `${outputId}.gif`,
+      format: 'gif',
+      width: dims.width,
+      height: dims.height,
       sizeBytes,
       sizeKb: Math.round(sizeBytes / 1024),
       sizeBeforeKb: Math.round(sizeBefore / 1024),
@@ -1364,6 +1549,11 @@ router.post('/gif/optimize/:sessionId/:filename', async (req, res) => {
       maxKb: Math.round(targetBytes / 1024),
       targetKb: hasTarget ? Math.round(targetBytes / 1024) : null,
       fitMet: hasTarget ? sizeBytes <= targetBytes : null,
+      effective: {
+        colors: typeof colors === 'number' ? colors : null,
+        lossy: typeof lossy === 'number' ? lossy : 0,
+        dither: dither === true,
+      },
     });
   } catch (err: any) {
     console.error('[gif] optimize error:', err);
@@ -1403,50 +1593,29 @@ router.post('/gif/speed/:sessionId/:filename', async (req, res) => {
 
   try {
     const outputId = randomUUID();
-    const outputPath = join(GIF_WORK_DIR, sessionId, `${outputId}.gif`);
+    const sessionDir = join(GIF_WORK_DIR, sessionId);
+    const outputPath = join(sessionDir, `${outputId}.gif`);
 
-    // gifsicle --delay expects 1/100ths of a second
-    // We use --scale-delay to multiply existing delays
-    // Actually gifsicle doesn't have scale-delay, we need to use -d with #all
-    // Better approach: use -d N to set uniform delay across all frames
-
-    // First get current delay info
-    const infoProc = spawn('gifsicle', ['--info', gifPath]);
-    let info = '';
-    infoProc.stdout.on('data', d => info += d.toString());
-    infoProc.stderr.on('data', d => info += d.toString());
-    await new Promise<void>((resolve) => infoProc.on('close', resolve));
-
-    // Parse typical delay (usually in format "delay X.XXs")
-    const delayMatch = info.match(/delay (\d+\.?\d*)s/);
-    const currentDelay = delayMatch ? parseFloat(delayMatch[1]) : 0.1;
-    const newDelay = Math.round(currentDelay * delayMultiplier * 100); // Convert to centiseconds
-
-    await new Promise<void>((resolve, reject) => {
-      const args = [
-        '-d', String(Math.max(2, newDelay)), // Minimum 2 centiseconds
-        '-O3',
-        '-o', outputPath,
-        gifPath,
-      ];
-      const proc = spawn('gifsicle', args);
-      let stderr = '';
-      proc.stderr.on('data', d => stderr += d.toString());
-      proc.on('close', (code) => {
-        if (code === 0) resolve();
-        else reject(new Error(`gifsicle failed: ${stderr || code}`));
-      });
-      proc.on('error', reject);
-    });
+    // Scale each frame's own delay. A uniform -d read off the first frame
+    // destroys accumulated timing — duplicate removal folds dropped frames'
+    // delays into their survivors, and one flat delay erases exactly that.
+    if (!await scaleFrameDelays(gifPath, outputPath, sessionDir, delayMultiplier)) {
+      res.status(500).json({ error: 'Could not read frames to change speed' });
+      return;
+    }
 
     const stats = statSync(outputPath);
     const sizeBytes = stats.size;
     const sizeKb = Math.round(sizeBytes / 1024);
     const discordOk = sizeBytes <= 256 * 1024;
+    const dims = await imageDimensions(outputPath);
 
     res.json({
       url: `/api/gif/output/${sessionId}/${outputId}.gif`,
       filename: `${outputId}.gif`,
+      format: 'gif',
+      width: dims.width,
+      height: dims.height,
       sizeBytes,
       sizeKb,
       discordOk,
@@ -1549,7 +1718,8 @@ router.post('/gif/add-text/:sessionId/:filename', async (req, res) => {
     borderColor = 'black',
     fontFamily = 'DejaVu Sans',
     position = 'bottom', // top, center, bottom
-    anchor // { x, y } as fractions of the frame — a hand-placed position
+    anchor, // { x, y } as fractions of the frame — a hand-placed position
+    dither = false, // the re-quantization here dithers by default unless told not to
   } = req.body;
 
   if (!text) {
@@ -1580,17 +1750,8 @@ router.post('/gif/add-text/:sessionId/:filename', async (req, res) => {
 
     const drawTextFilter = `drawtext=text='${escapedText}':font='${escapedFont}':fontsize=${fontSize}:fontcolor=${fontColor}:${posX}:${posY}:borderw=2:bordercolor=${borderColor}`;
 
-    await new Promise<void>((resolve, reject) => {
-      const args = drawTextArgs(gifPath, drawTextFilter, outputPath);
-      const proc = spawn('ffmpeg', args);
-      let stderr = '';
-      proc.stderr.on('data', d => stderr += d.toString());
-      proc.on('close', (code) => {
-        if (code === 0) resolve();
-        else reject(new Error(`ffmpeg text overlay failed: ${stderr.slice(-500)}`));
-      });
-      proc.on('error', reject);
-    });
+    await runProc('ffmpeg', drawTextArgs(gifPath, drawTextFilter, outputPath, dither === true),
+      (r) => `ffmpeg text overlay failed: ${r.stderr.slice(-500)}`);
 
     const stats = statSync(outputPath);
     const sizeBytes = stats.size;
@@ -1642,7 +1803,9 @@ router.get('/gif/output/:sessionId/:filename', (req, res) => {
  */
 router.post('/gif/keep/:sessionId/:filename', async (req, res) => {
   const { sessionId, filename } = req.params;
-  if (sessionId.includes('..') || filename.includes('..') || basename(filename) !== filename || extname(filename).toLowerCase() !== '.gif') {
+  const ext = extname(filename).toLowerCase();
+  // .apng rides along: the keep-colors sticker lane exports real APNG now.
+  if (sessionId.includes('..') || filename.includes('..') || basename(filename) !== filename || (ext !== '.gif' && ext !== '.apng')) {
     res.status(400).json({ error: 'Invalid GIF path' });
     return;
   }
@@ -1652,7 +1815,7 @@ router.post('/gif/keep/:sessionId/:filename', async (req, res) => {
     return;
   }
   try {
-    const kept = await copyToGallery(source, '.gif', 'gif', {
+    const kept = await copyToGallery(source, ext, 'gif', {
       createdAt: new Date().toISOString(),
       prompt: 'GIF Studio export',
       model: 'GIF Studio',
@@ -1684,7 +1847,7 @@ router.delete('/gif/session/:sessionId', (req, res) => {
       for (const f of readdirSync(sessionDir)) {
         unlinkSync(join(sessionDir, f));
       }
-      require('fs').rmdirSync(sessionDir);
+      rmSync(sessionDir, { recursive: true });
     } catch {}
   }
   res.json({ ok: true });

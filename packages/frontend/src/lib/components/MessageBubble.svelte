@@ -1,10 +1,18 @@
 <script lang="ts">
+  import MessageActionModals from './MessageActionModals.svelte';
+  import { MessageActions } from './messageActions.svelte';
+  import ReactionChips from './ReactionChips.svelte';
+  import ReactionPicker from './ReactionPicker.svelte';
+  import { groupReactions, type Reaction } from '$lib/utils/reactions';
+  import ReadAloudButton from './ReadAloudButton.svelte';
+  import { ReadAloud } from './readAloud.svelte';
+  import AudioPlayer from './AudioPlayer.svelte';
+  import { formatBytes } from '$lib/utils/format';
   import type { Message, MessageSegment } from '@bytelight/shared';
   import type { ToolEvent } from '$lib/stores/websocket.svelte';
   import { send } from '$lib/stores/websocket.svelte';
   import { renderMarkdown } from '$lib/utils/markdown';
   import { detectStandaloneSticker } from '$lib/stores/stickers.svelte';
-  import { apiFetch } from '$lib/utils/api';
   import { isStarredByMe, toggleMyStar } from '$lib/stores/stars.svelte';
   import { splitBySpeaker, splitInterleaved, type SpeakerId, type InterleavedRow } from '$lib/utils/speakers';
   import { coalesceThinkingSegments, plainThinkingText, thinkingTitle } from '$lib/thinking';
@@ -202,12 +210,20 @@
   // Image lightbox state
   let showLightbox = $state(false);
 
-  // Format file size for display
-  function formatFileSize(bytes: number): string {
-    if (bytes < 1024) return `${bytes} B`;
-    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-  }
+  // Files sent together with (or instead of) text ride on the message itself
+  // as metadata.attachments — one message, one row — and render inside the
+  // user's bubble: images as a grid, audio as players, anything else as a
+  // download link.
+  type Attachment = { fileId?: string; filename?: string; mimeType?: string; size?: number; url?: string; contentType?: string };
+  const attachments = $derived(
+    Array.isArray(metadata?.attachments)
+      ? (metadata!.attachments as Attachment[]).filter((a) => !!a && typeof a.url === 'string')
+      : []
+  );
+  const attachedImages = $derived(attachments.filter((a) => a.contentType === 'image'));
+  const attachedAudio = $derived(attachments.filter((a) => a.contentType === 'audio'));
+  const attachedFiles = $derived(attachments.filter((a) => a.contentType !== 'image' && a.contentType !== 'audio'));
+  let attachmentLightbox = $state<string | null>(null);
 
   function formatToolOutput(raw: string): string {
     if (!raw) return '';
@@ -294,149 +310,19 @@
     expandedToolIds = next;
   }
 
-  // Custom audio player state
-  let audioEl: HTMLAudioElement | null = $state(null);
-  let audioPlaying = $state(false);
-  let audioDuration = $state(0);
-  let audioCurrentTime = $state(0);
-
-  function toggleAudio() {
-    if (!audioEl) return;
-    if (audioPlaying) {
-      audioEl.pause();
-    } else {
-      audioEl.play();
-    }
-  }
-
-  function onAudioTimeUpdate() {
-    if (audioEl) audioCurrentTime = audioEl.currentTime;
-  }
-
-  function onAudioLoaded() {
-    if (audioEl && isFinite(audioEl.duration)) audioDuration = audioEl.duration;
-  }
-
-  function onAudioEnded() {
-    audioPlaying = false;
-    audioCurrentTime = 0;
-  }
-
-  function onAudioSeek(e: MouseEvent) {
-    if (!audioEl || !audioDuration) return;
-    const bar = e.currentTarget as HTMLElement;
-    const rect = bar.getBoundingClientRect();
-    const pct = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
-    audioEl.currentTime = pct * audioDuration;
-  }
-
-  function formatAudioTime(seconds: number): string {
-    const m = Math.floor(seconds / 60);
-    const s = Math.floor(seconds % 60);
-    return `${m}:${s.toString().padStart(2, '0')}`;
-  }
-
-  // Read aloud (on-demand TTS) — cache resolved audio URLs by message ID across instances
-  const ttsCache = (globalThis as Record<string, unknown>).__ttsCache ??= new Map<string, string>();
-  let ttsState = $state<'idle' | 'loading' | 'playing'>('idle');
-  let ttsAudioEl: HTMLAudioElement | null = null;
+  // Read aloud (on-demand TTS). The controller lives here, not in the button,
+  // so playback survives the button moving between the two reaction rows.
+  const readAloud = new ReadAloud(() => message.id);
   const canReadAloud = $derived(message.role === 'companion' && contentType === 'text' && !isDeleted && message.content.length > 5);
 
-  async function toggleReadAloud() {
-    if (ttsState === 'playing' && ttsAudioEl) {
-      ttsAudioEl.pause();
-      ttsAudioEl = null;
-      ttsState = 'idle';
-      return;
-    }
-    if (ttsState === 'loading') return;
-
-    // Create and play a silent audio element NOW (during user gesture)
-    // so mobile browsers unlock playback. We swap in the real src once TTS loads.
-    const audio = new Audio();
-    audio.src = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA=';
-    try { await audio.play(); } catch { /* silent unlock attempt */ }
-    audio.pause();
-
-    ttsAudioEl = audio;
-    const cached = (ttsCache as Map<string, string>).get(message.id);
-
-    try {
-      let audioUrl: string;
-
-      if (cached) {
-        audioUrl = cached;
-      } else {
-        ttsState = 'loading';
-        const res = await apiFetch(`/api/messages/${message.id}/tts`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({}),
-        });
-        if (!res.ok) {
-          // 503 voice_unavailable, 404 not found, 400 deleted/non-text — all no-op
-          let errCode: string | undefined;
-          try {
-            const errBody = await res.json();
-            errCode = errBody?.error;
-          } catch { /* ignore parse failure */ }
-          if (res.status === 503 || errCode === 'voice_unavailable') {
-            console.warn('[TTS] Voice unavailable — read-aloud disabled for this message');
-          } else {
-            console.warn(`[TTS] Read aloud unavailable: ${res.status} ${errCode ?? ''}`.trim());
-          }
-          ttsState = 'idle';
-          ttsAudioEl = null;
-          return;
-        }
-        const data = await res.json();
-        if (!data?.success || !data?.url) throw new Error('TTS response missing url');
-        audioUrl = data.url;
-        (ttsCache as Map<string, string>).set(message.id, audioUrl);
-      }
-
-      audio.onended = () => {
-        ttsState = 'idle';
-        ttsAudioEl = null;
-      };
-      audio.onerror = () => {
-        ttsState = 'idle';
-        ttsAudioEl = null;
-      };
-
-      audio.src = audioUrl;
-      await audio.play();
-      ttsState = 'playing';
-    } catch (err) {
-      console.error('[TTS] Read aloud failed:', err);
-      ttsState = 'idle';
-      ttsAudioEl = null;
-    }
-  }
-
   // Reactions
-  interface Reaction { emoji: string; user: string; created_at: string }
   const reactions = $derived(() => {
     const meta = message.metadata as Record<string, unknown> | null;
     if (!meta || !Array.isArray(meta.reactions)) return [] as Reaction[];
     return meta.reactions as Reaction[];
   });
 
-  // Group reactions: { emoji, count, users[] }
-  const groupedReactions = $derived(() => {
-    const rxns = reactions();
-    const map = new Map<string, { emoji: string; count: number; users: string[] }>();
-    for (const r of rxns) {
-      const entry = map.get(r.emoji);
-      if (entry) {
-        entry.count++;
-        entry.users.push(r.user);
-      } else {
-        map.set(r.emoji, { emoji: r.emoji, count: 1, users: [r.user] });
-      }
-    }
-    return Array.from(map.values());
-  });
+  const groupedReactions = $derived(() => groupReactions(reactions()));
 
   function toggleReaction(emoji: string) {
     const rxns = reactions();
@@ -448,31 +334,9 @@
     }
   }
 
-  const QUICK_EMOJIS = ['❤️', '😂', '👍', '🔥', '😢', '✨'];
-  let pickerOpen = $state(false);
-  let pickerEl: HTMLDivElement | undefined = $state();
-
-  function openReactionPicker() {
-    pickerOpen = !pickerOpen;
-  }
-
   function pickEmoji(emoji: string) {
     send({ type: 'add_reaction', messageId: message.id, emoji });
-    pickerOpen = false;
   }
-
-  function handlePickerClickOutside(e: MouseEvent) {
-    if (pickerEl && !pickerEl.contains(e.target as Node)) {
-      pickerOpen = false;
-    }
-  }
-
-  $effect(() => {
-    if (pickerOpen) {
-      document.addEventListener('click', handlePickerClickOutside, true);
-      return () => document.removeEventListener('click', handlePickerClickOutside, true);
-    }
-  });
 
   // Code block copy buttons
   let messageContentEl: HTMLDivElement | undefined = $state();
@@ -509,59 +373,9 @@
     return 'sent';
   });
 
-  // --- Message edit / delete / regenerate state ---
-  let showEditModal = $state(false);
-  let showDeleteConfirm = $state(false);
-  let editValue = $state('');
-  let actionPending = $state(false);
-
-  function openEditModal() {
-    editValue = message.content;
-    showEditModal = true;
-  }
-
-  async function patchMessage(rerun: boolean) {
-    if (actionPending || !editValue.trim()) return;
-    actionPending = true;
-    try {
-      const res = await apiFetch(`/api/messages/${message.id}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ content: editValue, rerun }),
-      });
-      if (!res.ok) console.error('Edit failed', await res.text());
-      else showEditModal = false;
-    } finally {
-      actionPending = false;
-    }
-  }
-
-  async function deleteMessage() {
-    if (actionPending) return;
-    actionPending = true;
-    try {
-      const res = await apiFetch(`/api/messages/${message.id}`, {
-        method: 'DELETE',
-      });
-      if (!res.ok) console.error('Delete failed', await res.text());
-      else showDeleteConfirm = false;
-    } finally {
-      actionPending = false;
-    }
-  }
-
-  async function regenerateMessage() {
-    if (actionPending) return;
-    actionPending = true;
-    try {
-      const res = await apiFetch(`/api/messages/${message.id}/regenerate`, {
-        method: 'POST',
-      });
-      if (!res.ok) console.error('Regenerate failed', await res.text());
-    } finally {
-      actionPending = false;
-    }
-  }
+  // Edit / delete / regenerate — state and requests live in the controller;
+  // the buttons render here, the dialogs in MessageActionModals.
+  const actions = new MessageActions(() => message);
 </script>
 
 {#snippet avatar(spk: string)}
@@ -817,40 +631,7 @@
             {@render avatar(primarySpeaker)}
           {/if}
           <div class="row-body bubble">
-        <div class="media-audio">
-          <audio
-            bind:this={audioEl}
-            preload="metadata"
-            src={message.content}
-            ontimeupdate={onAudioTimeUpdate}
-            onloadedmetadata={onAudioLoaded}
-            ondurationchange={onAudioLoaded}
-            onplay={() => audioPlaying = true}
-            onpause={() => audioPlaying = false}
-            onended={onAudioEnded}
-          >
-            <track kind="captions" />
-          </audio>
-          <div class="audio-player">
-            <button class="audio-play-btn" onclick={toggleAudio} aria-label={audioPlaying ? 'Pause' : 'Play'}>
-              {#if audioPlaying}
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>
-              {:else}
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><polygon points="5,3 19,12 5,21"/></svg>
-              {/if}
-            </button>
-            <span class="audio-time">{formatAudioTime(audioCurrentTime)}</span>
-            <button class="audio-bar" onclick={onAudioSeek} aria-label="Seek">
-              <div class="audio-track">
-                <div class="audio-progress" style:width="{audioDuration ? (audioCurrentTime / audioDuration) * 100 : 0}%"></div>
-              </div>
-            </button>
-            <span class="audio-time">{formatAudioTime(audioDuration)}</span>
-          </div>
-          {#if metadata?.transcript}
-            <div class="audio-transcript">{metadata.transcript}</div>
-          {/if}
-        </div>
+        <AudioPlayer src={message.content} transcript={metadata?.transcript} />
           </div>
         </div>
       {:else if contentType === 'file'}
@@ -867,7 +648,7 @@
             <div class="file-info">
               <span class="file-name">{metadata?.filename || 'File'}</span>
               {#if metadata?.size}
-                <span class="file-size">{formatFileSize(metadata.size as number)}</span>
+                <span class="file-size">{formatBytes(metadata.size as number)}</span>
               {/if}
             </div>
           </a>
@@ -1036,12 +817,50 @@
             {#if getProfile('user').name}
               <span class="speaker-name" data-speaker="user">{getProfile('user').emoji} <span class="sn-name">{getProfile('user').name}</span></span>
             {/if}
-            <div class="markdown-content" class:collapsed-long-message={isLongTextMessage && !longMessageExpanded}>
-              {@html renderedContent()}{#if isStreaming}<span class="cursor">|</span>{/if}
-            </div>
+            {#if message.content?.trim() || attachments.length === 0}
+              <div class="markdown-content" class:collapsed-long-message={isLongTextMessage && !longMessageExpanded}>
+                {@html renderedContent()}{#if isStreaming}<span class="cursor">|</span>{/if}
+              </div>
+            {/if}
+            {#if attachedImages.length > 0}
+              <div class="attachment-images" class:multi={attachedImages.length > 1}>
+                {#each attachedImages as att (att.fileId ?? att.url)}
+                  <button class="image-button" onclick={(e) => { e.stopPropagation(); attachmentLightbox = att.url!; }} aria-label="View full size">
+                    <img src={att.url} alt={att.filename ?? ''} loading="lazy" />
+                  </button>
+                {/each}
+              </div>
+            {/if}
+            {#each attachedAudio as att (att.fileId ?? att.url)}
+              <AudioPlayer src={att.url!} />
+            {/each}
+            {#each attachedFiles as att (att.fileId ?? att.url)}
+              <div class="media-file">
+                <a href={att.url} download={att.filename || 'download'} class="file-link">
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><path d="M14 2v6h6"/><path d="M12 18v-6"/><path d="M9 15l3 3 3-3"/>
+                  </svg>
+                  <div class="file-info">
+                    <span class="file-name">{att.filename || 'File'}</span>
+                    {#if att.size}
+                      <span class="file-size">{formatBytes(att.size)}</span>
+                    {/if}
+                  </div>
+                </a>
+              </div>
+            {/each}
           </div>
           {@render avatar('user')}
         </div>
+        {#if attachmentLightbox}
+          <div class="lightbox" role="dialog" aria-label="Full size image">
+            <button class="lightbox-close" onclick={() => attachmentLightbox = null} aria-label="Close">
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg>
+            </button>
+            <button class="lightbox-backdrop" onclick={() => attachmentLightbox = null} aria-label="Close lightbox"></button>
+            <img src={attachmentLightbox} alt="" />
+          </div>
+        {/if}
         {#if isLongTextMessage}
           <button
             class="long-message-toggle"
@@ -1132,86 +951,26 @@
     {#if !isDeleted && groupedReactions().length > 0}
       <div class="reactions-row">
         {#if canReadAloud}
-          <button
-            class="read-aloud-btn"
-            class:loading={ttsState === 'loading'}
-            class:playing={ttsState === 'playing'}
-            onclick={toggleReadAloud}
-            disabled={ttsState === 'loading'}
-            title={ttsState === 'playing' ? 'Stop' : ttsState === 'loading' ? 'Generating...' : 'Read aloud'}
-          >
-            {#if ttsState === 'loading'}
-              <svg class="tts-spinner" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10" stroke-dasharray="32" stroke-dashoffset="12"/></svg>
-            {:else if ttsState === 'playing'}
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>
-            {:else}
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><polygon points="5,3 19,12 5,21"/></svg>
-            {/if}
-          </button>
+          <ReadAloudButton state={readAloud.state} onclick={() => readAloud.toggle()} />
         {/if}
-        {#each groupedReactions() as rxn (rxn.emoji)}
-          <button
-            class="reaction-chip"
-            class:mine={rxn.users.includes('user')}
-            onclick={() => toggleReaction(rxn.emoji)}
-            title={rxn.users.join(', ')}
-          >
-            <span class="reaction-emoji">{rxn.emoji}</span>
-            {#if rxn.count > 1}
-              <span class="reaction-count">{rxn.count}</span>
-            {/if}
-          </button>
-        {/each}
-        <div class="reaction-picker-wrapper">
-          <button class="reaction-add" onclick={openReactionPicker} title="Add reaction">+</button>
-          {#if pickerOpen}
-            <div class="reaction-quick-pick" bind:this={pickerEl}>
-              {#each QUICK_EMOJIS as emoji}
-                <button class="quick-emoji" onclick={() => pickEmoji(emoji)}>{emoji}</button>
-              {/each}
-            </div>
-          {/if}
-        </div>
+        <ReactionChips reactions={groupedReactions()} ontoggle={toggleReaction} />
+        <ReactionPicker onpick={pickEmoji} />
         {@render starButton()}
       </div>
     {:else if !isDeleted && !isStreaming}
       <div class="reactions-row reactions-hover-only">
         {#if canReadAloud}
-          <button
-            class="read-aloud-btn"
-            class:loading={ttsState === 'loading'}
-            class:playing={ttsState === 'playing'}
-            onclick={toggleReadAloud}
-            disabled={ttsState === 'loading'}
-            title={ttsState === 'playing' ? 'Stop' : ttsState === 'loading' ? 'Generating...' : 'Read aloud'}
-          >
-            {#if ttsState === 'loading'}
-              <svg class="tts-spinner" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10" stroke-dasharray="32" stroke-dashoffset="12"/></svg>
-            {:else if ttsState === 'playing'}
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>
-            {:else}
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><polygon points="5,3 19,12 5,21"/></svg>
-            {/if}
-          </button>
+          <ReadAloudButton state={readAloud.state} onclick={() => readAloud.toggle()} />
         {/if}
-        <div class="reaction-picker-wrapper">
-          <button class="reaction-add" onclick={openReactionPicker} title="Add reaction">+</button>
-          {#if pickerOpen}
-            <div class="reaction-quick-pick" bind:this={pickerEl}>
-              {#each QUICK_EMOJIS as emoji}
-                <button class="quick-emoji" onclick={() => pickEmoji(emoji)}>{emoji}</button>
-              {/each}
-            </div>
-          {/if}
-        </div>
+        <ReactionPicker onpick={pickEmoji} />
         {@render starButton()}
         <!-- Message actions -->
         {#if message.role === 'user'}
-          <button class="msg-action-btn" onclick={openEditModal} title="Edit" disabled={actionPending}>✏️</button>
-          <button class="msg-action-btn destructive" onclick={() => showDeleteConfirm = true} title="Delete" disabled={actionPending}>🗑️</button>
+          <button class="msg-action-btn" onclick={actions.openEditModal} title="Edit" disabled={actions.actionPending}>✏️</button>
+          <button class="msg-action-btn destructive" onclick={() => (actions.showDeleteConfirm = true)} title="Delete" disabled={actions.actionPending}>🗑️</button>
         {:else if message.role === 'companion'}
-          <button class="msg-action-btn" onclick={regenerateMessage} title="Regenerate" disabled={actionPending}>🔄</button>
-          <button class="msg-action-btn destructive" onclick={() => showDeleteConfirm = true} title="Delete" disabled={actionPending}>🗑️</button>
+          <button class="msg-action-btn" onclick={actions.previewRegenerate} title="Regenerate" disabled={actions.actionPending}>🔄</button>
+          <button class="msg-action-btn destructive" onclick={() => (actions.showDeleteConfirm = true)} title="Delete" disabled={actions.actionPending}>🗑️</button>
         {/if}
       </div>
     {/if}
@@ -1230,37 +989,7 @@
   </article>
 {/if}
 
-{#if showEditModal}
-  <div class="modal-backdrop" role="dialog" aria-modal="true" onclick={() => (showEditModal = false)}>
-    <div class="modal" onclick={(e) => e.stopPropagation()}>
-      <h3 class="modal-title">Edit message</h3>
-      <textarea
-        class="modal-textarea"
-        bind:value={editValue}
-        rows="4"
-      ></textarea>
-      <div class="modal-actions">
-        <button type="button" class="modal-btn" onclick={() => (showEditModal = false)} disabled={actionPending}>Cancel</button>
-        <button type="button" class="modal-btn" onclick={() => patchMessage(false)} disabled={actionPending || !editValue.trim()}>Save</button>
-        <button type="button" class="modal-btn primary" onclick={() => patchMessage(true)} disabled={actionPending || !editValue.trim()}>Save & rerun</button>
-      </div>
-      <p class="modal-hint">Save & rerun deletes everything after this message and re-prompts.</p>
-    </div>
-  </div>
-{/if}
-
-{#if showDeleteConfirm}
-  <div class="modal-backdrop" role="dialog" aria-modal="true" onclick={() => (showDeleteConfirm = false)}>
-    <div class="modal" onclick={(e) => e.stopPropagation()}>
-      <h3 class="modal-title">Delete this message?</h3>
-      <p class="modal-body">It'll be hidden from the conversation. Cannot be undone.</p>
-      <div class="modal-actions">
-        <button type="button" class="modal-btn" onclick={() => (showDeleteConfirm = false)} disabled={actionPending}>Cancel</button>
-        <button type="button" class="modal-btn destructive" onclick={deleteMessage} disabled={actionPending}>Delete</button>
-      </div>
-    </div>
-  </div>
-{/if}
+<MessageActionModals {actions} />
 
 <style>
   .message-system {
@@ -1873,7 +1602,7 @@
   }
 
   .tool-entry.error .tool-name {
-    color: var(--error, #ef4444);
+    color: var(--error, var(--color-error));
   }
 
   /* Shared header row */
@@ -1967,7 +1696,7 @@
   .tool-error-badge {
     flex: none;
     font-size: 0.56rem;
-    color: var(--error, #ef4444);
+    color: var(--error, var(--color-error));
     background: rgba(239, 68, 68, 0.15);
     padding: 0.08rem 0.3rem;
     border-radius: 0.25rem;
@@ -2181,39 +1910,6 @@
     border-top: none;
   }
 
-  /* Read aloud button — inline with reaction chips */
-  .read-aloud-btn {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    height: 26px;
-    width: 26px;
-    padding: 0;
-    border-radius: var(--radius-sm, 0.25rem);
-    color: var(--text-muted);
-    background: transparent;
-    border: none;
-    cursor: pointer;
-    transition: color 0.15s, background 0.15s;
-  }
-
-  .read-aloud-btn:hover:not(:disabled) {
-    color: var(--gold-dim);
-    background: rgba(255, 255, 255, 0.05);
-  }
-
-  .read-aloud-btn.playing {
-    color: var(--gold-dim);
-  }
-
-  .read-aloud-btn:disabled {
-    cursor: wait;
-  }
-
-  .tts-spinner {
-    animation: toolSpin 0.8s linear infinite;
-  }
-
   /* The shiver — surfaced-memory shimmer. Quiet enough to ignore at 2am,
      catchable at a glance. Theme vars only (identity quarantine). */
   .shimmer-chip {
@@ -2323,101 +2019,6 @@
 
   .message:hover .reactions-hover-only {
     opacity: 1;
-  }
-
-  .reaction-chip {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.1875rem;
-    padding: 0.125rem 0.375rem;
-    background: rgba(255, 255, 255, 0.06);
-    border: 1px solid var(--border);
-    border-radius: 1rem;
-    cursor: pointer;
-    font-size: 0.875rem;
-    transition: all 0.15s;
-  }
-
-  .reaction-chip:hover {
-    background: rgba(255, 255, 255, 0.12);
-    border-color: var(--gold-dim);
-  }
-
-  .reaction-chip.mine {
-    background: rgba(245, 197, 66, 0.12);
-    border-color: var(--gold-dim);
-  }
-
-  .reaction-emoji {
-    font-size: 0.9375rem;
-    line-height: 1;
-  }
-
-  .reaction-count {
-    font-size: 0.6875rem;
-    color: var(--text-muted);
-    font-family: var(--font-mono);
-  }
-
-  .reaction-add {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 1.5rem;
-    height: 1.5rem;
-    background: transparent;
-    border: 1px dashed var(--border);
-    border-radius: 50%;
-    color: var(--text-muted);
-    font-size: 0.875rem;
-    cursor: pointer;
-    transition: all 0.15s;
-    line-height: 1;
-  }
-
-  .reaction-add:hover {
-    border-color: var(--gold-dim);
-    color: var(--gold-dim);
-    background: rgba(245, 197, 66, 0.08);
-  }
-
-  .reaction-picker-wrapper {
-    position: relative;
-    display: inline-flex;
-  }
-
-  .reaction-quick-pick {
-    position: absolute;
-    bottom: calc(100% + 4px);
-    left: 50%;
-    transform: translateX(-50%);
-    display: flex;
-    gap: 2px;
-    padding: 4px 6px;
-    background: var(--bg-secondary, #1a1025);
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
-    z-index: 10;
-    white-space: nowrap;
-  }
-
-  .quick-emoji {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 2rem;
-    height: 2rem;
-    background: transparent;
-    border: none;
-    border-radius: 4px;
-    font-size: 1.1rem;
-    cursor: pointer;
-    transition: background 0.12s;
-  }
-
-  .quick-emoji:hover {
-    background: rgba(245, 197, 66, 0.15);
   }
 
   .read-status {
@@ -2541,6 +2142,33 @@
     object-fit: contain;
   }
 
+  /* Media: images attached to a text message — one bubble, the pictures
+     under the words. Two or more sit in a grid of square tiles. */
+  .attachment-images {
+    margin-top: 0.375rem;
+  }
+
+  .attachment-images img {
+    max-width: 100%;
+    max-height: 400px;
+    border-radius: var(--radius-sm);
+    display: block;
+    object-fit: contain;
+  }
+
+  .attachment-images.multi {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.25rem;
+  }
+
+  .attachment-images.multi img {
+    width: 100%;
+    aspect-ratio: 1;
+    max-height: none;
+    object-fit: cover;
+  }
+
   .image-caption {
     margin-top: 0.375rem;
     max-width: 100%;
@@ -2588,91 +2216,6 @@
     object-fit: contain;
     z-index: 1001;
     border-radius: var(--radius-sm);
-  }
-
-  /* Media: Audio — custom player */
-  .media-audio {
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
-    margin: 0.25rem 0;
-  }
-
-  .media-audio audio {
-    display: none;
-  }
-
-  .audio-player {
-    display: flex;
-    align-items: center;
-    gap: 0.625rem;
-    padding: 0.5rem 0.25rem;
-    min-width: 220px;
-    max-width: 320px;
-  }
-
-  .audio-play-btn {
-    width: 2rem;
-    height: 2rem;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    border-radius: 50%;
-    background: var(--gold-dim);
-    color: var(--bg-primary);
-    flex-shrink: 0;
-    transition: all var(--transition);
-    cursor: pointer;
-  }
-
-  .audio-play-btn:hover {
-    background: var(--gold);
-    box-shadow: 0 0 10px var(--gold-ember);
-  }
-
-  .audio-time {
-    font-size: 0.6875rem;
-    font-family: var(--font-mono);
-    color: var(--text-muted);
-    min-width: 2.25rem;
-    text-align: center;
-    flex-shrink: 0;
-  }
-
-  .audio-bar {
-    flex: 1;
-    padding: 0.5rem 0;
-    cursor: pointer;
-    background: none;
-  }
-
-  .audio-track {
-    height: 3px;
-    background: var(--border-hover);
-    border-radius: 2px;
-    position: relative;
-    overflow: hidden;
-  }
-
-  .audio-progress {
-    height: 100%;
-    background: var(--gold-dim);
-    border-radius: 2px;
-    transition: width 0.1s linear;
-  }
-
-  .audio-bar:hover .audio-track {
-    height: 4px;
-  }
-
-  .audio-bar:hover .audio-progress {
-    background: var(--gold);
-  }
-
-  .audio-transcript {
-    font-size: 0.875rem;
-    color: var(--text-secondary);
-    font-style: italic;
   }
 
   /* Media: File */
@@ -2768,12 +2311,6 @@
       flex-wrap: wrap;
     }
 
-    .reaction-quick-pick {
-      left: 0;
-      transform: none;
-      max-width: calc(100vw - 4rem);
-    }
-
     .lightbox {
       padding: 0;
     }
@@ -2861,111 +2398,5 @@
   }
   .star-btn:hover {
     color: var(--accent);
-  }
-
-  /* Modal styles */
-  .modal-backdrop {
-    position: fixed;
-    inset: 0;
-    background: rgba(0, 0, 0, 0.6);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    z-index: 1000;
-    padding: 1rem;
-  }
-
-  .modal {
-    background: var(--surface, #1a1a1a);
-    border: 1px solid var(--border, #333);
-    border-radius: 0.75rem;
-    padding: 1.5rem;
-    max-width: 28rem;
-    width: 100%;
-    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
-  }
-
-  .modal-title {
-    margin: 0 0 1rem;
-    font-size: 1.125rem;
-    font-weight: 600;
-    color: var(--text, #fff);
-  }
-
-  .modal-body {
-    margin: 0 0 1rem;
-    color: var(--text-secondary, #888);
-    font-size: 0.875rem;
-  }
-
-  .modal-textarea {
-    width: 100%;
-    min-height: 6rem;
-    padding: 0.75rem;
-    border: 1px solid var(--border, #333);
-    border-radius: 0.5rem;
-    background: var(--input-bg, #0d0d0d);
-    color: var(--text, #fff);
-    font-family: inherit;
-    font-size: 0.875rem;
-    resize: vertical;
-    margin-bottom: 0.5rem;
-  }
-
-  .modal-textarea:focus {
-    outline: none;
-    border-color: var(--accent, #5eaba5);
-  }
-
-  .modal-actions {
-    display: flex;
-    gap: 0.5rem;
-    justify-content: flex-end;
-    margin-top: 1rem;
-  }
-
-  .modal-btn {
-    padding: 0.5rem 1rem;
-    border: 1px solid var(--border, #333);
-    border-radius: 0.375rem;
-    background: transparent;
-    color: var(--text, #fff);
-    font-size: 0.875rem;
-    cursor: pointer;
-    transition: background 0.15s, border-color 0.15s;
-  }
-
-  .modal-btn:hover {
-    background: var(--surface-hover, rgba(255,255,255,0.05));
-  }
-
-  .modal-btn:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
-
-  .modal-btn.primary {
-    background: var(--accent, #5eaba5);
-    border-color: var(--accent, #5eaba5);
-  }
-
-  .modal-btn.primary:hover {
-    background: var(--accent-hover, #7cc5c0);
-  }
-
-  .modal-btn.destructive {
-    background: rgba(239, 68, 68, 0.15);
-    border-color: rgba(239, 68, 68, 0.3);
-    color: #ef4444;
-  }
-
-  .modal-btn.destructive:hover {
-    background: rgba(239, 68, 68, 0.25);
-  }
-
-  .modal-hint {
-    margin: 0.75rem 0 0;
-    font-size: 0.75rem;
-    color: var(--text-tertiary, #666);
   }
 </style>

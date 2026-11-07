@@ -39,6 +39,7 @@ import { createHash } from 'crypto';
 import { listPendingProposals, markSurfaced } from '../memory-proposals.js';
 import { cortexRecallScored, cortexConfigured, type CortexScoredHit } from '../cortex-recall.js';
 import { memoryReceipt } from '../memory-ledger.js';
+import { isArchiveRecord } from '../archive-artifact.js';
 
 // How many noticings may ride into a single turn. A whisper, not a lecture.
 const MAX_UNFILED = 3;
@@ -135,14 +136,62 @@ export function resetRecallMemory(laneKey?: string): void {
 
 const EMPTY_RESULT: AmbientRecallResult = { block: '', surfaced: null };
 
-/** Trim the archive prose into short excerpts for the shimmer panel. */
-function proseExcerpts(prose: string): Array<{ excerpt: string }> {
-  return prose
-    .split('\n')
-    .map((l) => l.trim())
-    .filter((l) => l.length > 0 && l !== '…')
+/** One memory heading in the worker's prose: "### type [domain] (NN%) — date". */
+const MEMORY_HEADING = /^#{2,}\s*\S+(?:\s*\[([^\]]+)\])?(?:\s*\((\d{1,3})%\))?(?:\s*[—–-]\s*(\d{4}-\d{2}-\d{2}))?/;
+
+const clip = (l: string): string => (l.length > 220 ? l.slice(0, 220).trimEnd() + '…' : l);
+
+/**
+ * Turn the archive prose into cards for the shimmer panel.
+ *
+ * The worker answers with a search header that quotes HER message
+ * ("## Cortex Recall: \"…\" (3 found)") followed by one "### type [domain]
+ * (NN%) — date" heading per memory. The old version took the first three
+ * lines verbatim, so card one was her own sentence and card two a bare
+ * heading. Now the header is skipped and each heading becomes one card
+ * carrying its memory text, domain, relevance and date. Plain prose with no
+ * headings (older worker shape) still falls back to one card per line.
+ */
+function proseExcerpts(
+  prose: string,
+): Array<{ excerpt: string; date?: string; domain?: string; relevance?: number }> {
+  const lines = prose.split('\n').map((l) => l.trim());
+  const isSearchHeader = (l: string) => /^#{1,2}\s*Cortex Recall\b/i.test(l);
+
+  const cards: Array<{ excerpt: string; date?: string; domain?: string; relevance?: number }> = [];
+  let current: { meta: { date?: string; domain?: string; relevance?: number }; text: string[] } | null = null;
+  const flush = () => {
+    if (current) {
+      const text = current.text.join(' ').replace(/\s+/g, ' ').trim();
+      if (text && text !== '…') cards.push({ excerpt: clip(text), ...current.meta });
+    }
+    current = null;
+  };
+
+  for (const l of lines) {
+    if (isSearchHeader(l)) continue;
+    if (l.startsWith('#')) {
+      flush();
+      const m = l.match(MEMORY_HEADING);
+      const meta: { date?: string; domain?: string; relevance?: number } = {};
+      if (m?.[1]) meta.domain = m[1].trim();
+      if (m?.[2]) meta.relevance = Number(m[2]) / 100;
+      if (m?.[3]) meta.date = m[3];
+      current = { meta, text: [] };
+      continue;
+    }
+    if (current) {
+      if (l) current.text.push(l);
+    }
+  }
+  flush();
+  if (cards.length > 0) return cards.slice(0, RECALL_LIMIT);
+
+  // No memory headings at all: plain prose. Never quote the search header.
+  return lines
+    .filter((l) => l.length > 0 && l !== '…' && !isSearchHeader(l) && !l.startsWith('#'))
     .slice(0, RECALL_LIMIT)
-    .map((l) => ({ excerpt: l.length > 220 ? l.slice(0, 220).trimEnd() + '…' : l }));
+    .map((l) => ({ excerpt: clip(l) }));
 }
 
 /**
@@ -168,10 +217,20 @@ export async function ambientRecall(
     const query = (text || '').trim();
     if (query.length < MIN_TEXT_CHARS) return EMPTY_RESULT;
 
-    const { prose, scored } = await cortexRecallScored(query, {
+    const { prose, scored: rawScored } = await cortexRecallScored(query, {
       limit: RECALL_LIMIT,
       timeoutMs: RECALL_TIMEOUT_MS,
     });
+
+    // Archive plumbing is not recall. The memory diet's trimmed chunks are the
+    // NEWEST records in the store, so left unfiltered they crowd out things
+    // that actually happened — a frozen copy of a block the session already
+    // carries live. When the worker gives us structure, drop those rows; and
+    // when EVERY scored row was archive plumbing, the prose block is that same
+    // plumbing wearing prose, so it stays out of the turn entirely.
+    // (archive-artifact.ts; records stay searchable, just not ambient.)
+    const scored = rawScored.filter((hit) => !isArchiveRecord(hit));
+    if (rawScored.length > 0 && scored.length === 0) return EMPTY_RESULT;
 
     // The block (and its receipt/shimmer) rides the prose, same as before.
     // The scored hits — when the worker carries them — only feed the near-miss

@@ -25,6 +25,7 @@ import {
   deleteGalleryItem,
   generateImage,
   recordGalleryMeta,
+  galleryDimensions,
   startGenerateJob,
   getJobStatus,
   listImageJobs,
@@ -392,7 +393,7 @@ router.post('/studio/generate', async (req, res) => {
       const jobId = startGenerateJob(
         { prompt, subjects, oneOffRefs, size, customWidth, customHeight, backend: reqBackend, codexModel, openaiModel, cloudflareModel, agyModel, openartModel, openartMedia },
         async (result) => {
-          const { width, height } = dimensionsFor(metadata.size, metadata.customWidth, metadata.customHeight);
+          const { width, height } = galleryDimensions(metadata.size, metadata.customWidth, metadata.customHeight);
           await recordGalleryMeta(result.filename, {
             threadId: metadata.threadId,
             messageId: metadata.messageId,
@@ -413,7 +414,7 @@ router.post('/studio/generate', async (req, res) => {
 
     // Sync mode (legacy, for local/LAN use where timeout isn't an issue)
     const result = await generateImage({ prompt, subjects, oneOffRefs, size, customWidth, customHeight, backend: reqBackend, codexModel, openaiModel, cloudflareModel, agyModel, openartModel, openartMedia });
-    const { width, height } = dimensionsFor(size, customWidth, customHeight);
+    const { width, height } = galleryDimensions(size, customWidth, customHeight);
 
     // Always record gallery meta with prompt
     await recordGalleryMeta(result.filename, {
@@ -450,17 +451,6 @@ router.post('/studio/generate', async (req, res) => {
 
 // ─── Image jobs ─────────────────────────────────────────────────────
 
-function dimensionsFor(size?: string, customWidth?: number, customHeight?: number): { width: number; height: number } {
-  if (size === 'custom' && customWidth && customHeight) return { width: customWidth, height: customHeight };
-  if (size === 'portrait' || size === '2:3') return { width: 1024, height: 1536 };
-  if (size === 'landscape' || size === '3:2') return { width: 1536, height: 1024 };
-  if (size === '16:9') return { width: 1536, height: 864 };
-  if (size === '9:16') return { width: 864, height: 1536 };
-  if (size === '21:9') return { width: 1536, height: 658 };
-  if (size === '4:5') return { width: 1024, height: 1280 };
-  if (size === '5:4') return { width: 1280, height: 1024 };
-  return { width: 1024, height: 1024 };
-}
 
 function jobResponse(job: ReturnType<typeof getJobStatus>) {
   if (!job) return null;

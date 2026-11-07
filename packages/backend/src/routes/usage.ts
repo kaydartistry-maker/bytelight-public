@@ -111,6 +111,22 @@ router.get('/usage/windows', authMiddleware, (req, res) => {
   }
 });
 
+// What the call screen asks before it opens the mic: can the house hear her
+// (speech-to-text) and answer aloud (companion voices)? Shape matches the
+// phone's VoiceDiagnostics.
+router.get('/voice/status', authMiddleware, (req, res) => {
+  const voiceService = req.app.locals.voiceService as VoiceService | undefined;
+  if (!voiceService) {
+    res.status(500).json({ error: 'VoiceService not initialized' });
+    return;
+  }
+  res.json({
+    canTranscribe: voiceService.canTranscribe,
+    canTTS: voiceService.canTTS,
+    canAnalyzeProsody: voiceService.canAnalyzeProsody,
+  });
+});
+
 router.get('/voice/usage', authMiddleware, async (req, res) => {
   const voiceService = req.app.locals.voiceService as VoiceService | undefined;
   if (!voiceService) {

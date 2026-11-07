@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths xmlns:android="http://schemas.android.com/apk/res/android">
+    <external-path name="my_images" path="." />
+    <cache-path name="my_cache_images" path="." />
+    <!-- The WebView's own camera capture writes its temp photo to
+         getExternalFilesDir(DIRECTORY_PICTURES), which none of the roots
+         above cover. Without this line getUriForFile throws, the capture
+         intent is abandoned, and the file input silently falls back to the
+         ordinary document picker — the camera button never opens a camera. -->
+    <external-files-path name="my_ext_files_images" path="." />
+</paths>

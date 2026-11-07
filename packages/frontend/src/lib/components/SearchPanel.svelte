@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { apiFetch } from '$lib/utils/api';
   let {
     onresult,
     onclose,
@@ -44,7 +45,7 @@
       const endpoint = semantic
         ? `/api/search-semantic?q=${encodeURIComponent(q)}&limit=20`
         : `/api/search?q=${encodeURIComponent(q)}&limit=30`;
-      const res = await fetch(endpoint, { credentials: 'include' });
+      const res = await apiFetch(endpoint, { credentials: 'include' });
       if (!res.ok) throw new Error('Search failed');
       const data = await res.json();
       results = data.results;
@@ -253,10 +254,6 @@
     border-radius: 50%;
     animation: spin 0.6s linear infinite;
     flex-shrink: 0;
-  }
-
-  @keyframes spin {
-    to { transform: rotate(360deg); }
   }
 
   .search-results {

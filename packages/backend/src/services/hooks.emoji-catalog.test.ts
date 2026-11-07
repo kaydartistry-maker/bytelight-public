@@ -16,7 +16,7 @@ test('returns null on empty input', () => {
 
 test('renders :name: shorthand for a static emoji', () => {
   const input: Emoji[] = [
-    { name: 'kekw', id: '111', animated: false, guild: 'The Jungle' },
+    { name: 'kekw', id: '111', animated: false, guild: 'Server A' },
   ];
   const out = buildEmojiCatalogBlock(input);
   assert.ok(out, 'should return non-null');
@@ -26,7 +26,7 @@ test('renders :name: shorthand for a static emoji', () => {
 
 test('flags animated emojis', () => {
   const input: Emoji[] = [
-    { name: 'catjam', id: '222', animated: true, guild: 'The Jungle' },
+    { name: 'catjam', id: '222', animated: true, guild: 'Server A' },
   ];
   const out = buildEmojiCatalogBlock(input);
   assert.ok(out);
@@ -47,7 +47,7 @@ test('groups by guild', () => {
 
 test('teaches the :name: usage rule in the header', () => {
   const input: Emoji[] = [
-    { name: 'x', id: '9', animated: false, guild: 'The Jungle' },
+    { name: 'x', id: '9', animated: false, guild: 'Server A' },
   ];
   const out = buildEmojiCatalogBlock(input);
   assert.ok(out);
@@ -55,5 +55,5 @@ test('teaches the :name: usage rule in the header', () => {
   assert.ok(lines[0].startsWith('CUSTOM EMOJIS'), 'first line is the CUSTOM EMOJIS header');
   assert.ok(lines[0].includes('case-sensitive'), 'header states case sensitivity');
   assert.equal(lines[1], '  Available now:');
-  assert.equal(lines[2], '    The Jungle: :x:');
+  assert.equal(lines[2], '    Server A: :x:');
 });

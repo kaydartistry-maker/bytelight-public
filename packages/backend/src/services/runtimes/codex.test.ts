@@ -44,6 +44,8 @@ import {
   __TEST_PROVIDERS__ as OAUTH_TEST_PROVIDERS,
   _resetForTests as resetOAuthForTests,
 } from '../auth/codex-oauth.js';
+// A 429 test sets the Codex brake; lift it so the next test is not held.
+import { releaseCodexHold } from '../codex-breaker.js';
 
 // ─── Sentinels (the operator's S2 rule: never use real-looking secrets) ──────────
 const SENTINEL_ACCESS = 'TEST_CODEX_ACCESS_TOKEN_DO_NOT_LEAK_123';
@@ -275,6 +277,7 @@ afterEach(() => {
   }
   _resetForTests();
   resetOAuthForTests();
+  releaseCodexHold();
 });
 
 // ─── Tests ──────────────────────────────────────────────────────────────

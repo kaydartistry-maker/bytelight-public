@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { timeAgo } from '$lib/utils/time';
   import type { Canvas } from '@bytelight/shared';
   import {
     getCanvases,
@@ -83,17 +84,6 @@
 
   function handleWindowClick() {
     if (tagDropdownOpen) tagDropdownOpen = false;
-  }
-
-  function formatTime(iso: string): string {
-    const d = new Date(iso);
-    const now = new Date();
-    const diff = now.getTime() - d.getTime();
-
-    if (diff < 60000) return 'just now';
-    if (diff < 3600000) return `${Math.floor(diff / 60000)}m ago`;
-    if (diff < 86400000) return `${Math.floor(diff / 3600000)}h ago`;
-    return d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
   }
 
   // Tag filter dropdown
@@ -249,7 +239,7 @@
         >
           <div class="cl-card-top">
             <span class="cl-card-type">{c.content_type}{c.language ? ` · ${c.language}` : ''}</span>
-            <span class="cl-card-time">{formatTime(c.updated_at)}</span>
+            <span class="cl-card-time">{timeAgo(c.updated_at, { dateAfterDays: 1 })}</span>
           </div>
           <div class="cl-card-title">{c.title}</div>
           {#if c.content}

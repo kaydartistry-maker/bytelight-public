@@ -9,6 +9,10 @@ export interface TriggerContext {
   statusText: string;
   hour: number;
   minute: number;
+  /** Now, in ms — for `after`. Absent reads as never reached. */
+  nowMs?: number;
+  /** Her status is Busy or Away right now — for `status_clears`. */
+  ownerAway?: boolean;
 }
 
 export function evaluateConditions(conditions: TriggerCondition[], context: TriggerContext): boolean {
@@ -28,6 +32,12 @@ function evaluateSingle(condition: TriggerCondition, ctx: TriggerContext): boole
       return evaluateTimeWindow(condition.after, condition.before, ctx.hour, ctx.minute);
     case 'routine_missing':
       return evaluateRoutineMissing(condition.routine, condition.after_hour, ctx.statusText, ctx.hour);
+    case 'after': {
+      const at = Date.parse(condition.at);
+      return Number.isFinite(at) && ctx.nowMs !== undefined && ctx.nowMs >= at;
+    }
+    case 'status_clears':
+      return condition.armed === true && ctx.ownerAway === false;
     default:
       return false;
   }

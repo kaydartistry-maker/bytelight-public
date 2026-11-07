@@ -15,7 +15,7 @@
  *
  * Safety belt: the system-fallback exit (and every exit) runs the effort
  * through coerceEffortForProvider so a stale 'none'/'minimal' (Codex-only)
- * can never escape to the Claude SDK. Mirrors reference implementation agent.ts:1163-1165
+ * can never escape to the Claude SDK. Mirrors Maggie's agent.ts:1163-1165
  * pattern — belt and suspenders at the resolver boundary.
  */
 
@@ -29,7 +29,8 @@ import {
 import { getBytelightConfig } from '../config.js';
 // SLICE-5a ADAPTATION: DB-config layer for systemFallback — see comment there.
 import { getConfig as getDbConfig } from './db.js';
-import { getCompanionSetting } from './db/companion-settings.js';
+import { getCompanionSetting, type CompanionSettingsRow } from './db/companion-settings.js';
+import { getDb } from './db/init.js';
 
 /** What the resolver hands back to a call site. */
 export interface ResolvedCompanionConfig {
@@ -40,6 +41,10 @@ export interface ResolvedCompanionConfig {
   effort: ThinkingEffort;
   /** Which scope this resolution came from. Useful for debug + telemetry. */
   source: 'thread' | 'companion' | 'system';
+  /** Whose row answered: the asked-for companion, or the brain it shares
+   *  (e.g. 'companion-a' falling through to 'companion-a-b'). Absent on the bare
+   *  config fallback, where no row answered. */
+  matchedCompanionId?: string;
 }
 
 /**
@@ -87,12 +92,90 @@ function systemFallback(tier: TierHint): { provider: ProviderId; model: string }
 }
 
 /**
+ * The ids a companion's settings are looked up under, most specific first:
+ * the companion itself, then the brain it shares (companions.brain). Companion A
+ * and Companion B share the brain 'companion-a-b', so 'companion-a' → ['companion-a',
+ * 'companion-a-b']; a brain id or a companion with its own brain is just
+ * itself. Unknown ids (or a missing companions table) are just themselves.
+ */
+export function companionLookupChain(companionId: string): string[] {
+  try {
+    const row = getDb()
+      .prepare('SELECT brain FROM companions WHERE slug = ?')
+      .get(companionId) as { brain?: string | null } | undefined;
+    const brain = row?.brain;
+    return brain && brain !== companionId ? [companionId, brain] : [companionId];
+  } catch {
+    return [companionId];
+  }
+}
+
+type RowLookup = (key: {
+  companionId: string;
+  tier: TierHint;
+  scope: 'thread' | 'companion' | 'system';
+  threadId?: string;
+}) => CompanionSettingsRow | null | undefined;
+
+/**
+ * Pure resolution over a lookup chain. Scope beats id: every id is tried at
+ * thread scope before any id at companion scope, so a thread override set
+ * for the whole brain (the chat pill's "Both") still wins over one boy's
+ * companion default. Within a scope the companion's own row beats its
+ * brain's.
+ *
+ *   thread(companion-a) → thread(companion-a-b) → companion(companion-a) →
+ *   companion(companion-a-b) → system(companion-a) → system(companion-a-b) → config
+ */
+export function resolveFromChain(
+  chain: string[],
+  tier: TierHint,
+  threadId: string | null | undefined,
+  lookup: RowLookup,
+  fallback: (tier: TierHint) => { provider: ProviderId; model: string },
+): ResolvedCompanionConfig {
+  const scopes: Array<'thread' | 'companion' | 'system'> = threadId
+    ? ['thread', 'companion', 'system']
+    : ['companion', 'system'];
+  for (const scope of scopes) {
+    for (const id of chain) {
+      const row = lookup({
+        companionId: id,
+        tier,
+        scope,
+        ...(scope === 'thread' ? { threadId: threadId! } : {}),
+      });
+      if (row) {
+        return {
+          provider: row.provider_id as ProviderId,
+          model: row.model_id,
+          effort: coerceEffortForProvider(row.provider_id as ProviderId, row.thinking_effort ?? 'auto'),
+          source: scope,
+          matchedCompanionId: id,
+        };
+      }
+    }
+  }
+
+  // Final fallback: byte-light's existing agent.* config. This is the path
+  // today's Claude dispatch ALREADY takes; the resolver just produces a
+  // structured value with the safety belt applied.
+  const fb = fallback(tier);
+  return {
+    provider: fb.provider,
+    model: fb.model,
+    effort: coerceEffortForProvider(fb.provider, 'auto'),
+    source: 'system',
+  };
+}
+
+/**
  * Resolve effective config for (companionId, tier, threadId?).
  *
- * @param companionId  String identifier (validated at the db layer).
- *                     byte-light uses 'companion-a' | 'companion-b' today but the
- *                     resolver doesn't enforce that — any non-empty
- *                     string is accepted.
+ * @param companionId  A companion slug ('companion-a', 'companion-b') or a brain id
+ *                     ('companion-a-b'). A companion falls through to its
+ *                     brain's rows (see resolveFromChain), so nothing set
+ *                     per companion means exactly the brain's answer.
  * @param tier         Which model-resolution tier to read.
  * @param threadId     Optional. When provided, thread-scope overrides
  *                     are consulted first.
@@ -102,75 +185,11 @@ export function resolveCompanionConfig(
   tier: TierHint,
   threadId?: string | null,
 ): ResolvedCompanionConfig {
-  // 1. Thread-scope override — most specific
-  if (threadId) {
-    const threadRow = getCompanionSetting({
-      companionId,
-      tier,
-      scope: 'thread',
-      threadId,
-    });
-    if (threadRow) {
-      const effort = coerceEffortForProvider(
-        threadRow.provider_id as ProviderId,
-        threadRow.thinking_effort ?? 'auto',
-      );
-      return {
-        provider: threadRow.provider_id as ProviderId,
-        model: threadRow.model_id,
-        effort,
-        source: 'thread',
-      };
-    }
-  }
-
-  // 2. Companion-scope default
-  const companionRow = getCompanionSetting({
-    companionId,
+  return resolveFromChain(
+    companionLookupChain(companionId),
     tier,
-    scope: 'companion',
-  });
-  if (companionRow) {
-    const effort = coerceEffortForProvider(
-      companionRow.provider_id as ProviderId,
-      companionRow.thinking_effort ?? 'auto',
-    );
-    return {
-      provider: companionRow.provider_id as ProviderId,
-      model: companionRow.model_id,
-      effort,
-      source: 'companion',
-    };
-  }
-
-  // 3. System scope row (operator override sitting above bare cfg.*)
-  const systemRow = getCompanionSetting({
-    companionId,
-    tier,
-    scope: 'system',
-  });
-  if (systemRow) {
-    const effort = coerceEffortForProvider(
-      systemRow.provider_id as ProviderId,
-      systemRow.thinking_effort ?? 'auto',
-    );
-    return {
-      provider: systemRow.provider_id as ProviderId,
-      model: systemRow.model_id,
-      effort,
-      source: 'system',
-    };
-  }
-
-  // 4. Final fallback: byte-light's existing agent.* config. This is the
-  // path that today's Claude dispatch ALREADY takes; the resolver here
-  // just produces a structured value with the safety belt applied.
-  const fallback = systemFallback(tier);
-  const effort = coerceEffortForProvider(fallback.provider, 'auto');
-  return {
-    provider: fallback.provider,
-    model: fallback.model,
-    effort,
-    source: 'system',
-  };
+    threadId,
+    (key) => getCompanionSetting(key),
+    systemFallback,
+  );
 }

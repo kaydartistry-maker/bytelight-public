@@ -53,7 +53,7 @@
   }
 
   .toast-error {
-    border-left-color: #ef4444;
+    border-left-color: var(--color-error);
   }
 
   .toast-info {
@@ -71,7 +71,7 @@
   }
 
   .toast-error .toast-icon {
-    color: #ef4444;
+    color: var(--color-error);
   }
 
   .toast-info .toast-icon {

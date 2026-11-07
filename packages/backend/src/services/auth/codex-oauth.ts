@@ -35,6 +35,7 @@ import {
   refreshOpenAICodexToken,
   type OAuthCredentials,
 } from '@earendil-works/pi-ai/oauth';
+import { errMessage } from '../../util/errors.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -429,7 +430,7 @@ export async function startCodexLogin(): Promise<CodexLoginSnapshot> {
         new Date(creds.expires).toISOString(),
       );
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      const message = errMessage(err);
       // If we never resolved the URL (flow failed immediately), unblock
       // the route handler so it doesn't hang.
       urlResolved();

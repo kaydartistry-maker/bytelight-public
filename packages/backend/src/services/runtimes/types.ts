@@ -39,6 +39,7 @@
 
 import type { Thread } from '@bytelight/shared';
 import type { ModelRef, ProviderId, RuntimeId, ThinkingEffort, ThoughtKind } from '@bytelight/shared';
+import type { TurnAudience } from '../turn-audience.js';
 // SLICE-3a ADAPTATION (tag: stable-pre-rollback-2026-06-20): the tag
 // imported `AgentModelTier` from '../agent.js'. Main's agent.ts does not
 // export it yet (agent.ts is untouched until Slice 3b), so the type is
@@ -93,6 +94,10 @@ export interface NormalizedMessage {
   content: string;
   createdAt: string;        // ISO 8601
   images?: NormalizedImage[];
+  /** Companion rows only: which lane wrote it (metadata.lane, see laneTagFor). */
+  lane?: string;
+  /** Companion rows only: which companion spoke (messages.companion_id). */
+  companionId?: string;
 }
 
 /**
@@ -192,6 +197,12 @@ export interface AgentTurnInput {
   thinkingEffort?: ThinkingEffort;
   tools?: ToolDefinition[];
   abortSignal?: AbortSignal;
+  /** Who this turn came from, as far as tools are concerned
+   *  (services/turn-audience.ts). Absent = the owner's turn or the house's
+   *  own wake, which run every tool. A guest's turn runs none on the
+   *  router/SDK/Codex paths, and only the narrow reads hooks/gate.cjs
+   *  allows on the warm Claude CLI lane. */
+  audience?: TurnAudience;
 }
 
 // ---------------------------------------------------------------------------
@@ -263,8 +274,11 @@ export type AgentRuntimeEvent =
    *  context-usage indicator. */
   | { type: 'context_usage'; used: number; max: number }
   /** Billable usage report. Distinct from `context_usage` — this is
-   *  cost/quota, not gauge. `cost` is provider-reported when available. */
-  | { type: 'usage'; input: number; output: number; cacheRead?: number; cacheWrite?: number; cost?: number }
+   *  cost/quota, not gauge. `cost` is provider-reported when available; an
+   *  EXPLICIT null declares "no per-turn dollar measurement exists on this
+   *  lane" (subscription-billed CLI) — the consumer files NULL instead of
+   *  estimating. Absent means "estimate as usual". */
+  | { type: 'usage'; input: number; output: number; cacheRead?: number; cacheWrite?: number; cost?: number | null }
   /** Context compaction lifecycle (Claude SDK only). Drives the
    *  in-flight compaction banner. `preTokens` is the pre-compaction
    *  context-window usage at the moment of the `complete` event

@@ -133,6 +133,12 @@ export interface BytelightConfig {
       enabled: boolean;
       mcp_url: string;
     };
+    /**
+     * The Spotify app's MCP server, by its id or name in Integrations > MCP
+     * (e.g. "Jukebox"). Unset: the first enabled server with "spotify"
+     * in its name or address (services/spotify.ts findSpotifyServer).
+     */
+    spotify_server?: string;
     // PORT ADAPTATION: the ported GIF cutout runtime reads these optional machine-local paths.
     cutout?: {
       python?: string;
@@ -388,6 +394,24 @@ export function persistVoiceEnabled(enabled: boolean): void {
   const parsed = (yaml.load(raw) as Record<string, any>) || {};
   if (!parsed.voice) parsed.voice = {};
   parsed.voice.enabled = enabled;
+  const newYaml = yaml.dump(parsed, { lineWidth: -1, quotingType: '"', forceQuotes: true });
+  writeFileSync(configPath, newYaml, 'utf-8');
+  reloadConfig();
+}
+
+/**
+ * Persist `orchestrator.enabled` to bytelight.yaml and refresh the in-memory
+ * cache. Used by the Integrations switch so a stop survives a restart; boot
+ * reads this flag before starting the orchestrator.
+ * No-op if the config file cannot be found.
+ */
+export function persistOrchestratorEnabled(enabled: boolean): void {
+  const configPath = findBytelightConfigPath();
+  if (!configPath) return;
+  const raw = readFileSync(configPath, 'utf-8');
+  const parsed = (yaml.load(raw) as Record<string, any>) || {};
+  if (!parsed.orchestrator) parsed.orchestrator = {};
+  parsed.orchestrator.enabled = enabled;
   const newYaml = yaml.dump(parsed, { lineWidth: -1, quotingType: '"', forceQuotes: true });
   writeFileSync(configPath, newYaml, 'utf-8');
   reloadConfig();

@@ -1,0 +1,1515 @@
+@import "tailwindcss";
+@plugin "@tailwindcss/typography";
+
+/* Self-hosted Geist Sans */
+@font-face {
+  font-family: 'Geist';
+  src: url('/fonts/Geist-Regular.woff2') format('woff2');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Geist';
+  src: url('/fonts/Geist-Medium.woff2') format('woff2');
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Geist';
+  src: url('/fonts/Geist-SemiBold.woff2') format('woff2');
+  font-weight: 600;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Geist';
+  src: url('/fonts/Geist-Bold.woff2') format('woff2');
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+/* Self-hosted JetBrains Mono */
+@font-face {
+  font-family: 'JetBrains Mono';
+  src: url('/fonts/JetBrainsMono-Regular.woff2') format('woff2');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'JetBrains Mono';
+  src: url('/fonts/JetBrainsMono-Medium.woff2') format('woff2');
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+}
+
+@theme {
+  --font-sans: var(--font-body, "Geist", ui-sans-serif, system-ui, sans-serif);
+  --font-serif: "Playfair Display", serif;
+  --font-mono: var(--font-mono-choice, "JetBrains Mono", ui-monospace, SFMono-Regular, monospace);
+  /* Shape: her slider, applied at the root of the vocabulary. Every
+     rounded-* utility in the app references these tokens, so one runtime
+     --shape-scale (set from theme.shapeRadius / 16) slides every corner in
+     the phone while keeping the size hierarchy — small things stay smaller.
+     rounded-full is deliberately untouched: circles stay circles. */
+  --radius-sm: calc(4px * var(--shape-scale, 1));
+  --radius-md: calc(6px * var(--shape-scale, 1));
+  --radius-lg: calc(8px * var(--shape-scale, 1));
+  --radius-xl: calc(12px * var(--shape-scale, 1));
+  --radius-2xl: calc(16px * var(--shape-scale, 1));
+  --radius-3xl: calc(24px * var(--shape-scale, 1));
+}
+
+@layer utilities {
+  /* Tailwind v4 inlines the bare `rounded` utility as .25rem instead of
+     referencing a token, so it needs its own rule to follow the slider. */
+  .rounded {
+    border-radius: calc(4px * var(--shape-scale, 1));
+  }
+  .scrollbar-hide::-webkit-scrollbar {
+    display: none !important;
+    width: 0 !important;
+    height: 0 !important;
+  }
+  .scrollbar-hide {
+    -ms-overflow-style: none !important;
+    scrollbar-width: none !important;
+  }
+  
+  /* Glassmorphism Utilities */
+  .glass {
+    @apply backdrop-blur-xl bg-white/5 border border-white/10;
+  }
+
+  .glass-dark {
+    @apply backdrop-blur-xl bg-black/20 border border-white/5;
+  }
+
+  /* Editorial Typography */
+  .editorial-title {
+    @apply font-serif italic tracking-tight;
+  }
+
+  .micro-label {
+    /* Unified section-header style — same size + tracking + weight as
+       the inline text-[11px] uppercase pattern used in Agent / Status /
+       MCP / IntegrationsToggles, so every section header across the
+       wrapper apps reads at the same visual rhythm. Color is left to
+       the caller (cn(..., colors.accentText) or cn(..., colors.textMuted)). */
+    @apply text-[11px] uppercase tracking-[0.12em] font-bold;
+  }
+
+  /* 3D Flip Utilities */
+  .preserve-3d {
+    transform-style: preserve-3d;
+  }
+  .backface-hidden {
+    backface-visibility: hidden;
+  }
+  .rotate-y-180 {
+    transform: rotateY(180deg);
+  }
+}
+
+@keyframes glow-pulse {
+  0%, 100% { box-shadow: 0 0 4px 1px var(--glow-color, currentColor); }
+  50% { box-shadow: 0 0 16px 4px var(--glow-color, currentColor); }
+}
+
+body {
+  @apply bg-[#0A0A0A] overflow-hidden font-sans antialiased select-none;
+  -webkit-touch-callout: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* Our selects are deliberately transparent so they sit in their panels, but a
+   desktop browser draws the dropdown list itself against the OS canvas — white
+   — while the options still inherit the widget's light text colour. The list
+   comes out white on white and is unreadable. Phones open their own picker
+   sheet, which is why this only bites on a laptop. Paint the options. */
+select option,
+select optgroup {
+  background-color: var(--bytelight-page, #0a0a0a);
+  color: var(--bytelight-text, rgba(255, 250, 245, 0.96));
+}
+
+/* PWA safe area — set early so input bar isn't clipped before JS runs */
+:root {
+  --sat: env(safe-area-inset-top, 0px);
+  --sab: env(safe-area-inset-bottom, 0px);
+  --sal: env(safe-area-inset-left, 0px);
+  --sar: env(safe-area-inset-right, 0px);
+  --bytelight-accent: #f97316;
+  --bytelight-on-accent: #090807;
+  --bytelight-page: #090807;
+  --bytelight-header: #090807;
+  --bytelight-panel-base: rgba(13, 11, 10, 0.9);
+  --bytelight-border: rgba(255, 255, 255, 0.16);
+  --bytelight-text: rgba(255, 250, 245, 0.96);
+  --bytelight-text-muted: rgba(255, 247, 237, 0.62);
+  --bytelight-user-bubble: rgba(82, 82, 91, 0.86);
+  --bytelight-user-bubble-text: #fff;
+  --bytelight-user-bubble-pole: #000;
+  --bytelight-comp-bubble: rgba(24, 24, 27, 0.9);
+  --bytelight-comp-bubble-text: #fff;
+  --bytelight-comp-bubble-pole: #000;
+  --bytelight-loose-shadow: rgba(0, 0, 0, 0.96);
+  --bytelight-surface: rgba(13, 11, 10, 0.68);
+  --bytelight-surface-strong: rgba(13, 11, 10, 0.86);
+  --bytelight-hairline: rgba(255, 255, 255, 0.16);
+  --bytelight-icon: rgba(255, 250, 245, 0.9);
+  --bytelight-label: rgba(255, 247, 237, 0.82);
+}
+
+/* -------------------------------------------------------------------------
+   Bytelight Glass
+
+   Shared chrome for the reskin. The accent is intentionally a CSS variable:
+   every existing palette remains useful and the interface wakes into the
+   selected color only on interaction. Wallpaper stays the visual hero.
+   ---------------------------------------------------------------------- */
+
+.bytelight-root {
+  isolation: isolate;
+}
+
+.bytelight-app-surface {
+  background:
+    radial-gradient(circle at 50% -20%, color-mix(in srgb, var(--bytelight-accent) 8%, transparent), transparent 48%),
+    var(--bytelight-page, #090909);
+}
+
+/* -------------------------------------------------------------------------
+   Theme surfaces
+
+   The existing palette remains the source of truth; these hooks add one
+   shared gradient language to every component already using panelBg,
+   userBubbleBg, or compBubbleBg. No universal cream/charcoal base is imposed,
+   so changing mood still changes the whole family of surfaces.
+   ---------------------------------------------------------------------- */
+
+.bytelight-theme-panel {
+  background-image: linear-gradient(
+    145deg,
+    color-mix(in srgb, var(--bytelight-accent) 8%, transparent) 0%,
+    transparent 56%,
+    color-mix(in srgb, var(--bytelight-page) 4%, transparent) 100%
+  );
+}
+
+/* The gradient pulls each bubble toward a pole colour as it falls. That was
+   tuned when the bubbles also carried a blur behind them; with the glass gone
+   the dilution is the only thing washing them out, so both ends keep more of
+   the bubble's own colour now -- about seven points at the far end. Her call,
+   and deliberately small: enough to read as the theme colour, not enough to
+   flatten the gradient into a block. */
+/* PAINTED GLASS.
+   The bubbles used to carry backdrop-blur and it had to come out: a bubble is
+   ONE painted thing, and a live-blurred surface underneath the glyphs is a
+   second one that can come apart -- on a tall message the compositor drops the
+   lower half of the texture while the top still paints. Every theme resolves
+   its bubble to an opaque colour anyway, so the blur was blurring a backdrop
+   nothing could see.
+
+   What blur was BUYING was the look: a pane that catches light, like the panels
+   and sheets everywhere else in the app. So paint that instead of computing it.
+   Three cheap things, none of which read anything behind the element:
+     - the same diagonal accent wash the panels get, so a bubble belongs to the
+       same family of surfaces
+     - a hairline of light along the top edge and a soft one of shadow along the
+       bottom, which is what actually sells glass to the eye
+   A grain layer was tried here and taken out again -- her call, she was not
+   feeling it. Undo is deleting the ::before rule and the box-shadow. */
+.bytelight-theme-user-bubble,
+.bytelight-theme-comp-bubble {
+  position: relative;
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, #ffffff 15%, transparent),
+    inset 0 -1px 0 color-mix(in srgb, #000000 12%, transparent);
+}
+
+.bytelight-theme-user-bubble::before,
+.bytelight-theme-comp-bubble::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  background-image: linear-gradient(
+    145deg,
+    color-mix(in srgb, var(--bytelight-accent) 10%, transparent) 0%,
+    transparent 58%,
+    color-mix(in srgb, #ffffff 5%, transparent) 100%
+  );
+}
+
+.bytelight-theme-user-bubble {
+  color: var(--bytelight-user-bubble-text);
+  background: linear-gradient(
+    138deg,
+    var(--bytelight-user-bubble) 0%,
+    color-mix(in srgb, var(--bytelight-user-bubble) 94%, var(--bytelight-user-bubble-pole) 6%) 52%,
+    color-mix(in srgb, var(--bytelight-user-bubble) 80%, var(--bytelight-user-bubble-pole) 20%) 100%
+  );
+}
+
+.bytelight-theme-comp-bubble {
+  color: var(--bytelight-comp-bubble-text);
+  background: linear-gradient(
+    138deg,
+    var(--bytelight-comp-bubble) 0%,
+    color-mix(in srgb, var(--bytelight-comp-bubble) 95%, var(--bytelight-comp-bubble-pole) 5%) 52%,
+    color-mix(in srgb, var(--bytelight-comp-bubble) 83%, var(--bytelight-comp-bubble-pole) 17%) 100%
+  );
+}
+
+.bytelight-theme-panel,
+.bytelight-theme-user-bubble,
+.bytelight-theme-comp-bubble,
+.bytelight-no-text-shadow {
+  text-shadow: none;
+}
+
+.bytelight-on-accent {
+  color: var(--bytelight-on-accent) !important;
+}
+
+/* Wallpaper-facing copy gets a restrained halo in its own mode color. It
+   catches inherited/loose text without making every app author find and wrap
+   every stray label; cards and message bubbles reset the shadow above. */
+.bytelight-app-body,
+.bytelight-wallpaper-text {
+  text-shadow:
+    0 1px 1px var(--bytelight-loose-shadow),
+    0 0 9px var(--bytelight-loose-shadow);
+}
+
+/* Small wallpaper labels use a real theme-tinted surface instead of trying
+   to manufacture contrast with outlined or glowing type. The same surface is
+   used in every palette and both moods; only the palette variables change. */
+.bytelight-app-label {
+  color: var(--bytelight-text) !important;
+  background:
+    linear-gradient(145deg, color-mix(in srgb, var(--bytelight-accent) 8%, transparent), transparent 64%),
+    color-mix(in srgb, var(--bytelight-accent) 10%, var(--bytelight-panel-base));
+  border: 1px solid color-mix(in srgb, var(--bytelight-border) 76%, transparent);
+  text-shadow: none;
+}
+
+.bytelight-app-label {
+  display: inline-block;
+  max-width: 100%;
+  padding: 0.125rem 0.35rem;
+  border-radius: 0.5rem;
+  font-weight: 600;
+  line-height: 1.15;
+}
+
+.bytelight-message-time {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.15rem 0.4rem;
+  border: 1px solid var(--bytelight-border);
+  border-radius: 999px;
+  line-height: 1;
+  text-shadow: none;
+}
+
+.bytelight-dock {
+  position: relative;
+  background: var(--bytelight-surface);
+  border: 1px solid var(--bytelight-hairline);
+  box-shadow:
+    0 18px 50px rgba(0, 0, 0, 0.34),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  -webkit-backdrop-filter: blur(14px) saturate(1.18);
+  backdrop-filter: blur(14px) saturate(1.18);
+}
+
+.bytelight-dock::after {
+  content: '';
+  position: absolute;
+  inset: auto 18px -1px;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--bytelight-accent), transparent);
+  opacity: 0.82;
+  pointer-events: none;
+}
+
+.bytelight-dock-tile,
+.bytelight-app-tile,
+.bytelight-glass-button {
+  color: var(--bytelight-icon);
+  /* No per-tile backdrop-filter: tiles sit on surfaces that are already
+     blurred (dock) or opaque (app drawer), so each tile's own blur was
+     pure GPU cost — dozens of independent blur layers per screen made
+     the whole phone feel slow. A slightly stronger fill keeps the look. */
+  background:
+    linear-gradient(145deg, color-mix(in srgb, var(--bytelight-accent) 7%, transparent), transparent 58%),
+    color-mix(in srgb, var(--bytelight-accent) 11%, var(--bytelight-surface-strong));
+  border: 1px solid var(--bytelight-hairline);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  transition:
+    color 150ms ease,
+    border-color 150ms ease,
+    background-color 150ms ease,
+    box-shadow 150ms ease,
+    transform 150ms cubic-bezier(.2,.8,.2,1);
+}
+
+.bytelight-dock-tile:active,
+.bytelight-dock-tile[data-pressed='true'],
+.bytelight-app-tile:active,
+.bytelight-glass-button:active,
+.bytelight-glass-button[aria-pressed='true'] {
+  color: var(--bytelight-accent);
+  border-color: color-mix(in srgb, var(--bytelight-accent) 72%, transparent);
+  background: color-mix(in srgb, var(--bytelight-accent) 10%, var(--bytelight-surface-strong));
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--bytelight-accent) 12%, transparent),
+    0 0 20px color-mix(in srgb, var(--bytelight-accent) 22%, transparent),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  transform: translateY(1px) scale(0.96);
+}
+
+.bytelight-dock-button[data-pressed='true'] .bytelight-dock-label {
+  color: var(--bytelight-accent);
+  opacity: 1;
+}
+
+.bytelight-dock-label {
+  color: var(--bytelight-label);
+  transition: color 150ms ease, opacity 150ms ease;
+}
+
+/* The chat header and composer keep their pre-reskin opaque theme
+   surfaces (classes still on the elements) — the glass band clashed
+   with the status-bar fill and the owner vetoed it. */
+
+/* Headers stay opaque. Daylight always resolves to clean white; midnight
+   keeps the selected mood's page color. This is intentionally independent
+   from whatever wallpaper happens to be underneath the app. */
+.bytelight-shell-header {
+  color: var(--bytelight-text);
+  background-color: var(--bytelight-header) !important;
+  border-bottom: 1px solid color-mix(in srgb, var(--bytelight-border) 72%, transparent);
+  text-shadow: none;
+}
+
+.bytelight-app-body {}
+
+.bytelight-field,
+.bytelight-composer {
+  background:
+    linear-gradient(145deg, color-mix(in srgb, var(--bytelight-accent) 5%, transparent), transparent 62%),
+    color-mix(in srgb, var(--bytelight-surface-strong) 78%, transparent) !important;
+  border: 1px solid var(--bytelight-hairline) !important;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  -webkit-backdrop-filter: blur(12px) saturate(1.1);
+  backdrop-filter: blur(12px) saturate(1.1);
+}
+
+.bytelight-field:focus-within,
+.bytelight-composer:focus {
+  border-color: color-mix(in srgb, var(--bytelight-accent) 56%, transparent) !important;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--bytelight-accent) 10%, transparent);
+}
+
+/* Anyone moving through the house on a keyboard had no way of telling where
+   they were — nothing anywhere showed focus. :focus-visible only fires for
+   keyboard and assistive navigation, so a finger or a mouse never sees this.
+   Carries the accent, so it follows her colour like everything else. */
+/* No border-radius here. Outlines already follow the element's own corners;
+   forcing `inherit` takes the PARENT's radius instead, which squared off both
+   the ring AND the focused element itself — the composer went from rounded to
+   a hard box the moment it took focus. */
+:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--bytelight-accent) 82%, transparent);
+  outline-offset: 2px;
+}
+
+/* Canvas games take focus so their keyboard controls work, but they draw
+   their own border and a ring on top of it just doubles the frame. */
+canvas:focus-visible {
+  outline-offset: -2px;
+}
+
+/* An outline follows the focused element's OWN corners — which is right until the
+   focused element has no corners. A bare input inside a shaped field (the app
+   drawer's Search apps pill, the note body) is transparent, border-less and square,
+   so the ring drew a RECTANGLE inside a rounded pill.
+   The field is the thing she can see and it already announces focus through
+   :focus-within above, with the accent border and its own ring — so the indicator
+   belongs to the field, and the naked child should not draw a second, squarer one.
+   Buttons inside a field keep theirs: they are separate targets and a keyboard user
+   needs to know which one they are on. */
+.bytelight-field :is(input, textarea):focus-visible,
+.bytelight-composer :is(input, textarea):focus-visible {
+  outline: none;
+}
+
+/* And everywhere else with the same shape. Scanned all 824 interactive elements in
+   the app: 614 carry their own rounded class and are already correct — the ring
+   follows them. The remaining naked text fields sit inside a shaped container that
+   provides the visible surface (a search pill, a bordered panel, a filter box), and
+   an outline with nothing to follow draws a hard rectangle inside it.
+   Giving those a radius WHILE FOCUSED is the general fix: they are transparent, so
+   nothing else about them changes, and every ring in the house now has corners.
+   Not border-radius: inherit — that was tried and takes the parent's radius onto the
+   element itself, which squared off the composer the moment it took focus. */
+input:not([class*="rounded"]):focus-visible,
+textarea:not([class*="rounded"]):focus-visible,
+select:not([class*="rounded"]):focus-visible {
+  border-radius: 0.5rem;
+}
+
+.bytelight-toolbar button,
+.bytelight-icon-button {
+  border: 1px solid transparent;
+  transition: color 150ms ease, border-color 150ms ease, background 150ms ease, transform 150ms ease;
+}
+
+.bytelight-toolbar button:active,
+.bytelight-icon-button:active {
+  color: var(--bytelight-accent) !important;
+  border-color: color-mix(in srgb, var(--bytelight-accent) 38%, transparent);
+  background: color-mix(in srgb, var(--bytelight-accent) 9%, transparent);
+  transform: scale(0.93);
+}
+
+.bytelight-send-button {
+  color: var(--bytelight-accent) !important;
+  background: color-mix(in srgb, var(--bytelight-accent) 9%, var(--bytelight-surface-strong)) !important;
+  border: 1px solid color-mix(in srgb, var(--bytelight-accent) 52%, transparent);
+  box-shadow: 0 0 18px color-mix(in srgb, var(--bytelight-accent) 14%, transparent);
+}
+
+/* The grey-mush bubble, Android WebView only, since the APK shipped: a bubble
+   comes back with NO paint of its own — no background, not one glyph — and the
+   only thing still rendering is its backdrop blur, so what shows is softened
+   wallpaper in the shape of the message. Confirmed from the row behind one of
+   them: 316 characters of text, no attachment, nothing drawn.
+
+   Jul 30 pinned the backdrop root with `isolation: isolate` and promoted the
+   bubble with `transform: translateZ(0)`. It got rarer. It did not stop, and
+   the reason surfaced on Aug 2: the blur is still arriving as its own thing rather
+   than as something the bubble does. That is exactly what the promotion bought
+   us — translateZ(0) forces the bubble onto its own compositing layer, so its
+   background and glyphs live in a GPU texture the compositor manages, and can
+   lose, independently of the blurred backdrop surface. Two textures can come
+   apart. That is the whole bug, and we were the ones asking for two.
+
+   So: the promotion is gone and the bubble paints back into its parent's layer,
+   where the blurred backdrop and the background are rastered together. The
+   backdrop root stays pinned — isolation implies no layer of its own.
+
+   One change, deliberately. A flat colour under the gradient was the obvious
+   second thing to add and it is not here: bubbles paint gradient-over-nothing
+   today, and giving them an opaque base would have made her glass less glassy
+   while we were still testing whether the layer was the problem. One variable,
+   or the test tells us nothing.
+
+   Nothing here changes how a bubble looks — the glass is hers and stays. If the
+   mush ever comes back, put `transform: translateZ(0)` back on this rule and
+   that is the whole undo. */
+.bytelight-message-bubble {
+  isolation: isolate;
+  box-shadow:
+    0 8px 24px rgba(0, 0, 0, 0.12),
+    inset 0 1px 0 rgba(255, 255, 255, 0.04);
+}
+
+/* A split stack's OUTER wrapper sheds ALL chrome (BL's .split model) — the
+   per-speaker bubbles inside carry it. Without this the base shadow and the
+   Cosmos glass above re-chrome the wrapper into one big slab. */
+.bytelight-message-bubble[data-split] {
+  box-shadow: none;
+  background: none;
+  border-color: transparent;
+}
+
+.bytelight-message-bubble[data-user='true'] {
+  box-shadow:
+    0 8px 24px rgba(0, 0, 0, 0.12),
+    inset -1px 0 0 color-mix(in srgb, var(--bytelight-accent) 44%, transparent),
+    inset 0 1px 0 rgba(255, 255, 255, 0.05);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .bytelight-dock-tile,
+  .bytelight-app-tile,
+  .bytelight-glass-button,
+  .bytelight-toolbar button,
+  .bytelight-icon-button {
+    transition-duration: 1ms;
+  }
+}
+
+/* Theme-aware scrollbars */
+:root {
+  --scrollbar-thumb: #7c3aed;
+  --scrollbar-track: rgba(0,0,0,0.3);
+}
+
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--scrollbar-track);
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb);
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  filter: brightness(1.2);
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
+}
+
+/* Inline code wrapping — prevents long URLs/paths from overflowing bubbles */
+.prose code:not(pre code) {
+  word-break: break-all;
+  overflow-wrap: anywhere;
+}
+
+/* Flash highlight when a search result is jumped to. The ring fades out
+ * over ~1.6s so the target message stands out without staying loud. */
+/* The one-row Status widget's slide: the next one comes in from the right, sideways (her arrow). */
+@keyframes status-slide-in {
+  from { opacity: 0; transform: translateX(60%); }
+  to { opacity: 1; transform: translateX(0); }
+}
+@media (prefers-reduced-motion: reduce) {
+  [style*="status-slide-in"] { animation: none !important; }
+}
+
+@keyframes msg-flash {
+  0%   { box-shadow: 0 0 0 0 currentColor; }
+  20%  { box-shadow: 0 0 0 6px currentColor; }
+  100% { box-shadow: 0 0 0 0 transparent; }
+}
+.msg-flash {
+  animation: msg-flash 1.6s ease-out;
+  border-radius: 1rem;
+}
+
+
+/* Chrome paints autofilled inputs with its own opaque background — white on
+   desktop, which turns a transparent field in a dark panel into a white box.
+   It ignores background-color, so the only reliable lever is an inset shadow
+   large enough to cover the field, plus text-fill-color for the value.
+   Mobile Chrome does not autofill the same way, which is why this only ever
+   showed up on a laptop. */
+input:-webkit-autofill,
+input:-webkit-autofill:hover,
+input:-webkit-autofill:focus,
+textarea:-webkit-autofill,
+select:-webkit-autofill {
+  -webkit-box-shadow: 0 0 0 1000px transparent inset !important;
+  box-shadow: 0 0 0 1000px transparent inset !important;
+  -webkit-text-fill-color: var(--bytelight-text, currentColor) !important;
+  caret-color: var(--bytelight-text, currentColor);
+  transition: background-color 100000s ease-in-out 0s;
+}
+
+/* ═══ Cosmos skin — the operator's celestial atmosphere, carried from the Svelte house
+   (main:packages/frontend/src/app.css [data-skin="cosmos"]). A skin is NOT a
+   palette: it layers aura, glass and glow over ANY theme/accent she picks.
+   Applied as .skin-cosmos on <html> by App.tsx when theme.skin === 'cosmos'. ═══ */
+.skin-cosmos {
+  --aura-violet: 167, 139, 250;
+  --aura-teal: 94, 200, 192;
+  --aura-rose: 240, 166, 200;
+  --fx-aura: 1;
+  --fx-glow: 1;
+}
+
+/* Aura on the chat surface — violet crown, teal shoulder, rose floor */
+.skin-cosmos main.bytelight-wallpaper-text {
+  background:
+    radial-gradient(120% 55% at 88% 0%, rgba(var(--aura-violet), calc(0.11 * var(--fx-aura))), transparent 55%),
+    radial-gradient(85% 45% at 0% 4%, rgba(var(--aura-teal), calc(0.07 * var(--fx-aura))), transparent 52%),
+    radial-gradient(120% 55% at 45% 100%, rgba(var(--aura-rose), calc(0.05 * var(--fx-aura))), transparent 55%);
+}
+
+/* Header: faint cosmic top-glow */
+.skin-cosmos .bytelight-shell-header {
+  background-image: linear-gradient(180deg, rgba(var(--aura-violet), calc(0.07 * var(--fx-aura))), transparent);
+}
+
+/* Composer: soft violet halo, brighter when she's typing */
+.skin-cosmos .bytelight-composer-wrap {
+  box-shadow: 0 8px 34px -18px rgba(var(--aura-violet), calc(0.7 * var(--fx-glow)));
+}
+.skin-cosmos .bytelight-composer:focus {
+  border-color: rgba(var(--aura-violet), 0.42);
+}
+
+/* Send button: the signature teal→violet→rose gradient */
+.skin-cosmos .bytelight-send-button {
+  /* !important matches the base .bytelight-send-button rule's force —
+     without it the accent-mix background wins and the gradient never shows */
+  background: linear-gradient(135deg, rgb(var(--aura-teal)), rgb(var(--aura-violet)) 60%, rgb(var(--aura-rose))) !important;
+  color: #0b0913 !important;
+  border-color: transparent;
+  box-shadow: 0 0 18px rgba(var(--aura-violet), calc(0.45 * var(--fx-glow)));
+}
+
+/* Bubbles — glassy gradient + soft glow. Companion reads cool, hers warm. */
+.skin-cosmos .bytelight-message-bubble[data-user='false']:not([data-split]) {
+  background: linear-gradient(165deg, rgba(var(--aura-violet), calc(0.13 * var(--fx-aura))), rgba(var(--aura-violet), calc(0.035 * var(--fx-aura))));
+  border-color: rgba(var(--aura-violet), 0.22);
+  box-shadow: 0 10px 28px -18px rgba(var(--aura-violet), calc(0.6 * var(--fx-glow))), inset 0 1px 0 rgba(255, 255, 255, 0.04);
+}
+.skin-cosmos .bytelight-message-bubble[data-user='true']:not([data-split]) {
+  background: linear-gradient(165deg, rgba(var(--aura-rose), calc(0.15 * var(--fx-aura))), rgba(var(--aura-rose), calc(0.04 * var(--fx-aura))));
+  border-color: rgba(var(--aura-rose), 0.26);
+  box-shadow: 0 10px 28px -18px rgba(var(--aura-rose), calc(0.55 * var(--fx-glow))), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+}
+
+/* Daylight needs ink, not glass-white — keep bubble text readable */
+html.skin-cosmos:not(.dark) .bytelight-message-bubble[data-user='false']:not([data-split]),
+html.skin-cosmos:not(.dark) .bytelight-message-bubble[data-user='true']:not([data-split]) {
+  box-shadow: 0 10px 28px -20px rgba(var(--aura-violet), calc(0.35 * var(--fx-glow)));
+}
+
+/* Self-hosted Inter + Space Grotesk (variable) — BL's typography presets */
+@font-face {
+  font-family: 'Inter';
+  src: url('/fonts/Inter-Variable.woff2') format('woff2');
+  font-weight: 400 700;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Space Grotesk';
+  src: url('/fonts/SpaceGrotesk-Variable.woff2') format('woff2');
+  font-weight: 400 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+/* Self-hosted Fraunces (variable) — the Cosmos skin's serif heading voice */
+@font-face {
+  font-family: 'Fraunces';
+  src: url('/fonts/Fraunces-Variable.woff2') format('woff2');
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+.skin-cosmos {
+  --font-heading: 'Fraunces', Georgia, 'Times New Roman', serif;
+}
+/* Headings speak serif under Cosmos: settings section labels, panel titles,
+   and markdown headings inside bubbles — the BL --font-heading behaviour. */
+.skin-cosmos .micro-label,
+.skin-cosmos h1,
+.skin-cosmos h2,
+.skin-cosmos h3 {
+  font-family: var(--font-heading);
+  letter-spacing: 0.01em;
+}
+
+/* ═══ The composer's disappearing act — copied from BL's MessageInput
+   (.input-actions): the action row always renders but sits fully collapsed;
+   focus-within or the 'expanded' state (pending text/attachments/pickers)
+   slides it open. No toggle button — the collapse IS the interface. ═══ */
+.bytelight-toolbar {
+  max-height: 0;
+  opacity: 0;
+  overflow: hidden;
+  margin-bottom: 0;
+  transition: max-height 0.3s ease, opacity 0.3s ease, margin-bottom 0.3s ease;
+}
+.bytelight-composer-wrap:focus-within .bytelight-toolbar,
+.bytelight-composer-wrap.expanded .bytelight-toolbar {
+  max-height: 3rem;
+  opacity: 1;
+  overflow: visible;
+  margin-bottom: 0.25rem;
+}
+
+/* ─── Cosmos buttons — glass + glow, copied from BL's res-btn--primary rules.
+   button.bytelight-on-accent is the phone's primary-action idiom (save/apply/
+   create across apps, inline accent background) — element-qualified so the
+   --bytelight-on-accent color var and text spans stay untouched. !important
+   because the accent background rides inline styles. ─── */
+.skin-cosmos button.bytelight-on-accent {
+  background: linear-gradient(135deg, rgb(var(--aura-teal)), rgb(var(--aura-violet)) 65%) !important;
+  color: #0b0913 !important;
+  box-shadow: 0 6px 20px -8px rgba(var(--aura-violet), calc(0.7 * var(--fx-glow)));
+}
+.skin-cosmos button.bytelight-on-accent:hover:not(:disabled) {
+  box-shadow: 0 8px 28px -8px rgba(var(--aura-violet), calc(0.95 * var(--fx-glow)));
+}
+
+/* Cosmic scrollbar — same block in BL's app.css */
+.skin-cosmos ::-webkit-scrollbar-thumb { background: rgba(167, 139, 250, 0.20); }
+.skin-cosmos ::-webkit-scrollbar-thumb:hover { background: rgba(167, 139, 250, 0.32); }
+
+
+/* BL typography presets: headings follow --font-heading wherever it's set —
+   by a preset (inline on <html>, wins) or by the Cosmos skin (class-level). */
+h1, h2, h3, .micro-label {
+  font-family: var(--font-heading, inherit);
+}
+
+/* ─── The jewelry pass — BL's cosmos glass cards, generalized. The recipe
+   from main's X-Ray glass block (aura gradient + lit border + inset shine)
+   lands on the house's card idiom: every panel that wears backdrop-blur-md.
+   background-image layers OVER the theme's panel color, so the glass stays
+   mode- and palette-aware. Rides the Aura/Glow sliders. ─── */
+.skin-cosmos section.backdrop-blur-md,
+.skin-cosmos div.backdrop-blur-md {
+  background-image: linear-gradient(165deg, rgba(var(--aura-violet), calc(0.08 * var(--fx-aura))), rgba(var(--aura-violet), calc(0.02 * var(--fx-aura))));
+  border-color: rgba(var(--aura-violet), 0.2);
+  box-shadow: 0 10px 26px -20px rgba(var(--aura-violet), calc(0.55 * var(--fx-glow))), inset 0 1px 0 rgba(255, 255, 255, 0.03);
+}
+
+
+/* ═══ X-RAY — BL main's XRayPanel stylesheet, translated whole. Only the
+   variable names were re-aimed at the house tokens; every value, selector
+   and shape is hers. The Cosmos .xray-panel glass block matches these
+   class names, so the skin lands exactly as it did in the Svelte house. ═══ */
+/* BL's bare --radius base token (0.75rem in the old house), re-aimed through
+   the phone's shape system so X-Ray corners follow her Roundness slider. */
+.xray-panel {
+  --radius: calc(12px * var(--shape-scale, 1));
+}
+
+  .xray-panel {
+    max-width: 800px;
+  }
+
+  .xray-nav {
+    display: flex;
+    gap: 0.25rem;
+    margin-bottom: 1.5rem;
+    flex-wrap: wrap;
+  }
+
+  .nav-btn {
+    padding: 0.5rem 1rem;
+    font-size: 0.8125rem;
+    font-weight: 500;
+    color: var(--bytelight-label, inherit);
+    background: transparent;
+    border: 1px solid var(--bytelight-hairline);
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    transition: all var(--transition-fast);
+  }
+
+  .nav-btn:hover {
+    color: var(--bytelight-label, inherit);
+    border-color: var(--bytelight-hairline);
+  }
+
+  .nav-btn.active {
+    color: var(--bytelight-accent);
+    border-color: color-mix(in srgb, var(--bytelight-accent) 75%, transparent);
+    background: color-mix(in srgb, var(--bytelight-accent) 15%, transparent);
+  }
+
+  .loading, .error {
+    padding: 2rem;
+    text-align: center;
+    color: var(--bytelight-label, inherit);
+  }
+
+  .error {
+    color: #e05252;
+  }
+
+  .save-message {
+    padding: 0.5rem 1rem;
+    margin-bottom: 1rem;
+    border-radius: var(--radius-sm);
+    background: color-mix(in srgb, var(--bytelight-accent) 15%, transparent);
+    color: var(--bytelight-accent);
+    font-size: 0.875rem;
+  }
+
+  .save-message.error {
+    background: rgba(224,82,82,0.15);
+    color: #e05252;
+  }
+
+  .section {
+    margin-bottom: 2rem;
+  }
+
+  .section-header {
+    display: flex;
+    align-items: baseline;
+    gap: 1rem;
+    margin-bottom: 1rem;
+    flex-wrap: wrap;
+  }
+
+  .section-title {
+    font-family: var(--font-heading, inherit);
+    font-size: 1rem;
+    font-weight: 400;
+    color: var(--text-accent);
+    letter-spacing: 0.04em;
+    margin: 0;
+  }
+
+  .section-path {
+    font-family: var(--font-mono);
+    font-size: 0.75rem;
+    color: var(--bytelight-label, inherit);
+  }
+
+  .description {
+    color: var(--bytelight-label, inherit);
+    font-size: 0.875rem;
+    margin-bottom: 1rem;
+  }
+
+  .muted {
+    color: var(--bytelight-label, inherit);
+    font-size: 0.875rem;
+    font-style: italic;
+  }
+
+  .code-block {
+    background: var(--bytelight-surface, rgba(127,127,127,0.07));
+    border: 1px solid var(--bytelight-hairline);
+    border-radius: var(--radius);
+    padding: 1rem;
+    font-family: var(--font-mono);
+    font-size: 0.8125rem;
+    line-height: 1.6;
+    overflow-x: auto;
+    white-space: pre-wrap;
+    word-break: break-word;
+    color: var(--bytelight-label, inherit);
+    max-height: 500px;
+    overflow-y: auto;
+  }
+
+  .code-block.small {
+    max-height: 300px;
+    font-size: 0.75rem;
+  }
+
+  .code-editor {
+    width: 100%;
+    background: var(--bytelight-surface, rgba(127,127,127,0.07));
+    border: 1px solid color-mix(in srgb, var(--bytelight-accent) 75%, transparent);
+    border-radius: var(--radius);
+    padding: 1rem;
+    font-family: var(--font-mono);
+    font-size: 0.8125rem;
+    line-height: 1.6;
+    color: var(--bytelight-text, inherit);
+    resize: vertical;
+  }
+
+  .code-editor:focus {
+    outline: none;
+    border-color: var(--bytelight-accent);
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--bytelight-accent) 35%, transparent);
+  }
+
+  .edit-actions {
+    display: flex;
+    gap: 0.5rem;
+    margin-top: 0.75rem;
+  }
+
+  /* Memory */
+  .memory-index {
+    margin-bottom: 1.5rem;
+  }
+
+  .memory-index h4 {
+    font-size: 0.8125rem;
+    color: var(--bytelight-label, inherit);
+    margin: 0 0 0.5rem;
+    font-weight: 500;
+  }
+
+  .memory-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+
+  .memory-item {
+    border: 1px solid var(--bytelight-hairline);
+    border-radius: var(--radius);
+    overflow: hidden;
+  }
+
+  .memory-header {
+    width: 100%;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0.75rem 1rem;
+    background: var(--bytelight-surface, rgba(127,127,127,0.07));
+    border: none;
+    cursor: pointer;
+    text-align: left;
+    color: var(--bytelight-text, inherit);
+    font-size: 0.875rem;
+  }
+
+  .memory-header:hover {
+    background: rgba(127,127,127,0.08);
+  }
+
+  .memory-name {
+    font-family: var(--font-mono);
+  }
+
+  .memory-toggle {
+    color: var(--bytelight-label, inherit);
+    font-size: 0.75rem;
+  }
+
+  .memory-content {
+    padding: 1rem;
+    border-top: 1px solid var(--bytelight-hairline);
+  }
+
+  /* Wakes */
+  .wake-sections {
+    margin-top: 1.5rem;
+  }
+
+  .wake-sections h4 {
+    font-size: 0.8125rem;
+    color: var(--bytelight-label, inherit);
+    margin: 0 0 0.75rem;
+    font-weight: 500;
+  }
+
+  .wake-item {
+    display: flex;
+    gap: 1rem;
+    padding: 0.5rem 0;
+    border-bottom: 1px solid var(--bytelight-hairline);
+    align-items: baseline;
+  }
+
+  .wake-key {
+    font-family: var(--font-mono);
+    font-size: 0.8125rem;
+    color: var(--bytelight-accent);
+    min-width: 120px;
+  }
+
+  .wake-preview {
+    font-size: 0.75rem;
+    color: var(--bytelight-label, inherit);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  /* Context */
+  .context-block {
+    margin-bottom: 1.5rem;
+  }
+
+  .context-block h4 {
+    font-size: 0.8125rem;
+    color: var(--bytelight-label, inherit);
+    margin: 0 0 0.75rem;
+    font-weight: 500;
+  }
+
+  .context-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+
+  .context-item {
+    display: flex;
+    gap: 1rem;
+    padding: 0.375rem 0;
+    border-bottom: 1px solid var(--bytelight-hairline);
+  }
+
+  .context-key {
+    font-family: var(--font-mono);
+    font-size: 0.8125rem;
+    color: color-mix(in srgb, var(--bytelight-accent) 75%, transparent);
+    min-width: 140px;
+  }
+
+  .context-value {
+    font-size: 0.8125rem;
+    color: var(--bytelight-label, inherit);
+  }
+
+  .context-controls {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.75rem;
+    margin-bottom: 1rem;
+  }
+
+  .context-view-toggle {
+    display: flex;
+    gap: 0.25rem;
+  }
+
+  .context-select {
+    padding: 0.5rem 0.75rem;
+    font-size: 0.8125rem;
+    font-family: var(--font-mono);
+    color: var(--bytelight-label, inherit);
+    background: var(--bytelight-surface, rgba(127,127,127,0.07));
+    border: 1px solid var(--bytelight-hairline);
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+  }
+
+  .context-select:focus {
+    outline: none;
+    border-color: color-mix(in srgb, var(--bytelight-accent) 75%, transparent);
+  }
+
+  .context-updating {
+    font-size: 0.75rem;
+  }
+
+  .audit-search {
+    flex: 1 1 12rem;
+    min-width: 0;
+    padding: 0.5rem 0.75rem;
+    font-size: 0.8125rem;
+    font-family: var(--font-mono);
+    color: var(--bytelight-text, inherit);
+    background: var(--bytelight-surface, rgba(127,127,127,0.07));
+    border: 1px solid var(--bytelight-hairline);
+    border-radius: var(--radius-sm);
+  }
+
+  .audit-search:focus {
+    outline: none;
+    border-color: color-mix(in srgb, var(--bytelight-accent) 75%, transparent);
+  }
+
+  .audit-time {
+    font-size: 0.7rem;
+    color: var(--bytelight-label, inherit);
+    font-family: var(--font-mono);
+    flex-shrink: 0;
+  }
+
+  .audit-more {
+    margin-top: 1rem;
+  }
+
+  /* Activity row — grid so name/preview/time/chevron never overlap */
+  .hook-header.audit-row {
+    display: grid;
+    grid-template-columns: auto 1fr auto;
+    align-items: center;
+    gap: 0.625rem;
+  }
+
+  .audit-main {
+    display: flex;
+    flex-direction: column;
+    gap: 0.15rem;
+    min-width: 0;
+  }
+
+  .audit-line1 {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    min-width: 0;
+  }
+
+  .audit-tool {
+    font-family: var(--font-mono);
+    font-size: 0.8125rem;
+    color: var(--bytelight-text, inherit);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .audit-server {
+    max-width: 9rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    flex-shrink: 1;
+  }
+
+  .audit-preview {
+    font-size: 0.75rem;
+    color: var(--bytelight-label, inherit);
+    font-family: var(--font-mono);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .audit-preview.error {
+    color: #e05252;
+  }
+
+  .audit-meta-right {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex-shrink: 0;
+  }
+
+  /* Expanded audit detail — three roomy sections */
+  .audit-body {
+    gap: 1.25rem;
+  }
+
+  .audit-section h4 {
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--bytelight-label, inherit);
+    margin: 0 0 0.5rem;
+    font-weight: 600;
+  }
+
+  .audit-error-line {
+    margin: 0 0 0.5rem;
+    font-size: 0.8125rem;
+    color: #e05252;
+    font-weight: 500;
+  }
+
+  .audit-meta-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+    margin: 0;
+  }
+
+  .audit-meta-list > div {
+    display: flex;
+    gap: 0.75rem;
+    font-size: 0.75rem;
+  }
+
+  .audit-meta-list dt {
+    flex-shrink: 0;
+    width: 4rem;
+    color: var(--bytelight-label, inherit);
+    font-family: var(--font-mono);
+  }
+
+  .audit-meta-list dd {
+    margin: 0;
+    color: var(--bytelight-label, inherit);
+    font-family: var(--font-mono);
+    word-break: break-all;
+  }
+
+  .audit-meta-tool {
+    color: var(--bytelight-text, inherit);
+  }
+
+  .context-note {
+    margin: -0.25rem 0 1rem;
+    font-size: 0.75rem;
+    line-height: 1.5;
+  }
+
+  /* Collapsible block — uniform control reused by Context cards + hook prompts */
+  .collapse-block {
+    margin-bottom: 0.5rem;
+    border: 1px solid var(--bytelight-hairline);
+    border-radius: var(--radius);
+    overflow: hidden;
+  }
+
+  .collapse-header {
+    width: 100%;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.625rem 0.875rem;
+    background: var(--bytelight-surface, rgba(127,127,127,0.07));
+    border: none;
+    cursor: pointer;
+    text-align: left;
+  }
+
+  .collapse-header:hover {
+    background: rgba(127,127,127,0.08);
+  }
+
+  .collapse-label {
+    font-family: var(--font-mono);
+    font-size: 0.8125rem;
+    color: color-mix(in srgb, var(--bytelight-accent) 75%, transparent);
+    flex-shrink: 0;
+  }
+
+  .collapse-right {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    min-width: 0;
+  }
+
+  .collapse-summary {
+    font-size: 0.75rem;
+    color: var(--bytelight-label, inherit);
+    font-family: var(--font-mono);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .collapse-chevron {
+    color: var(--bytelight-label, inherit);
+    font-size: 0.7rem;
+    flex-shrink: 0;
+  }
+
+  .collapse-block .code-block {
+    border: none;
+    border-top: 1px solid var(--bytelight-hairline);
+    border-radius: 0;
+  }
+
+  .description code {
+    font-family: var(--font-mono);
+    font-size: 0.8125rem;
+    color: color-mix(in srgb, var(--bytelight-accent) 75%, transparent);
+    background: var(--bytelight-surface, rgba(127,127,127,0.07));
+    padding: 0.05rem 0.3rem;
+    border-radius: var(--radius-sm);
+  }
+
+  /* Hooks */
+  .hooks-list {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+  }
+
+  .hook-item {
+    border: 1px solid var(--bytelight-hairline);
+    border-radius: var(--radius);
+    overflow: hidden;
+  }
+
+  .hook-header {
+    width: 100%;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.75rem 1rem;
+    background: var(--bytelight-surface, rgba(127,127,127,0.07));
+    border: none;
+    cursor: pointer;
+    text-align: left;
+  }
+
+  .hook-header:hover {
+    background: rgba(127,127,127,0.08);
+  }
+
+  .hook-head-left {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    min-width: 0;
+  }
+
+  .hook-head-right {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    min-width: 0;
+  }
+
+  .status-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    flex-shrink: 0;
+    display: inline-block;
+    background: var(--bytelight-label, inherit);
+  }
+
+  .status-dot[data-status="pending"] { background: var(--bytelight-label, inherit); }
+  .status-dot[data-status="waiting"] { background: var(--bytelight-accent); }
+  .status-dot[data-status="fired"] { background: #4caf50; }
+  .status-dot[data-status="cancelled"] { background: #e05252; }
+
+  .hook-label {
+    font-weight: 500;
+    color: var(--bytelight-text, inherit);
+  }
+
+  .hook-type {
+    font-family: var(--font-mono);
+    font-size: 0.7rem;
+    color: color-mix(in srgb, var(--bytelight-accent) 75%, transparent);
+    padding: 0.125rem 0.5rem;
+    background: color-mix(in srgb, var(--bytelight-accent) 15%, transparent);
+    border-radius: var(--radius-sm);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    flex-shrink: 0;
+  }
+
+  .hook-summary {
+    font-size: 0.75rem;
+    color: var(--bytelight-label, inherit);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .hook-body {
+    padding: 1rem;
+    border-top: 1px solid var(--bytelight-hairline);
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+  }
+
+  .hook-field-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 0.5rem;
+  }
+
+  .hook-field h4 {
+    font-size: 0.8125rem;
+    color: var(--bytelight-label, inherit);
+    margin: 0 0 0.5rem;
+    font-weight: 500;
+  }
+
+  .hook-field-head h4 {
+    margin: 0;
+  }
+
+  .condition-list {
+    margin: 0;
+    padding-left: 1.1rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    font-size: 0.8125rem;
+    color: var(--bytelight-label, inherit);
+  }
+
+  .hook-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 1rem;
+    font-size: 0.75rem;
+    color: var(--bytelight-label, inherit);
+  }
+
+  .hook-meta strong {
+    color: var(--bytelight-label, inherit);
+  }
+
+
+/* ─── Cosmos X-Ray panel — glass cards, neon status dots, lit accents
+   (BL app.css block, verbatim; selectors re-scoped html[data-skin] → .skin-cosmos) ─── */
+.skin-cosmos .xray-panel .nav-btn.active {
+  color: rgb(var(--aura-violet));
+  background: rgba(var(--aura-violet), 0.12);
+  border-color: rgba(var(--aura-violet), 0.5);
+  box-shadow: 0 0 13px -3px rgba(var(--aura-violet), 0.5);
+}
+.skin-cosmos .xray-panel .hook-item,
+.skin-cosmos .xray-panel .memory-item,
+.skin-cosmos .xray-panel .collapse-block {
+  background: linear-gradient(165deg, rgba(var(--aura-violet), 0.08), rgba(var(--aura-violet), 0.02));
+  border-color: rgba(var(--aura-violet), 0.2);
+  box-shadow: 0 10px 26px -20px rgba(var(--aura-violet), 0.55), inset 0 1px 0 rgba(255, 255, 255, 0.03);
+}
+.skin-cosmos .xray-panel .hook-header,
+.skin-cosmos .xray-panel .memory-header,
+.skin-cosmos .xray-panel .collapse-header {
+  background: linear-gradient(180deg, rgba(var(--aura-violet), 0.07), transparent);
+}
+.skin-cosmos .xray-panel .hook-header:hover,
+.skin-cosmos .xray-panel .memory-header:hover,
+.skin-cosmos .xray-panel .collapse-header:hover {
+  background: linear-gradient(180deg, rgba(var(--aura-violet), 0.13), transparent);
+}
+.skin-cosmos .xray-panel .hook-type {
+  color: rgb(var(--aura-violet));
+  background: rgba(var(--aura-violet), 0.14);
+  border: 1px solid rgba(var(--aura-violet), 0.3);
+}
+
+/* res-btn / res-chip essentials for the X-Ray surface (BL base system,
+   compacted): primary = accent, ghost = bordered quiet, sm = tighter. */
+.xray-panel .res-btn {
+  display: inline-flex; align-items: center; gap: 0.375rem;
+  padding: 0.5rem 0.875rem; border-radius: 0.5rem; border: 1px solid var(--bytelight-hairline);
+  font-size: 0.75rem; font-weight: 600; cursor: pointer;
+  background: transparent; color: var(--bytelight-text, inherit);
+  transition: all 0.3s ease;
+}
+.xray-panel .res-btn--primary { background: var(--bytelight-accent); color: var(--bytelight-on-accent, #fff); border-color: transparent; }
+.xray-panel .res-btn--ghost:hover { border-color: color-mix(in srgb, var(--bytelight-accent) 40%, transparent); }
+.xray-panel .res-btn--sm { padding: 0.25rem 0.625rem; font-size: 0.6875rem; }
+
+/* The shiver — ambient recall's glint on a companion bubble. A slow pulse,
+   not a notification: it should read as something remembered rather than
+   something demanding attention. */
+@keyframes bytelightShimmerPulse {
+  0%, 100% { opacity: 0.35; transform: scale(0.85); }
+  50% { opacity: 1; transform: scale(1); }
+}
+.bytelight-shimmer-glint {
+  animation: bytelightShimmerPulse 3.2s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .bytelight-shimmer-glint { animation: none; opacity: 0.8; }
+}
+
+/* Home widgets (ported from Aerie). While a widget is being carried, a widget
+   with nothing to show (the letter, when no letter is waiting) still takes its
+   place on the grid, so it shows its name and can be dropped on and moved like
+   the rest. */
+.bytelight-widget-grid[data-carrying] > [data-widget-cell]:empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bytelight-surface);
+  color: var(--bytelight-text-muted);
+  font-size: 11px;
+}
+.bytelight-widget-grid[data-carrying] > [data-widget-cell]:empty::after {
+  content: attr(data-label);
+}

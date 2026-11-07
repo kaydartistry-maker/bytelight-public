@@ -80,6 +80,39 @@ describe('ambientRecall', () => {
     assert.ok(surfaced!.cards.length > 0, 'at least one card excerpt for the shimmer panel');
   });
 
+  it('builds cards from the memories, never from the search header that echoes her message', async () => {
+    // The real worker answer: a header quoting HER message, then one
+    // "### type [domain] (NN%) — date" heading per memory with its text.
+    reply = {
+      status: 200,
+      body: {
+        result: [
+          '## Cortex Recall: "a friend sent me a picture of a dog doing yoga" (2 found)',
+          '',
+          '### observation [constellation] (68%) — 2026-04-09',
+          "the operator's favorite tea is jasmine.",
+          '',
+          '### observation [lore] (67%) — 2026-08-12',
+          'Weekly review logged.',
+        ].join('\n'),
+      },
+    };
+    const { surfaced } = await ambientRecall('a friend sent me a picture of a dog doing yoga', 'lane-a', false);
+    assert.ok(surfaced, 'a hit should report what surfaced');
+    const cards = surfaced!.cards;
+    assert.ok(
+      cards.every((c) => !c.excerpt.includes('Cortex Recall') && !c.excerpt.includes('dog doing yoga')),
+      'no card may quote her own message back at her',
+    );
+    assert.ok(cards.every((c) => !c.excerpt.startsWith('#')), 'no card may be a bare markdown heading');
+    assert.equal(cards.length, 2);
+    assert.equal(cards[0].excerpt, "the operator's favorite tea is jasmine.");
+    assert.equal(cards[0].domain, 'constellation');
+    assert.equal(cards[0].relevance, 0.68);
+    assert.equal(cards[0].date, '2026-04-09');
+    assert.equal(cards[1].domain, 'lore');
+  });
+
   it('never hands the same lane the same memory twice', async () => {
     const first = await ambientRecall('the delivery cap question', 'lane-a', false);
     const second = await ambientRecall('the delivery cap question again', 'lane-a', false);

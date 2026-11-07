@@ -32,7 +32,7 @@
   async function loadPacks() {
     loading = true;
     try {
-      const res = await fetch('/api/sticker-packs');
+      const res = await apiFetch('/api/sticker-packs');
       if (res.ok) {
         const data = await res.json();
         packs = data.packs || [];
@@ -46,7 +46,7 @@
 
   async function loadStickersForPack(packId: string) {
     try {
-      const res = await fetch(`/api/stickers?packId=${packId}`);
+      const res = await apiFetch(`/api/stickers?packId=${packId}`);
       if (res.ok) {
         const data = await res.json();
         stickers = { ...stickers, [packId]: data.stickers || [] };

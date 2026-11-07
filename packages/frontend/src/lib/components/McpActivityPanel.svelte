@@ -1,8 +1,9 @@
 <script lang="ts">
+  import { timeAgo } from '$lib/utils/time';
   import { onMount } from 'svelte';
   import type { SystemStatus, McpServerInfo } from '@bytelight/shared';
   import { sendMcpReconnect, sendMcpToggle } from '$lib/stores/websocket.svelte';
-  import { api } from '$lib/utils/api';
+  import { api, apiFetch } from '$lib/utils/api';
 
   let { status }: { status: SystemStatus | null } = $props();
 
@@ -192,7 +193,7 @@
       case 'connected': return 'var(--status-active)';
       case 'pending': return 'var(--status-waking)';
       case 'disabled': return 'var(--text-muted)';
-      case 'failed': return 'var(--status-error, #ef4444)';
+      case 'failed': return 'var(--status-error, var(--color-error))';
       case 'needs-auth': return 'var(--status-warning, #f59e0b)';
       default: return 'var(--text-muted)';
     }
@@ -248,19 +249,10 @@
     return date.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
   }
 
-  function formatDate(iso: string): string {
-    const date = new Date(iso);
-    const now = new Date();
-    const diff = now.getTime() - date.getTime();
-    if (diff < 3600000) return `${Math.round(diff / 60000)}m ago`;
-    if (diff < 86400000) return `${Math.round(diff / 3600000)}h ago`;
-    return date.toLocaleDateString('en-GB', { month: 'short', day: 'numeric' });
-  }
-
   onMount(async () => {
     loadManaged();
     try {
-      const res = await fetch('/api/audit?limit=200', { credentials: 'include' });
+      const res = await apiFetch('/api/audit?limit=200', { credentials: 'include' });
       if (res.ok) {
         const data = await res.json();
         entries = data.entries || [];
@@ -419,7 +411,7 @@
             <div class="managed-meta">
               <span class="managed-url" title={server.url}>{server.url}</span>
               {#if server.lastDiscovered}
-                <span class="managed-discovered">discovered {formatDate(server.lastDiscovered)}</span>
+                <span class="managed-discovered">discovered {timeAgo(server.lastDiscovered, { dateAfterDays: 1 })}</span>
               {:else}
                 <span class="managed-discovered">not discovered yet</span>
               {/if}
@@ -472,7 +464,7 @@
               <button class="group-header" onclick={() => expandedGroup = expandedGroup === group.prefix ? null : group.prefix}>
                 <span class="group-prefix">{group.prefix}_*</span>
                 <span class="group-count">{group.count} calls</span>
-                <span class="group-last">Last: {formatDate(group.lastUsed)}</span>
+                <span class="group-last">Last: {timeAgo(group.lastUsed, { dateAfterDays: 1 })}</span>
                 <span class="expand-icon" class:expanded={expandedGroup === group.prefix}>
                   <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2">
                     <path d="M3 5l3 3 3-3"/>
@@ -588,7 +580,7 @@
   .server-error {
     padding: 0.375rem 0.75rem 0.5rem;
     font-size: 0.7rem;
-    color: var(--status-error, #ef4444);
+    color: var(--status-error, var(--color-error));
     font-family: var(--font-mono);
   }
 
@@ -687,7 +679,7 @@
 
   .managed-error {
     font-size: 0.7rem;
-    color: var(--status-error, #ef4444);
+    color: var(--status-error, var(--color-error));
     font-family: var(--font-mono);
   }
 
@@ -792,7 +784,7 @@
   }
 
   .test-result.fail {
-    color: var(--status-error, #ef4444);
+    color: var(--status-error, var(--color-error));
   }
 
   .form-actions {

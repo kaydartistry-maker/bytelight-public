@@ -34,6 +34,7 @@
     setPendingJump,
     getPendingJump,
     getConnectionState,
+    getReconnectScheduled,
     getMessages,
     getThreads,
     getActiveThreadId,
@@ -64,6 +65,7 @@
 
   // Reactive state from stores
   let connectionState = $derived(getConnectionState());
+  let reconnectScheduled = $derived(getReconnectScheduled());
   let messages = $derived(getMessages());
   let threads = $derived(getThreads());
   let activeThreadId = $derived(getActiveThreadId());
@@ -167,6 +169,10 @@
     // below — even if the target never renders — so the guard can't get stuck.
     setPendingJump(result.messageId);
     const release = () => setPendingJump(null);
+    // The jump target may sit above the render window — reveal the full
+    // loaded store so its msg-{id} node exists for scrollToMessageId. The
+    // trim effect re-engages once the operator returns to the bottom.
+    renderStart = 0;
 
     // Already loaded in the active thread → just scroll, keep the guard up
     // briefly so other scroll effects don't override us.
@@ -218,6 +224,35 @@
   let readObserver: IntersectionObserver | null = null;
   let loadingOlder = $state(false);
   let hasMoreMessages = $state(true);
+
+  // DOM render window — the store keeps every loaded message (search, jumps,
+  // and pagination all read it); only the newest slice becomes live DOM
+  // nodes. Without this, an all-day thread accumulates every message as a
+  // permanent node and deep scroll-back grows the DOM without bound — the
+  // browser-lag source. Scrolling up reveals already-loaded history in steps
+  // BEFORE any network pagination; returning to the bottom re-trims and
+  // releases the nodes.
+  const RENDER_WINDOW = 150;
+  const RENDER_EXPAND_STEP = 100;
+  let renderStart = $state(0);
+  let revealingOlder = false; // scroll-event guard while an expansion settles
+  const renderedMessages = $derived(messages.slice(renderStart));
+
+  // Reveal an older chunk of ALREADY-LOADED history (no network), preserving
+  // the scroll anchor the same way loadMoreMessages does.
+  function revealOlderRendered() {
+    if (!messagesContainer || revealingOlder) return;
+    revealingOlder = true;
+    const prevHeight = messagesContainer.scrollHeight;
+    const prevTop = messagesContainer.scrollTop;
+    renderStart = Math.max(0, renderStart - RENDER_EXPAND_STEP);
+    setTimeout(() => {
+      if (messagesContainer) {
+        messagesContainer.scrollTop = prevTop + (messagesContainer.scrollHeight - prevHeight);
+      }
+      revealingOlder = false;
+    }, 0);
+  }
 
   // Total unread count
   const totalUnread = $derived(
@@ -437,8 +472,15 @@
     // top and would otherwise trigger a prepend that reflows the window out
     // from under the target we're trying to land on.
     if (getPendingJump()) return;
-    if (scrollTop < 100 && !loadingOlder && hasMoreMessages && activeThreadId && messages.length > 0) {
-      loadMoreMessages();
+    if (scrollTop < 100 && !loadingOlder && activeThreadId && messages.length > 0) {
+      // Already-loaded history first (pure DOM reveal, no network); only when
+      // the render window has reached the front of the store does the backend
+      // pagination fetch another page.
+      if (renderStart > 0) {
+        revealOlderRendered();
+      } else if (hasMoreMessages) {
+        loadMoreMessages();
+      }
     }
   }
 
@@ -515,11 +557,15 @@
   // Load initial data and connect
   onMount(async () => {
     initTheme();
+    // The socket needs only the session cookie — not threads or settings. Open it
+    // immediately so a slow/stalled initial data fetch can never delay (or, with a
+    // hung fetch, indefinitely block) the live connection coming up.
+    connect();
     await Promise.all([loadThreads(), loadSettings()]);
     loadMyStars();
     loadProfiles(); // speaker avatars/names for per-companion bubbles (fire-and-forget)
     loadCompanions(); // pickable roster registry for the picker + header (fire-and-forget)
-    fetch('/api/preferences', { credentials: 'include' })
+    apiFetch('/api/preferences', { credentials: 'include' })
       .then(r => r.json())
       .then(p => {
         if (p?.identity?.companion_name) {
@@ -527,7 +573,6 @@
         }
       })
       .catch(() => {});
-    connect();
     window.addEventListener('keydown', handleGlobalKeydown);
     window.addEventListener('open-canvas', handleOpenCanvas as EventListener);
 
@@ -562,6 +607,22 @@
     // handleSearchResult) lets normal auto-scroll resume.
     if (getPendingJump()) return;
     setTimeout(scrollToBottom, 50);
+  });
+
+  // Render-window trim: while pinned at the bottom, keep only the newest
+  // RENDER_WINDOW messages as DOM nodes. Runs on new messages AND when the
+  // user returns to the bottom (shouldAutoScroll flips true), which is the
+  // moment deep-scroll nodes get released. Never trims mid-read (scrolled up)
+  // or while a search-jump is landing — hiding the jump target or yanking
+  // history out from under a reading operator is the failure mode this guard
+  // exists for.
+  $effect(() => {
+    const len = messages.length;
+    if (renderStart > len) { renderStart = Math.max(0, len - RENDER_WINDOW); return; } // thread switched to a shorter history
+    if (getPendingJump()) return;
+    if (!shouldAutoScroll) return;
+    const target = Math.max(0, len - RENDER_WINDOW);
+    if (target > renderStart) renderStart = target;
   });
 
   // Tail-work detection: reply text landed but stream still open (memory writes, tool tail)
@@ -724,7 +785,7 @@
     </header>
 
     <!-- Connection status -->
-    <ConnectionStatus state={connectionState} error={lastError} pendingCount={pendingCount} />
+    <ConnectionStatus state={connectionState} error={lastError} pendingCount={pendingCount} reconnectScheduled={reconnectScheduled} onReconnect={connect} />
 
     <!-- Compaction notice banner -->
     {#if compactionNotice}
@@ -778,8 +839,8 @@
             </div>
           </div>
         {:else}
-          {#each messages as message, i (message.id)}
-            {#if i === 0 || !isSameLocalDay(messages[i - 1].created_at, message.created_at)}
+          {#each renderedMessages as message, i (message.id)}
+            {#if renderStart + i === 0 || !isSameLocalDay(messages[renderStart + i - 1].created_at, message.created_at)}
               <div class="date-divider"><span class="date-divider-label">{dateDividerLabel(message.created_at)}</span></div>
             {/if}
             <div
