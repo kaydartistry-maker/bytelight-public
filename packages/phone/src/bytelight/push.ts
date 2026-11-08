@@ -1,7 +1,7 @@
 // Web push for the phone app on main's /api/push (vapid-public, subscribe,
 // unsubscribe, subscriptions, test) — the flow main's Svelte
 // NotificationsPanel uses, through this app's own worker (public/sw.js,
-// scoped to /phone/ so it never claims the Svelte client's pages).
+// scoped to the app's base, the front door).
 
 import { apiFetch } from './api';
 

@@ -219,33 +219,53 @@ const emojisDir = join(PROJECT_ROOT, 'data', 'emojis');
 mkdirSync(emojisDir, { recursive: true });
 app.use('/emojis', express.static(emojisDir, { maxAge: '1d', fallthrough: true }));
 
-// Serve the React phone app at /phone while the UI flip is in progress. Svelte
-// keeps `/` until the flip. Mounted before Svelte's catch-all so /phone/* never
-// falls through to the Svelte index.
+// The React phone app is the front door: it is served at the bare address,
+// and any page address (/settings, /chat, ...) loads it too; the app opens
+// the matching screen itself (launchPathApp in App.tsx).
 const phonePaths = [
   join(__dirname, '../../phone/dist'),         // From compiled dist/
   join(__dirname, '../../../packages/phone/dist'), // From src/ via tsx
 ];
 const phoneBuildPath = phonePaths.find(p => existsSync(p));
-if (phoneBuildPath) {
-  console.log(`Serving phone app at /phone from: ${phoneBuildPath}`);
-  app.use('/phone', express.static(phoneBuildPath));
-  app.get(['/phone', '/phone/*'], (_req, res) => {
-    res.sendFile(join(phoneBuildPath, 'index.html'));
-  });
-}
 
-// Serve frontend static build (works in dev too if frontend is pre-built)
+// Classic (Svelte) is retiring. It lives at /classic, its build base
+// (svelte.config.js), and nothing links to it.
 const frontendPaths = [
   join(__dirname, '../../frontend/build'),         // From compiled dist/
   join(__dirname, '../../../packages/frontend/build'), // From src/ via tsx
 ];
 const frontendBuildPath = frontendPaths.find(p => existsSync(p));
 if (frontendBuildPath) {
-  console.log(`Serving frontend from: ${frontendBuildPath}`);
-  app.use(express.static(frontendBuildPath));
-  app.get('*', (req, res) => {
+  console.log(`Serving classic at /classic from: ${frontendBuildPath}`);
+  app.use('/classic', express.static(frontendBuildPath));
+  app.get(['/classic', '/classic/*'], (_req, res) => {
     res.sendFile(join(frontendBuildPath, 'index.html'));
+  });
+}
+
+if (phoneBuildPath) {
+  console.log(`Serving the phone app at / from: ${phoneBuildPath}`);
+  const queryOf = (url: string) => {
+    const q = url.indexOf('?');
+    return q >= 0 ? url.slice(q) : '';
+  };
+  // The app used to live at /phone/. An old service worker there can still
+  // fetch its files (sw.js, push-target.js, icons); every other /phone address (the Android
+  // shell's old server URL, an old install, a push tap) lands on the front
+  // door with its query kept.
+  app.use('/phone', express.static(phoneBuildPath, { index: false }));
+  app.get(['/phone', '/phone/*'], (req, res) => {
+    res.redirect(302, '/' + queryOf(req.originalUrl));
+  });
+  app.use(express.static(phoneBuildPath));
+  app.get('*', (req, res, next) => {
+    if (req.path.startsWith('/api/') || req.path.startsWith('/ws')) return next();
+    res.sendFile(join(phoneBuildPath, 'index.html'));
+  });
+} else if (frontendBuildPath) {
+  app.get('*', (req, res, next) => {
+    if (req.path.startsWith('/api/') || req.path.startsWith('/ws')) return next();
+    res.redirect(302, '/classic/');
   });
 } else {
   console.log('No frontend build found — use Vite dev server on :5173');

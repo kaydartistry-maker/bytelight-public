@@ -1,6 +1,7 @@
 import type { Message, Canvas, ThreadSummary, PresenceStatus, MessageSegment, ThoughtKind, CommandRegistryEntry } from '@bytelight/shared';
 import { readOutbox, writeOutbox, type PendingMessage } from '../../message-outbox';
 import type { ThinkingEvent, ToolEvent } from './protocol';
+import { base } from '$app/paths';
 
 // Session-scoped outbox persistence; read once to seed pendingMessages.
 const outboxStorage = typeof sessionStorage !== 'undefined' ? sessionStorage : undefined;
@@ -186,7 +187,7 @@ export function showLocalNotification(title: string, body: string): void {
 
   new Notification(title, {
     body,
-    icon: '/icons/icon-192.png',
+    icon: `${base}/icons/icon-192.png`,
     tag: 'bytelight-local',
   });
 }

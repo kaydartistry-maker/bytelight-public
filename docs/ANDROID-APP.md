@@ -13,8 +13,8 @@ The APK is built by GitHub, not on the VM (Actions → **Phone APK**).
 
 1. **The address.** Repo Settings → Secrets and variables → Actions →
    **Variables** → New variable `PHONE_SERVER_URL`, value: the https address
-   you open the phone app at, ending in `/phone/` while both front ends run
-   (after the flip moves the phone to `/`, change it and rebuild). It must be
+   you open the app at, the bare address (e.g. `https://example.com/`). An
+   older value ending in `/phone/` still works: it redirects to `/`. It must be
    https: Android's WebView refuses the mic and location on plain http.
 
 2. **Try it first (optional).** You can build without a signing key: the

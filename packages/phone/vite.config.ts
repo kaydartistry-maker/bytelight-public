@@ -46,9 +46,9 @@ export default defineConfig(({mode}) => {
   const httpTarget = `http://localhost:${backendPort}`;
   const wsTarget = `ws://localhost:${backendPort}`;
   return {
-    // Served beside the Svelte client while the flip is in progress: Svelte
-    // keeps `/`, this app lives at `/phone/`. At the flip this becomes '/'.
-    base: '/phone/',
+    // The front door: served at the bare address (old /phone/ links redirect
+    // here; see server.ts).
+    base: '/',
     plugins: [react(), tailwindcss(), excalidrawAssets()],
     define: {
       'process.env.VITE_WORKER_URL': JSON.stringify(env.VITE_WORKER_URL),

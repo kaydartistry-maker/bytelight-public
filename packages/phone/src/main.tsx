@@ -10,8 +10,9 @@ import {registerPhoneWorker} from './bytelight/push';
 // that chunk can evaluate so no editor asset ever falls back to a CDN.
 (window as typeof window & {EXCALIDRAW_ASSET_PATH?: string}).EXCALIDRAW_ASSET_PATH = `${import.meta.env.BASE_URL}excalidraw-assets/`;
 
-// Claim /phone/ with the phone's own worker (notifications only — no fetch
-// handling), so the Svelte client's worker at / doesn't control these pages.
+// Claim / with the phone's own worker (notifications only — no fetch
+// handling). Registering at / also replaces the retired Svelte client's old
+// worker there, so it stops controlling these pages.
 // Skipped inside the native shell, where Capacitor owns notifications.
 if (!(window as typeof window & {Capacitor?: {isNativePlatform?: () => boolean}}).Capacitor?.isNativePlatform?.()) {
   void registerPhoneWorker();

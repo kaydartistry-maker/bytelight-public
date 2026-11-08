@@ -1,4 +1,4 @@
-// Bytelight phone — push service worker, scope /phone/.
+// Bytelight phone — push service worker, scope / (the front door).
 //
 // Notifications only. It never intercepts fetches and never forwards push
 // events to the page: an earlier web-push worker was pulled because the app
@@ -11,7 +11,7 @@
 
 importScripts('push-target.js');
 
-const SCOPE = self.registration.scope; // e.g. https://host/phone/
+const SCOPE = self.registration.scope; // e.g. https://host/
 const { pushTarget, pushTargetUrl } = self.bytelightPushTarget;
 
 self.addEventListener('install', () => self.skipWaiting());

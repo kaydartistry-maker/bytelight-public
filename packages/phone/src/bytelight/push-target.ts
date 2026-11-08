@@ -1,6 +1,6 @@
 // The app's half of a push tap. The service worker (public/sw.js) either
 // posts `bytelight:open-thread` to an open window or opens a new one at
-// /phone/?thread=<id>&message=<id>; both land here as a PushJump.
+// /?thread=<id>&message=<id>; both land here as a PushJump.
 
 export interface PushJump {
   threadId: string;

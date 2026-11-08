@@ -137,6 +137,25 @@ const launchPushJump: PushJump | null = (() => {
   return jump;
 })();
 
+// A page address (/settings, /memory, an old /chat link) opens that screen.
+// The app has no router: read the first path segment once at load, match it
+// to an app id (plus the old classic names), and put the address back to /
+// so the bar never shows a screen the app has since left.
+const PATH_APP_ALIASES: Record<string, string> = {
+  chat: 'messages',
+  cc: 'commandcenter',
+  'command-center': 'commandcenter',
+};
+const launchPathApp: AppDef | null = (() => {
+  if (typeof window === 'undefined') return null;
+  const segment = window.location.pathname.split('/').filter(Boolean)[0]?.toLowerCase();
+  if (!segment) return null;
+  const id = PATH_APP_ALIASES[segment] ?? segment;
+  const app = APPS.find((entry) => entry.id === id) ?? null;
+  window.history.replaceState(window.history.state, '', '/' + window.location.search + window.location.hash);
+  return app;
+})();
+
 const DEFAULT_THEME: AppTheme = {
   mode: 'dark',
   id: 'cobalt',
@@ -1416,6 +1435,15 @@ export default function App() {
       setOsState(app.screen);
     }
   };
+
+  // Open the screen a page address asked for (launchPathApp), once.
+  const launchPathOpened = useRef(false);
+  useEffect(() => {
+    if (!launchPathApp || launchPathOpened.current) return;
+    launchPathOpened.current = true;
+    openApp(launchPathApp);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Back returns to wherever the app was launched from (home vs drawer).
   // Apps entered outside openApp() fall back to the last recorded origin.

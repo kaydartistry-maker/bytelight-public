@@ -199,7 +199,7 @@ export const SettingsDashboard: React.FC<SettingsDashboardProps> = ({
         }
       } else {
         // Web push on main's /api/push through the phone's own worker
-        // (public/sw.js, scope /phone/). That worker only shows notifications
+        // (public/sw.js, scope /). That worker only shows notifications
         // and never messages the page — an earlier one was pulled
         // because the app misread its events as live activity.
         try {
