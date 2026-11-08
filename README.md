@@ -49,9 +49,11 @@ Neither of you needs to understand the whole architecture on day one. Install it
 
 ## Quick start
 
+> 🌱 **Never used a terminal before?** Start with [docs/GETTING-STARTED.md](docs/GETTING-STARTED.md) instead. It assumes nothing.
+
 **Prerequisites:**
 
-- **Node.js 20–24 LTS** (Node 25+ crashes on a native addon)
+- **Node.js 22 (22.19+) or 24** (Node 25+ is not supported yet)
 - **Claude Code** installed and logged in (`claude login`) — the companion runs on your Claude subscription, no API key needed
 - **Linux or macOS** (Windows via WSL works)
 - ~500MB disk for dependencies + runtime data

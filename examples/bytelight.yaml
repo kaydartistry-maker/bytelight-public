@@ -1,0 +1,113 @@
+# Resonant Configuration Reference
+# Copy this file to your project root as bytelight.yaml
+# The setup wizard at /setup creates this automatically
+#
+# Priority: bytelight.yaml values < environment variable overrides
+# All paths are relative to the project root unless absolute
+
+identity:
+  companion_name: "Echo"           # Your companion's name
+  user_name: "Alex"                # Your name (used in context injection)
+  timezone: "America/New_York"     # IANA timezone for scheduling and time awareness
+
+server:
+  port: 3002                       # HTTP + WebSocket port
+  host: "127.0.0.1"               # Bind address (use 0.0.0.0 for remote access)
+  db_path: "./data/bytelight.db"    # SQLite database location
+
+auth:
+  password: ""                     # Optional web UI password (leave empty to disable)
+
+agent:
+  cwd: "."                         # Working directory for Claude Agent SDK
+  claude_md_path: "./CLAUDE.md"    # Companion personality file
+  mcp_json_path: "./.mcp.json"     # MCP server configuration
+  model: "claude-sonnet-4-6"       # Model for interactive messages
+  model_autonomous: "claude-sonnet-4-6"  # Model for scheduled wakes (can be cheaper)
+  thinking_effort: "auto"          # auto | max | xhigh | high | medium | low
+                                   # Controls reasoning depth for the CHAT (interactive) tier
+                                   # when the model thinks. 'auto' picks per-model: high on
+                                   # Opus/Sonnet, medium on Haiku — sensible and cheap by
+                                   # default. 'xhigh' is recommended for deep agentic/coding
+                                   # work; 'max' is frontier reasoning (Opus 4.6+ only, spend
+                                   # freely). Explicit non-auto values are respected verbatim.
+                                   # Thinking is adaptive — the model decides when to think;
+                                   # this knob only sets the depth ceiling.
+
+  # thinking_effort_autonomous: ""  # Optional. Same menu as thinking_effort.
+                                   # Override for the AUTONOMOUS tier (scheduled wakes,
+                                   # watchers, scribe, impulses). When unset, autonomous
+                                   # tier inherits the chat-tier value above. Useful when
+                                   # chat is on Opus 4.7 + Max but autonomous is on
+                                   # Sonnet 4.6, which can't accept Max — set this to
+                                   # 'auto' or 'xhigh' to keep autonomous turns valid
+                                   # without dialing chat down.
+                                   # Pulse heartbeats don't use thinking, so there's no
+                                   # pulse-tier effort field — pulse is configured via the
+                                   # Orchestrator UI (model + frequency only).
+
+orchestrator:
+  enabled: true                    # Enable autonomous scheduling system
+  wake_prompts_path: "./prompts/wake.md"  # Wake prompt templates
+  schedules:                       # Built-in wake schedules (cron expressions)
+    morning: "0 9 * * *"           # 9 AM daily
+    midday: "0 13 * * *"           # 1 PM daily
+    evening: "0 21 * * *"          # 9 PM daily
+  failsafe:
+    enabled: false                 # Tiered inactivity escalation
+    gentle_minutes: 120            # First check-in after 2 hours
+    concerned_minutes: 720         # Escalate after 12 hours
+    emergency_minutes: 1440        # Emergency after 24 hours
+
+hooks:
+  context_injection: true          # Inject time, presence, emotional context into prompts
+  safe_write_prefixes: []          # Directories the agent can write to without confirmation
+  platform_context_max_tokens: 500 # Max tokens for platform-specific context
+  cc_mcp_server_name: ""           # Command Center MCP server name (from .mcp.json)
+  mind_mcp_server_name: ""         # Mind/memory MCP server name (from .mcp.json)
+
+voice:
+  enabled: false                   # Enable voice features
+  elevenlabs_voice_id: ""          # ElevenLabs voice ID for TTS
+
+discord:
+  enabled: false                   # Enable Discord bot integration
+  owner_user_id: ""                # Your Discord user ID (for DM routing)
+  history_limit: 10                # Messages to include as context from Discord
+
+telegram:
+  enabled: false                   # Enable Telegram bot integration
+  owner_chat_id: ""                # Your Telegram chat ID
+
+integrations:
+  life_api_url: ""                 # External life API URL (optional)
+  mind_cloud:
+    enabled: false                 # Cloud memory sync
+    mcp_url: ""                    # Mind cloud MCP server URL
+  # spotify_server: "My Jukebox"  # Spotify app's MCP server, by id or name (unset: auto-detect "spotify")
+
+command_center:
+  enabled: true                    # Enable Command Center at /cc
+  default_person: "user"           # Default person for care tracking
+  currency_symbol: "$"             # Currency symbol for finances
+  care_categories:
+    toggles:                       # Binary daily toggles
+      - breakfast
+      - lunch
+      - dinner
+      - snacks
+      - medication
+      - movement
+      - shower
+    ratings:                       # 1-5 scale daily ratings
+      - sleep
+      - energy
+      - wellbeing
+      - mood
+    counters:                      # Incrementable counters with max
+      - name: water
+        max: 10
+
+cors:
+  origins: []                      # Additional CORS origins (for remote access)
+                                   # Example: ["https://your-domain.com"]

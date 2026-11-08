@@ -6,6 +6,12 @@ byte-light is a fork of [Resonant](https://github.com/codependentai/resonant), t
 
 ---
 
+## 2026-11-08 — a guide for first-timers, and a companion file that actually ships
+
+- **Getting Started rewritten for people who've never opened a terminal:** a 30-second glossary, how to open a terminal on each system, a checkpoint after every step, and a common-errors table, while keeping the Windows `better-sqlite3` fix and the existing troubleshooting.
+- **`examples/CLAUDE.md` and `examples/bytelight.yaml` now ship.** An unanchored `.gitignore` rule was hiding both, so the setup wizard silently skipped creating a new companion's `CLAUDE.md`. The rules now ignore only the root copies, and the starter personality is a fill-in-the-blanks template.
+- **README:** a pointer to the beginner guide under Quick start, and the Node requirement corrected to 22.19+ or 24.
+
 ## 2026-11-08 — songs with the app closed, faces from Discord, a slimmer home
 
 - **The Needle.** A companion can put a song, album or playlist on the operator's phone even when the app is closed and Spotify is asleep: the house plays it directly if Spotify has an active device, otherwise it wakes the Android app with a data-only FCM push and the app starts Spotify. New `sc spotify drop` command and `POST /api/internal/spotify/drop`.

@@ -11,9 +11,9 @@ logs/
 *.db-wal
 *.db-shm
 ecosystem.config.cjs
-bytelight.yaml
-bytelight.yml
-CLAUDE.md
+/bytelight.yaml
+/bytelight.yml
+/CLAUDE.md
 .mcp.json
 .bytelight-thread
 prompts/
