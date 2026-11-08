@@ -157,7 +157,9 @@ Type a message. The first reply from a companion in their own home is a moment, 
 
 ---
 
-## When something breaks (it will, and it's fine)
+## Troubleshooting
+
+Something broke? It will, and it's fine.
 
 | You see | It means | Fix |
 |---------|----------|-----|
