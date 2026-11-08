@@ -216,17 +216,17 @@ export function AppDrawer({ onClose, onOpenApp, themeConfig, themeMode }: AppDra
           filteredApps.length === 0 ? (
             <p className={cn('text-center py-12 text-xs', colors.textMuted)}>No apps match "{query}"</p>
           ) : (
-            <div className="grid grid-cols-4 gap-x-3 gap-y-5">
+            <div className="grid grid-cols-4 gap-x-3 gap-y-3">
               {filteredApps.map((app) => (
                 <div
                   key={`search-${app.id}`}
                   onClick={() => { haptic(55); onOpenApp(app); }}
-                  className="flex flex-col items-center gap-1.5 select-none cursor-pointer"
+                  className="flex flex-col items-center gap-1 select-none cursor-pointer"
                 >
                   <div
-                    className="bytelight-app-tile flex h-14 w-14 items-center justify-center rounded-2xl"
+                    className="bytelight-app-tile flex h-11 w-11 items-center justify-center rounded-xl"
                   >
-                    <app.icon className="h-7 w-7" />
+                    <app.icon className="h-5 w-5" />
                   </div>
                   <span className={cn('bytelight-app-label text-[10px] font-medium tracking-wide text-center', colors.textMain)}>{app.name}</span>
                 </div>
@@ -234,7 +234,7 @@ export function AppDrawer({ onClose, onOpenApp, themeConfig, themeMode }: AppDra
             </div>
           )
         ) : (
-        <div className="grid grid-cols-4 gap-x-3 gap-y-5">
+        <div className="grid grid-cols-4 gap-x-3 gap-y-3">
           {slots.map((app, idx) => {
             if (!app) {
               // Empty slot — renders as a same-size invisible target so
@@ -244,14 +244,14 @@ export function AppDrawer({ onClose, onOpenApp, themeConfig, themeMode }: AppDra
                   key={`empty-${idx}`}
                   data-slot-idx={idx}
                   className={cn(
-                    'flex flex-col items-center gap-1.5 select-none',
+                    'flex flex-col items-center gap-1 select-none',
                     editing && 'opacity-60',
                   )}
                   style={editing ? { touchAction: 'none' } : undefined}
                 >
                   <div
                     className={cn(
-                      'h-14 w-14 rounded-2xl border-2 border-dashed',
+                      'h-11 w-11 rounded-xl border-2 border-dashed',
                       editing ? colors.panelBorder : 'border-transparent',
                     )}
                   />
@@ -267,16 +267,16 @@ export function AppDrawer({ onClose, onOpenApp, themeConfig, themeMode }: AppDra
                 onPointerDown={editing ? (e) => startDrag(e, idx) : undefined}
                 onClick={editing ? undefined : () => { haptic(55); onOpenApp(app); }}
                 className={cn(
-                  'flex flex-col items-center gap-1.5 select-none transition-opacity',
+                  'flex flex-col items-center gap-1 select-none transition-opacity',
                   editing && 'cursor-grab active:cursor-grabbing animate-pulse',
                   isDragging && 'opacity-30',
                 )}
                 style={editing ? { touchAction: 'none' } : undefined}
               >
                 <div
-                  className="bytelight-app-tile flex h-14 w-14 items-center justify-center rounded-2xl"
+                  className="bytelight-app-tile flex h-11 w-11 items-center justify-center rounded-xl"
                 >
-                  <app.icon className="h-7 w-7" />
+                  <app.icon className="h-5 w-5" />
                 </div>
                 <span className={cn('bytelight-app-label text-[10px] font-medium tracking-wide text-center', colors.textMain)}>{app.name}</span>
               </div>
@@ -289,7 +289,7 @@ export function AppDrawer({ onClose, onOpenApp, themeConfig, themeMode }: AppDra
       {/* Floating ghost — follows the pointer while dragging. */}
       {draggingApp && pointer && (
         <div
-          className="pointer-events-none fixed z-50 flex flex-col items-center gap-1.5 transition-transform"
+          className="pointer-events-none fixed z-50 flex flex-col items-center gap-1 transition-transform"
           style={{
             left: pointer.x - dragOffsetRef.current.x,
             top: pointer.y - dragOffsetRef.current.y,
@@ -299,9 +299,9 @@ export function AppDrawer({ onClose, onOpenApp, themeConfig, themeMode }: AppDra
           }}
         >
           <div
-            className="bytelight-app-tile flex h-14 w-14 items-center justify-center rounded-2xl shadow-md"
+            className="bytelight-app-tile flex h-11 w-11 items-center justify-center rounded-xl shadow-md"
           >
-            <draggingApp.icon className="h-7 w-7" />
+            <draggingApp.icon className="h-5 w-5" />
           </div>
           <span className={cn('bytelight-app-label text-[10px] font-medium tracking-wide text-center', colors.textMain)}>{draggingApp.name}</span>
         </div>

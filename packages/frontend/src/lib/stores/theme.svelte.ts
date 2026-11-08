@@ -25,6 +25,7 @@ export interface CustomTheme {
   bgPrimary: string | null;
   bgSecondary: string | null;
   bgSurface: string | null;
+  textColor: string | null;          // null = theme default text colors
   userBubble: string | null;
   companionBubble: string | null;
   // Typography
@@ -47,6 +48,7 @@ const DEFAULT_CUSTOM: CustomTheme = {
   bgPrimary: null,
   bgSecondary: null,
   bgSurface: null,
+  textColor: null,
   userBubble: null,
   companionBubble: null,
   fontHeading: 'Inter',
@@ -156,6 +158,18 @@ function applyTheme() {
   if (custom.bgSurface) html.style.setProperty('--bg-surface', custom.bgSurface);
   else html.style.removeProperty('--bg-surface');
 
+  // Apply custom text color — one pick sets the main text and derives the
+  // softer secondary/muted shades from it so the hierarchy stays readable.
+  if (custom.textColor) {
+    html.style.setProperty('--text-primary', custom.textColor);
+    html.style.setProperty('--text-secondary', hexToRgba(custom.textColor, 0.78));
+    html.style.setProperty('--text-muted', hexToRgba(custom.textColor, 0.6));
+  } else {
+    html.style.removeProperty('--text-primary');
+    html.style.removeProperty('--text-secondary');
+    html.style.removeProperty('--text-muted');
+  }
+
   // Apply custom message bubbles
   if (custom.userBubble) html.style.setProperty('--user-bg', custom.userBubble);
   else html.style.removeProperty('--user-bg');
@@ -251,6 +265,12 @@ export function setCustomAccent(color: string | null) {
 
 export function setCustomBackground(key: 'bgPrimary' | 'bgSecondary' | 'bgSurface', color: string | null) {
   custom[key] = color;
+  saveCustom();
+  applyTheme();
+}
+
+export function setCustomTextColor(color: string | null) {
+  custom.textColor = color;
   saveCustom();
   applyTheme();
 }

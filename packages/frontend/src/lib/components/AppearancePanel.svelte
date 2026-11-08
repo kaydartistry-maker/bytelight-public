@@ -9,6 +9,7 @@
     setAccent,
     setCustomAccent,
     setCustomBackground,
+    setCustomTextColor,
     setCustomBubble,
     setCustomFont,
     setFontPreset,
@@ -196,6 +197,28 @@
         />
         <span class="color-preview" style="background: {custom.bgSurface || 'var(--bg-surface)'}"></span>
         Surface
+      </label>
+    </div>
+  </section>
+
+  <!-- Text Color -->
+  <section class="section">
+    <div class="section-head">
+      <h3 class="section-label">Text</h3>
+      {#if custom.textColor}
+        <button class="res-btn res-btn--ghost res-btn--sm" onclick={() => setCustomTextColor(null)}>Use theme default</button>
+      {/if}
+    </div>
+    <div class="color-grid">
+      <label class="color-picker-label">
+        <input
+          type="color"
+          class="color-input"
+          value={custom.textColor || (currentMode === 'dark' ? '#e4e4e7' : '#1c1a17')}
+          oninput={(e) => setCustomTextColor((e.target as HTMLInputElement).value)}
+        />
+        <span class="color-preview" style="background: {custom.textColor || 'var(--text-primary)'}"></span>
+        Text color
       </label>
     </div>
   </section>
