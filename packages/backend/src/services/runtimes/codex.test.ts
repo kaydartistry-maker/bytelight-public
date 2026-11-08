@@ -1719,10 +1719,13 @@ describe('CodexAgentRuntime — Slice 2.5 dispatcher wiring', () => {
       1,
       'dispatcher must import from tools-bridge exactly once (single source)',
     );
+    // executeForeignLaneTool is the bridge's entry for lanes that carry
+    // their own tool list: .mcp.json tools first, then executeRouterTool.
+    // Still one bridge, one registry.
     assert.match(
       bridgeImports[0],
-      /executeRouterTool/,
-      'dispatcher must import executeRouterTool from tools-bridge',
+      /executeForeignLaneTool/,
+      'dispatcher must import executeForeignLaneTool from tools-bridge',
     );
 
     // No reference implementation-style parallel registry import.
@@ -1736,8 +1739,8 @@ describe('CodexAgentRuntime — Slice 2.5 dispatcher wiring', () => {
     // — same wiring shape as the ApiRouter site above).
     assert.match(
       source,
-      /new\s+CodexAgentRuntime\s*\(\s*\{[\s\S]*executeTool\s*:[\s\S]*executeRouterTool[\s\S]*\}/,
-      'dispatcher must construct CodexAgentRuntime with executeTool wired to executeRouterTool',
+      /new\s+CodexAgentRuntime\s*\(\s*\{[\s\S]*executeTool\s*:[\s\S]*executeForeignLaneTool[\s\S]*\}/,
+      'dispatcher must construct CodexAgentRuntime with executeTool wired to executeForeignLaneTool',
     );
   });
 

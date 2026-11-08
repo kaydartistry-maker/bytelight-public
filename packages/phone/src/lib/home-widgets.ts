@@ -2,7 +2,7 @@
 // The home screen's widgets, apart from how they are drawn. Kept free of
 // imports so it can be tested without the app around it.
 
-export type HomeWidget = 'companions' | 'note' | 'weather' | 'letter' | 'day' | 'status';
+export type HomeWidget = 'companions' | 'note' | 'weather' | 'letter' | 'day' | 'status' | 'soundtrack';
 
 /** The widgets in their default order, each with its size on a four-wide grid. */
 export const HOME_WIDGETS: readonly { id: HomeWidget; label: string; cols: number; rows: number; hint: string }[] = [
@@ -12,6 +12,7 @@ export const HOME_WIDGETS: readonly { id: HomeWidget; label: string; cols: numbe
   { id: 'letter', label: 'A letter', cols: 2, rows: 1, hint: 'Only while a letter is waiting for you' },
   { id: 'day', label: 'The day', cols: 4, rows: 1, hint: 'The day and the date, big' },
   { id: 'status', label: 'Status', cols: 4, rows: 1, hint: "What they're up to and their moods, and your own status, one at a time" },
+  { id: 'soundtrack', label: 'Soundtrack', cols: 4, rows: 1, hint: 'What Spotify is playing, with its buttons. Only shows while a song is on; hold its row to move it' },
 ];
 
 /** The widgets switched on, in the order they were turned on. Where each one

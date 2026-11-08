@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/kaydartistry-maker/bytelight/releases"><img src="https://img.shields.io/badge/version-v3.0.0-5eaba5" alt="Version" /></a>
+  <a href="https://github.com/kaydartistry-maker/bytelight-public/releases"><img src="https://img.shields.io/badge/version-v3.0.0-5eaba5" alt="Version" /></a>
   <a href="./LICENSE"><img src="https://img.shields.io/badge/License-Apache_2.0-blue.svg" alt="License" /></a>
   <a href="https://docs.anthropic.com/en/docs/claude-code"><img src="https://img.shields.io/badge/Built_with-Claude_Agent_SDK-6366f1.svg" alt="Built with Claude" /></a>
   <a href="https://www.typescriptlang.org/"><img src="https://img.shields.io/badge/TypeScript-5.7-3178c6.svg" alt="TypeScript" /></a>
@@ -59,8 +59,8 @@ Neither of you needs to understand the whole architecture on day one. Install it
 **Install:**
 
 ```bash
-git clone https://github.com/kaydartistry-maker/bytelight.git
-cd bytelight
+git clone https://github.com/kaydartistry-maker/bytelight-public.git
+cd bytelight-public
 npm install
 node scripts/setup.mjs        # interactive setup (or copy examples/bytelight.yaml and edit)
 npm run build
@@ -219,7 +219,7 @@ schedules:
 
 Identity lives in `CLAUDE.md` ([starter template](examples/CLAUDE.md)). Wake behavior lives in `prompts/wake.md` ([patterns](examples/wake-prompts.md)). Skills live in `skills/*/SKILL.md`.
 
-Day-to-day operations, updating, and troubleshooting: [docs/GETTING-STARTED.md](docs/GETTING-STARTED.md) · [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) · [CHANGELOG.md](CHANGELOG.md)
+Day-to-day operations, updating, and troubleshooting: [docs/GETTING-STARTED.md](docs/GETTING-STARTED.md) · [Troubleshooting](docs/GETTING-STARTED.md#troubleshooting) · [CHANGELOG.md](CHANGELOG.md)
 
 ---
 

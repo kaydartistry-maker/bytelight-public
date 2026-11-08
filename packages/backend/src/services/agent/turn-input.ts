@@ -44,7 +44,6 @@
 
 import type {
   AgentTurnInput,
-  ProviderHandoff,
 } from '../runtimes/types.js';
 
 export interface BuildAgentTurnInputParams {
@@ -56,7 +55,6 @@ export interface BuildAgentTurnInputParams {
   orientation?: string | null;
   systemPromptText?: string | null;
   messages: AgentTurnInput['messages'];
-  handoff?: ProviderHandoff;
   cwd?: string;
   abortSignal?: AbortSignal;
   thinkingEffort?: AgentTurnInput['thinkingEffort'];
@@ -82,7 +80,6 @@ export function buildAgentTurnInput(
     orientation: params.orientation ?? '',
     systemPrompt: { kind: 'text', value: params.systemPromptText ?? '' },
     messages: params.messages,
-    handoff: params.handoff,
     cwd: params.cwd,
     abortSignal: params.abortSignal,
     thinkingEffort: params.thinkingEffort,

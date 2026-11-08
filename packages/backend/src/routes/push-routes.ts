@@ -5,6 +5,7 @@ import {
   removePushSubscription,
   listPushSubscriptions,
 } from '../services/db.js';
+import { addFcmSubscription, listFcmSubscriptions } from '../services/db/push.js';
 import { getBytelightConfig } from '../config.js';
 import type { PushService } from '../services/push.js';
 
@@ -14,7 +15,14 @@ export function createPushRoutes(): Router {
   // Subscribe to push notifications
   router.post('/push/subscribe', (req, res) => {
     try {
-      const { endpoint, keys, deviceLabel } = req.body;
+      const { endpoint, keys, deviceLabel, deviceToken } = req.body;
+      // The Android app registers an FCM device token, not a web-push endpoint.
+      if (typeof deviceToken === 'string' && deviceToken.trim()) {
+        const id = crypto.randomUUID();
+        addFcmSubscription({ id, deviceToken: deviceToken.trim(), deviceName: deviceLabel });
+        res.json({ success: true, id, transport: 'fcm' });
+        return;
+      }
       if (!endpoint || !keys?.p256dh || !keys?.auth) {
         res.status(400).json({ error: 'endpoint and keys (p256dh, auth) required' });
         return;
@@ -59,7 +67,7 @@ export function createPushRoutes(): Router {
   // List push subscriptions (truncated endpoints for display)
   router.get('/push/subscriptions', (req, res) => {
     try {
-      const subs = listPushSubscriptions();
+      const subs = [...listPushSubscriptions(), ...listFcmSubscriptions()];
       const display = subs.map(s => ({
         id: s.id,
         deviceName: s.device_name,
@@ -79,7 +87,7 @@ export function createPushRoutes(): Router {
     try {
       const pushService = req.app.locals.pushService as PushService | undefined;
       if (!pushService?.isConfigured()) {
-        res.status(503).json({ error: 'Push notifications not configured — set VAPID keys in .env' });
+        res.status(503).json({ error: 'Push notifications not configured — set the VAPID keys (browser) or the Firebase service account (Android app) in Secrets' });
         return;
       }
 

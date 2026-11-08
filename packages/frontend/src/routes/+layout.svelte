@@ -5,12 +5,13 @@
   import { loadStickers } from '$lib/stores/stickers.svelte';
   import { onMount, onDestroy } from 'svelte';
   import { goto } from '$app/navigation';
+  import { base } from '$app/paths';
   import { page } from '$app/stores';
   import Toast from '$lib/components/Toast.svelte';
 
   let { children } = $props();
   let currentPath = $derived($page.url.pathname);
-  let isLoginPage = $derived(currentPath === '/login');
+  let isLoginPage = $derived(currentPath === `${base}/login`);
 
   // Show children only when:
   // - Auth check is done AND (authenticated OR on the login page OR auth not required)
@@ -34,7 +35,7 @@
 
     // If not authenticated and not on login page, redirect to login
     if (!isAuthenticated() && isAuthRequired() && !isLoginPage) {
-      goto('/login');
+      goto(`${base}/login`);
     }
 
     // Load stickers for picker and inline rendering

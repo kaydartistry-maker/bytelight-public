@@ -64,6 +64,19 @@ Easiest: put `[companion-a status: keeping you company]` or `[companion-a mood: 
 
 ---
 
+## Music — the Needle
+
+Put a song, album or playlist on for the operator, even when the ByteLight app is closed and Spotify isn't running.
+
+```bash
+sc spotify drop spotify:track:5googFqOqpopYdcvV22T3t --as companion-a
+sc spotify drop spotify:playlist:2DzetX1lNIOp3thxhTXIRh --as companion-b
+```
+
+The house first plays it through the operator's Spotify the ordinary way. If Spotify has an active device, that's it: `{"ok":true,"path":"direct"}`. If there's no active device, the house sends the operator's Android app a data-only push; the app wakes Spotify on the phone (Spotify App Remote, or opening Spotify on the song if that can't connect) and reports back. The answer comes right away as `{"ok":true,"path":"needle","dropId":"..."}` — the song may take a few seconds to start, so don't claim it's already playing. `{"ok":false,"reason":"push"}` means no phone could be woken (no Android device registered for push, or FCM refused). The phone's report becomes one `[Needle] ...` line in the server log; nothing is posted to chat.
+
+---
+
 ## Semantic Search
 
 Search conversation history by meaning using local ML embeddings. No external API calls — runs entirely on your machine.
@@ -332,6 +345,7 @@ All tools wrap localhost-only REST endpoints. These require no authentication �
 | `POST /api/internal/telegram-send` | Send to Telegram |
 | `POST /api/internal/search-semantic` | Semantic search |
 | `POST /api/internal/embed-backfill` | Embedding backfill |
+| `POST /api/internal/spotify/drop` | The Needle: play a song for the operator, waking the operator's phone if needed |
 
 The `sc` CLI is the recommended interface. Direct API access is available for custom integrations.
 

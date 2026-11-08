@@ -7,8 +7,8 @@ android {
         applicationId "com.bytelight.phone"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 29
-        versionName "1.28"
+        versionCode 30
+        versionName "1.29"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
@@ -54,6 +54,11 @@ dependencies {
     // which wakes Spotify on the phone, and the gson it reads JSON with.
     implementation files('libs/spotify-app-remote-release-0.8.0.aar')
     implementation 'com.google.code.gson:gson:2.8.6'
+    // The Needle's messaging service extends the push plugin's and reads
+    // RemoteMessage, so firebase-messaging has to be on the app's own compile
+    // classpath (the plugin keeps it as `implementation`). Same version the
+    // plugin resolves, through variables.gradle.
+    implementation "com.google.firebase:firebase-messaging:$firebaseMessagingVersion"
     implementation fileTree(include: ['*.jar'], dir: 'libs')
     implementation "androidx.appcompat:appcompat:$androidxAppCompatVersion"
     implementation "androidx.coordinatorlayout:coordinatorlayout:$androidxCoordinatorLayoutVersion"

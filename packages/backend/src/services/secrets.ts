@@ -132,6 +132,13 @@ export const SECRETS: SecretDef[] = [
     hint: 'discord.com/developers/applications — takes effect on restart',
   },
   {
+    name: 'fcm_service_account',
+    label: 'Firebase service account',
+    category: 'platforms',
+    envVar: 'FCM_SERVICE_ACCOUNT',
+    hint: 'Firebase → Project settings → Service accounts → Generate new private key. Paste the whole JSON. Only needed for push to the Android app.',
+  },
+  {
     name: 'telegram_bot_token',
     label: 'Telegram bot token',
     category: 'platforms',

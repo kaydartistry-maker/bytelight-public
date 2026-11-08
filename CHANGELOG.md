@@ -6,6 +6,16 @@ byte-light is a fork of [Resonant](https://github.com/codependentai/resonant), t
 
 ---
 
+## 2026-11-08 — songs with the app closed, faces from Discord, a slimmer home
+
+- **The Needle.** A companion can put a song, album or playlist on the operator's phone even when the app is closed and Spotify is asleep: the house plays it directly if Spotify has an active device, otherwise it wakes the Android app with a data-only FCM push and the app starts Spotify. New `sc spotify drop` command and `POST /api/internal/spotify/drop`.
+- **Android push.** The Android app gets its own notifications through FCM HTTP v1, beside web push. Credentials live in the secrets store under `fcm_service_account`.
+- **Discord avatars.** Messages from Discord now save the sender's picture, and older messages without one are filled in once when the gateway logs in.
+- **Phone home screen.** A slim Soundtrack bar (one-row Spotify player), a skinnier widget grid, and a centered dock whose quick picks scroll sideways. Sessions reads the house's real session log, and one crashed screen no longer blacks out the whole app.
+- **Every lane carries the whole toolbox.** The API-key lanes and Codex over OAuth now get the operator's `.mcp.json` servers too.
+- **Removed** `services/handoff.ts`, a half-built recap nothing called.
+- **Docs.** Getting Started clones the right repository and uses the current file names (`bytelight.yaml`, `bytelight.db`, pm2 `bytelight`); the README's dead troubleshooting link now points at the guide's Troubleshooting section.
+
 ## 2026-11-07 — the phone, the Room, and two months of house
 
 A large sync from the private trunk. Highlights:

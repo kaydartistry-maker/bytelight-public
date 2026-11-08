@@ -33,6 +33,7 @@ import { startMemoryRounds, stopMemoryRounds } from './services/memory-rounds.js
 import { startCompactionShelf } from './services/compaction-shelf.js';
 import apiRoutes from './routes/api.js';
 import mcpBeltRouter, { closeBeltMcpSessions } from './routes/mcp-belt.js';
+import { closeMcpJsonClients } from './services/mcp-json-bridge.js';
 import clientErrorRoutes from './routes/client-errors.js';
 import appShellRoutes from './routes/app.js';
 
@@ -370,6 +371,7 @@ async function gracefulShutdown(signal: string): Promise<void> {
   // 1d. Close MCP transports owned by this HTTP process. The Codex daemon
   // reconnects to the next backend using the persisted private credential.
   try { await closeBeltMcpSessions(); } catch { /* best-effort */ }
+  try { await closeMcpJsonClients(); } catch { /* best-effort */ }
   try { stopMemoryRounds(); } catch { /* best-effort */ }
   try { shutdownEmbeddings(); } catch { /* best-effort */ }
 

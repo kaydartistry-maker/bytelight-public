@@ -5,7 +5,7 @@
 
 declare const self: ServiceWorkerGlobalScope;
 
-import { build, files, version } from '$service-worker';
+import { base, build, files, version } from '$service-worker';
 
 const CACHE_NAME = `bytelight-cache-${version}`;
 
@@ -62,7 +62,7 @@ self.addEventListener('fetch', (event) => {
         .catch(() => {
           // Offline: serve cached page or fall back to /chat shell
           return caches.match(event.request)
-            .then((cached) => cached || caches.match('/chat'))
+            .then((cached) => cached || caches.match(`${base}/chat`))
             .then((cached) => cached || new Response('Offline', { status: 503 }));
         })
     );
@@ -114,9 +114,9 @@ self.addEventListener('push', (event) => {
   event.waitUntil(
     self.registration.showNotification(data.title || 'Bytelight', {
       body: data.body || '',
-      icon: '/icons/icon-192.png',
-      badge: '/icons/icon-192.png',
-      data: { threadId: data.threadId, url: data.url || '/chat' },
+      icon: `${base}/icons/icon-192.png`,
+      badge: `${base}/icons/icon-192.png`,
+      data: { threadId: data.threadId, url: data.url || `${base}/chat` },
       tag: data.tag || 'bytelight-message',
       renotify: true,
     })
@@ -125,12 +125,12 @@ self.addEventListener('push', (event) => {
 
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();
-  const url = event.notification.data?.url || '/chat';
+  const url = event.notification.data?.url || `${base}/chat`;
   event.waitUntil(
     self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((windowClients) => {
       // Focus existing tab if one is open to /chat
       for (const client of windowClients) {
-        if (client.url.includes('/chat') && 'focus' in client) {
+        if (client.url.includes(`${base}/chat`) && 'focus' in client) {
           return client.focus();
         }
       }

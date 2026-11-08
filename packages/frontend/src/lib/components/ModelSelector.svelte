@@ -18,6 +18,7 @@
    */
 
   import { onMount } from 'svelte';
+  import { base } from '$app/paths';
   import { apiFetch } from '../utils/api.js';
   import { getActiveThreadId } from '$lib/stores/websocket.svelte';
   import { MODEL_VARIANTS, getVariant, type ProviderId, type ThinkingEffort } from '@bytelight/shared';
@@ -958,7 +959,7 @@
         >
           {clearing ? 'Clearing…' : targetIsMember ? `${memberName(target)} follows ${brainName} again` : 'Clear thread override'}
         </button>
-        <a class="action link" href="/settings">Open Settings</a>
+        <a class="action link" href="{base}/settings">Open Settings</a>
       </div>
     </div>
   {/if}

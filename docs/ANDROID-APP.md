@@ -48,6 +48,23 @@ The APK is built by GitHub, not on the VM (Actions → **Phone APK**).
    location when asked. For the call dock over other apps, allow "Display
    over other apps" in the app's system settings.
 
+## Push to the app (optional)
+
+The house sends every notification to the browser (web push) and, once this
+is set up, to the app too.
+
+1. Firebase console → a project → Add app → Android, package name
+   `com.bytelight.phone` → download `google-services.json`.
+2. Repo Settings → Secrets and variables → Actions → **Secrets** → New
+   secret `GOOGLE_SERVICES_JSON`, value: the whole contents of that file.
+   Then run **Phone APK** again and install the new build.
+3. Firebase → Project settings → Service accounts → Generate new private
+   key. In the app: Settings → Secrets → **Firebase service account**, paste
+   the whole file. It takes effect at once (no restart). This one is a real
+   secret: it never goes in the repo or a chat.
+4. In the app's Settings, switch notifications off and on again so the phone
+   registers with the house.
+
 ## When it crashes
 
 The shell posts its crash on the way out; it lands in `app/crashes.log` beside
@@ -56,8 +73,6 @@ what you were doing.
 
 ## Not in yet
 
-- **Phone push** in the app: the house sends web push only, so for now keep
-  notifications on through the browser. Native push needs a Firebase project.
 - **Update card**: the house answers `/api/app/version`, but only offers an
   update once an APK and its `version.json` are staged in `app/` beside the
   house database; GitHub builds don't stage themselves there yet.

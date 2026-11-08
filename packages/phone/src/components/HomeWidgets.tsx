@@ -28,6 +28,7 @@ import { liveOwner, moodColor, ownerLine, PRESENCES, STATUS_SLIDE_MS, statusSlid
 import { isDaytime, weatherIcon } from './LockClock';
 import { useWeather } from './useWeather';
 import { useStatuses } from './useStatuses';
+import { SoundtrackWidget } from './SoundtrackWidget';
 
 export interface WidgetCompanion {
   slug: string;
@@ -94,8 +95,8 @@ function CompanionsWidget({ companions, onOpen }: { companions: WidgetCompanion[
     setDraft('');
   };
   return (
-    <div className="flex h-full flex-col gap-2 rounded-2xl p-3" style={surface}>
-      <button type="button" onClick={onOpen} className="flex min-w-0 flex-1 flex-col gap-1 text-left">
+    <div className="flex h-full flex-col gap-1.5 rounded-2xl px-3 py-2.5" style={surface}>
+      <button type="button" onClick={onOpen} className="flex min-h-0 min-w-0 flex-1 flex-col gap-0.5 overflow-hidden text-left">
         <span className="flex items-center gap-2">
           <Faces companions={companions} size={24} />
           <span className="min-w-0 flex-1 truncate text-base font-semibold">{thread?.name || 'Messages'}</span>
@@ -104,7 +105,7 @@ function CompanionsWidget({ companions, onOpen }: { companions: WidgetCompanion[
         {lines.length > 0 ? lines.map((l, i) => (
           <span
             key={i}
-            className={l.action ? 'truncate text-xs italic' : 'line-clamp-2 text-sm'}
+            className={l.action ? 'truncate text-xs italic' : 'line-clamp-1 text-sm'}
             style={l.action ? { color: 'var(--bytelight-text-muted)' } : undefined}
           >
             {l.text}
@@ -119,7 +120,7 @@ function CompanionsWidget({ companions, onOpen }: { companions: WidgetCompanion[
           onChange={(e) => setDraft(e.target.value)}
           onKeyDown={(e) => { if (e.key === 'Enter') send(); }}
           placeholder="Answer…"
-          className="min-w-0 flex-1 rounded-full px-3 py-1.5 text-sm outline-none"
+          className="min-w-0 flex-1 rounded-full px-3 py-1 text-sm outline-none"
           style={{ background: 'var(--bytelight-surface-strong)', border: '1px solid var(--bytelight-hairline)', color: 'var(--bytelight-text)' }}
         />
         <button
@@ -127,7 +128,7 @@ function CompanionsWidget({ companions, onOpen }: { companions: WidgetCompanion[
           onClick={send}
           disabled={!draft.trim() || !thread}
           aria-label="Send"
-          className="flex h-8 w-8 items-center justify-center rounded-full disabled:opacity-40"
+          className="flex h-7 w-7 items-center justify-center rounded-full disabled:opacity-40"
           style={{ background: 'var(--bytelight-accent)', color: 'var(--bytelight-on-accent)' }}
         >
           <Heart size={15} />
@@ -162,14 +163,14 @@ function NoteWidget({ companions, palette, onOpen }: { companions: WidgetCompani
     <button
       type="button"
       onClick={onOpen}
-      className="flex h-full w-full flex-col justify-between p-3 text-left shadow-lg"
+      className="flex h-full w-full flex-col justify-between px-3 py-2 text-left shadow-lg"
       style={{ background: paint, color: inkFor(paint), transform: 'rotate(-2.5deg)', borderRadius: 6, fontFamily: "'Caveat', 'Segoe Print', 'Bradley Hand', cursive" }}
     >
-      <span className="line-clamp-5 text-base leading-snug">{note.text}</span>
+      <span className="line-clamp-3 text-base leading-snug">{note.text}</span>
       {/* Signed in the paper's own ink: a writer's color can be the
           paper's color (an orange companion on an orange note). The writer's
           color rides in the little dot instead. */}
-      <span className="flex items-center gap-1.5 self-end text-lg font-bold">
+      <span className="flex items-center gap-1.5 self-end text-base font-bold leading-none">
         <span className="h-2 w-2 rounded-full" style={{ background: writer?.color || 'currentColor', outline: '1px solid currentColor' }} />
         — {(writer?.name || note.sender || '?').charAt(0).toUpperCase()}
       </span>
@@ -184,9 +185,9 @@ function WeatherWidget({ onOpen }: { onOpen: () => void }) {
   // the high and low stay put.
   return (
     <button type="button" onClick={onOpen} className="flex h-full w-full items-center gap-3 rounded-2xl px-3 text-left" style={surface}>
-      <span className="shrink-0">{weather ? weatherIcon(weather.code, isDaytime(weather), 'h-7 w-7') : null}</span>
+      <span className="shrink-0">{weather ? weatherIcon(weather.code, isDaytime(weather), 'h-6 w-6') : null}</span>
       <span className="flex min-w-0 flex-1 flex-col">
-        <span className="text-2xl leading-none">{weather ? `${weather.temp}°` : '—'}</span>
+        <span className="text-xl leading-none">{weather ? `${weather.temp}°` : '—'}</span>
         <span className="truncate text-[11px]" style={{ color: 'var(--bytelight-text-muted)' }}>{weather ? skyWord(weather.code) : 'Looking at the sky'}</span>
       </span>
       {weather && typeof weather.high === 'number' && typeof weather.low === 'number' && (
@@ -233,8 +234,8 @@ function DayWidget() {
   const t = clockParts(new Date(now));
   const [weekday, ...rest] = t.dateLong.split(', ');
   return (
-    <div className="flex h-full items-baseline justify-between rounded-2xl px-4 py-2" style={surface}>
-      <span className="text-3xl">{weekday}</span>
+    <div className="flex h-full items-center justify-between rounded-2xl px-4" style={surface}>
+      <span className="text-2xl leading-none">{weekday}</span>
       <span className="text-sm" style={{ color: 'var(--bytelight-text-muted)' }}>{rest.join(', ')}</span>
     </div>
   );
@@ -383,9 +384,11 @@ function StatusWidget({ companions, onOpen, onEditStatus }: { companions: Widget
 // wander first; past that it was a swipe, not a hold. The same as the clock.
 const HOLD_MS = 450;
 const HOLD_SLOP = 10;
-// One grid row, and the gap between rows and columns, in pixels.
-const ROW_PX = 76;
-const GAP_PX = 12;
+// One grid row, and the gap between rows and columns, in pixels. Skinnier
+// since the Nov 7 slim-down: 76 and 12 before. Every widget
+// keeps its rows and columns, so saved places still hold.
+const ROW_PX = 56;
+const GAP_PX = 10;
 
 interface Lifted { id: HomeWidget; dx: number; dy: number; to: Spot }
 
@@ -550,6 +553,7 @@ export function HomeWidgets({
         if (id === 'weather') body = <WeatherWidget onOpen={() => onOpenAppId('weather')} />;
         if (id === 'letter') body = <LetterWidget companions={companions} onOpen={() => onOpenAppId('letters')} />;
         if (id === 'day') body = <DayWidget />;
+        if (id === 'soundtrack') body = <SoundtrackWidget onOpen={() => onOpenAppId('spotify')} editing={!!lifted} />;
         if (id === 'status') body = <StatusWidget companions={companions} onOpen={() => onOpenAppId('messages')} onEditStatus={onEditStatus} />;
         return (
           <div

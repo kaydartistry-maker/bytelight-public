@@ -75,7 +75,7 @@ import { attachImagesToLatestUserMessage } from './agent/attachment-images.js';
 import { rewriteCodexSkillInvocation } from './agent/codex-skill-invocation.js';
 import { computeContextUsageUpdate } from './agent/context-usage.js';
 import { buildUsageEventRow } from './agent/usage-event-row.js';
-import { getManagedServerConfigs, getRouterTools, type ToolSchema } from './mcp-bridge.js';
+import { getManagedServerConfigs, getForeignLaneTools, type ToolSchema } from './mcp-bridge.js';
 import { readMcpJson } from './mcp-json.js';
 import { runtimeNeedsRouterToolPayload } from './runtime-tool-delivery.js';
 import { ambientRecall, unfiledNoticings } from './heartbeat/whisper.js';
@@ -1593,7 +1593,9 @@ export class AgentService {
         // tool bridge refuses one if a model calls it anyway.
         if (!guestTurn && runtimeNeedsRouterToolPayload(runtimeDescriptor.runtimeId)) {
           try {
-            const routerTools = await getRouterTools();
+            // Belt + managed servers + the operator's .mcp.json servers: the
+            // same hands the Claude lane has natively (mcp-json-bridge.ts).
+            const routerTools = await getForeignLaneTools();
             if (routerTools.length > 0) {
               turnTools = routerTools.map((t: ToolSchema) => ({
                 name: t.name,
@@ -1602,7 +1604,7 @@ export class AgentService {
               }));
             }
           } catch (toolErr) {
-            console.warn('[Agent] getRouterTools failed; proceeding tool-less:', (toolErr as Error).message);
+            console.warn('[Agent] getForeignLaneTools failed; proceeding tool-less:', (toolErr as Error).message);
           }
         }
         // The whisper crosses lanes (H4 leg 1): ambient recall + the

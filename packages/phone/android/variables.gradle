@@ -13,4 +13,7 @@ ext {
     androidxJunitVersion = '1.2.1'
     androidxEspressoCoreVersion = '3.6.1'
     cordovaAndroidVersion = '10.1.1'
+    // The push plugin's own default; named here so the app and the plugin
+    // resolve one firebase-messaging (the Needle).
+    firebaseMessagingVersion = '25.0.1'
 }

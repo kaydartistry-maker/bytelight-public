@@ -121,8 +121,8 @@ You should get a response. If it says "Not logged in", double-check the token an
 ## Step 5: Clone and Configure byte-light
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/bytelight.git
-cd resonant
+git clone https://github.com/kaydartistry-maker/bytelight-public.git
+cd bytelight-public
 npm install
 node scripts/setup.mjs    # Interactive setup wizard
 ```

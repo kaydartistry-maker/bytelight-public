@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
 
     <application
         android:allowBackup="true"
@@ -48,6 +49,22 @@
         <receiver
             android:name=".PocketVoiceActionReceiver"
             android:exported="false" />
+
+        <!-- The Needle: the app's one Firebase messaging service. It extends
+             the Capacitor push plugin's MessagingService and hands it every
+             message that is not a needle (and every new token, untouched),
+             so the plugin's own entry is removed here: two services on
+             MESSAGING_EVENT would leave Firebase picking one. -->
+        <service
+            android:name="com.capacitorjs.plugins.pushnotifications.MessagingService"
+            tools:node="remove" />
+        <service
+            android:name=".NeedleMessagingService"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.google.firebase.MESSAGING_EVENT" />
+            </intent-filter>
+        </service>
 
         <provider
             android:name="androidx.core.content.FileProvider"

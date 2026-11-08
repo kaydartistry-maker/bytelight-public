@@ -101,52 +101,6 @@ export interface NormalizedMessage {
 }
 
 /**
- * Cross-provider handoff packet. Generated when a turn is dispatched
- * on a (runtime, provider, model) combination with no session row in
- * `thread_provider_sessions` for the current thread AND the thread
- * has at least one prior assistant turn.
- *
- * Renamed from "handoff packet" in spec Rev 2 to avoid collision with
- * the existing Claude-SDK `session.handoff_note` (which is the
- * compaction recovery note — distinct concept).
- *
- * Shape aligned with `services/handoff.ts` ProviderHandoff (PR E2 —
- * was previously diverged from the producer's shape, leaving the
- * dispatcher unable to pass the packet typed through to CodexRuntime
- * without a per-call adapter).
- */
-export interface ProviderHandoff {
-  handoffVersion: 1;
-  /** Destination metadata — what combo this packet was built FOR. */
-  toRuntime: string;
-  toProvider: string;
-  toModelRef: string;
-  /** Source metadata — best-guess from the most-recent sidecar row for
-   *  the thread, or undefined when no prior session exists. */
-  fromModelRef?: string;
-  /** Thread name from the threads table; renders so the new combo
-   *  knows the thread identity. */
-  threadTitle: string;
-  /** The actual narrative summary, 2-4 sentences typically. */
-  summary: string;
-  /** `extractive-fallback` indicates the memory-tier call failed and
-   *  the deterministic first-sentence extraction was used instead. */
-  summarySource: 'memory-tier' | 'extractive-fallback';
-  /** Last N raw exchanges, chronological order, trimmed to fit
-   *  `budget.recentTokens`. May be empty if the budget is exhausted
-   *  by the summary alone. */
-  recentMessages: NormalizedMessage[];
-  budget: {
-    summaryTokens: number;
-    recentTokens: number;
-    totalCap: number;
-  };
-  /** Sum of summary + rendered messages chars / CHARS_PER_TOKEN.
-   *  Diagnostic only — caller can log it to spot budget regressions. */
-  totalTokensApprox: number;
-}
-
-/**
  * Placeholder tool definition. Claude SDK runs MCP servers natively
  * (no explicit tools list passed to `runTurn`); non-Claude runtimes
  * in later PRs will translate this to their provider-native format.
@@ -184,9 +138,6 @@ export interface AgentTurnInput {
    *  with native session resume ignore this when `sessionId` is set;
    *  others always use it. */
   messages: NormalizedMessage[];
-  /** Cross-provider bridge packet when the (runtime, provider, model)
-   *  combination has no prior session for this thread. */
-  handoff?: ProviderHandoff;
   /** Provider-native session id for resume (Claude SDK session_id,
    *  Codex conversation_id, etc.). Omitted for fresh sessions. */
   sessionId?: string;

@@ -156,6 +156,8 @@ function PressNotice({ press, at, colors, onOpenLink }: { press: PressState; at:
 const CONTROL_SIZES = {
   app: { row: 'mt-5 flex items-center justify-center gap-6', side: 'h-12 w-12', sideIcon: 20, middle: 'h-16 w-16', middleIcon: 26, sheet: SHEET },
   card: { row: 'flex shrink-0 items-center gap-1', side: 'h-11 w-11', sideIcon: 18, middle: 'h-11 w-11', middleIcon: 20, sheet: CARD_SHEET },
+  // The home screen's Soundtrack bar: a skinny pill, so the buttons shrink to fit it.
+  slim: { row: 'flex shrink-0 items-center gap-0.5', side: 'h-8 w-8', sideIcon: 14, middle: 'h-8 w-8', middleIcon: 15, sheet: CARD_SHEET },
 } as const;
 
 /**

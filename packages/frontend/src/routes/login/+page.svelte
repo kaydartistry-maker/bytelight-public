@@ -1,6 +1,7 @@
 <script lang="ts">
   import { login, checkAuth, isAuthenticated, isAuthRequired } from '$lib/stores/auth.svelte';
   import { goto } from '$app/navigation';
+  import { base } from '$app/paths';
   import { onMount } from 'svelte';
 
   let password = $state('');
@@ -10,7 +11,7 @@
   onMount(async () => {
     
     if (isAuthenticated() || !isAuthRequired()) {
-      goto('/chat');
+      goto(`${base}/chat`);
     }
   });
 
@@ -30,7 +31,7 @@
     const result = await login(password);
 
     if (result.success) {
-      goto('/chat');
+      goto(`${base}/chat`);
     } else {
       error = result.error || 'Login failed';
       password = '';

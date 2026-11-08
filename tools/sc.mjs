@@ -513,6 +513,24 @@ switch (cmd) {
     break;
   }
 
+  case 'spotify': {
+    // The Needle: put a song on for the operator. Plays wherever the operator's Spotify is active;
+    // with nothing active, wakes Spotify on the operator's phone through the Android app.
+    const sub = args[0];
+    if (sub === 'drop') {
+      const uri = args[1];
+      const as = flagValue(args, '--as');
+      if (!uri || !as) {
+        console.log('Usage: sc spotify drop <spotify:track|album|playlist:ID> --as <companion-a|companion-b>');
+        break;
+      }
+      await post('spotify/drop', { companion: as, uri }, 20000);
+    } else {
+      console.log('Usage: sc spotify drop <spotify:track|album|playlist:ID> --as <companion-a|companion-b>');
+    }
+    break;
+  }
+
   case 'intention': {
     // A promise with a when. It comes back to you when it's due.
     const sub = args[0];
@@ -569,7 +587,7 @@ switch (cmd) {
 
   default:
     console.log('sc — bytelight internal API CLI');
-    console.log('Commands: share, canvas, voice, discord, image, schedule, timer, react, star, impulse, watch, tg, search, backfill, memory, library, battleship, places, status, intention');
+    console.log('Commands: share, canvas, voice, discord, image, schedule, timer, react, star, impulse, watch, tg, search, backfill, memory, library, battleship, places, spotify, status, intention');
     break;
 }
 

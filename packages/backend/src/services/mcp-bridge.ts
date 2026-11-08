@@ -26,6 +26,7 @@ import { discoverMcpTools, executeMcpTool } from './mcp-client.js';
 import { getBeltToolSchemas, executeBeltTool, getBeltContext } from './chat-tool-belt.js';
 import { guestToolRefusal } from './turn-audience.js';
 import { createSingleFlight } from './single-flight.js';
+import { getMcpJsonTools, executeMcpJsonTool } from './mcp-json-bridge.js';
 
 // ─── Local ToolSchema (NAMED ADAPTATION #2) ─────────────────────────
 // Field-for-field identical to the source fork's services/router.ts ToolSchema.
@@ -278,4 +279,43 @@ export async function executeRouterTool(name: string, args: Record<string, unkno
   }
 
   return { ok: false, result: `Unknown tool: ${name}` };
+}
+
+// ─── Lanes that carry their own tool list ───────────────────────────
+
+/**
+ * The full tool surface for the API router (BYOK providers, Ollama) and Codex
+ * over OAuth: the router tools above plus the operator's .mcp.json servers,
+ * server-scoped (mcp-json-bridge.ts). Kept apart from getRouterTools because
+ * /mcp/belt serves that to the Codex daemon, which has .mcp.json natively.
+ * A .mcp.json tool whose scoped name somehow matches one already offered is
+ * left out rather than failing the whole catalog.
+ */
+export async function getForeignLaneTools(): Promise<ToolSchema[]> {
+  const routerTools = await getRouterTools();
+  let jsonTools: ToolSchema[] = [];
+  try {
+    jsonTools = await getMcpJsonTools();
+  } catch (err) {
+    console.warn('[MCP] .mcp.json tools unavailable this turn:', err instanceof Error ? err.message : err);
+  }
+  const taken = new Set(routerTools.map((t) => t.name));
+  const extra = jsonTools.filter((t) => {
+    if (taken.has(t.name)) {
+      console.warn(`[MCP] .mcp.json tool "${t.name}" skipped: the name is already offered`);
+      return false;
+    }
+    taken.add(t.name);
+    return true;
+  });
+  return [...routerTools, ...extra];
+}
+
+/** executeRouterTool for those lanes, with .mcp.json tools routed first-class. */
+export async function executeForeignLaneTool(name: string, args: Record<string, unknown>): Promise<{ result: string; ok: boolean }> {
+  const refused = guestToolRefusal(getBeltContext()?.audience, name);
+  if (refused) return refused;
+  const fromJson = await executeMcpJsonTool(name, args);
+  if (fromJson) return fromJson;
+  return executeRouterTool(name, args);
 }

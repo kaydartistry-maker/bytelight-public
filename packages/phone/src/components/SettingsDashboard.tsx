@@ -167,10 +167,10 @@ export const SettingsDashboard: React.FC<SettingsDashboardProps> = ({
                     deviceLabel: Capacitor.getPlatform(),
                   }),
                 });
-                // Main sends Web Push only (endpoint + keys) and answers an
-                // FCM token with 400 — say so instead of failing silently.
+                // The house stores the token beside the browser's web-push
+                // subscriptions and sends to both; say so if it refused.
                 if (!res.ok) {
-                  setPushError("This house can't push to the Android app yet — it only sends web push. Open the app in a browser to subscribe there.");
+                  setPushError("The house couldn't register this phone for push. Check the Firebase service account in Secrets.");
                 }
               } catch (e) {
                 console.error("[Bytelight] Failed to register push token:", e);

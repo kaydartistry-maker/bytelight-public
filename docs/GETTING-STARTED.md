@@ -78,8 +78,8 @@ This opens your browser. Sign in with your Anthropic account. Once you see "Succ
 ## Step 3: Download byte-light
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/bytelight.git
-cd resonant
+git clone https://github.com/kaydartistry-maker/bytelight-public.git
+cd bytelight-public
 ```
 
 If you don't have git, you can also download the ZIP from GitHub and extract it.
@@ -109,7 +109,7 @@ The wizard creates all the configuration files you need.
 
 ## Step 6: Customize Your Companion's Personality
 
-Open the file called `CLAUDE.md` in the resonant folder. This is your companion's personality — its instructions for how to behave, what to remember, and how to interact with you.
+Open the file called `CLAUDE.md` in the bytelight-public folder. This is your companion's personality — its instructions for how to behave, what to remember, and how to interact with you.
 
 The default is a simple friendly personality. Edit it to make it yours. For example:
 
@@ -155,25 +155,25 @@ You'll see the chat interface. Type a message and hit Enter. Your companion will
 After setup, your folder looks like this:
 
 ```
-resonant/
+bytelight-public/
 ├── CLAUDE.md              ← Your companion's personality (edit this!)
-├── resonant.yaml          ← Configuration (names, port, features)
+├── bytelight.yaml          ← Configuration (names, port, features)
 ├── .mcp.json              ← MCP server connections (advanced)
 ├── prompts/
 │   └── wake.md            ← What your companion says when it wakes up
 ├── data/
-│   └── resonant.db        ← Your conversation history (SQLite database)
+│   └── bytelight.db        ← Your conversation history (SQLite database)
 └── ecosystem.config.cjs   ← PM2 config for running as a background service
 ```
 
 **Files you should customize:**
 - `CLAUDE.md` — personality and behavior
 - `prompts/wake.md` — what prompts scheduled check-ins
-- `resonant.yaml` — system configuration
+- `bytelight.yaml` — system configuration
 
 **Files you should NOT edit:**
 - Anything in `packages/` — that's the application code
-- `data/resonant.db` — your conversation database (managed automatically)
+- `data/bytelight.db` — your conversation database (managed automatically)
 
 ## Keeping It Running in the Background
 
@@ -196,16 +196,16 @@ pm2 startup
 **Useful PM2 commands:**
 ```bash
 pm2 status              # Check if it's running
-pm2 logs resonant       # View logs
+pm2 logs bytelight       # View logs
 pm2 restart bytelight    # Restart after config changes
-pm2 stop resonant       # Stop it
+pm2 stop bytelight       # Stop it
 ```
 
 ## Accessing from Other Devices
 
 By default, byte-light only accepts connections from your computer (`127.0.0.1`). To access it from your phone or another device on your network:
 
-1. Open `resonant.yaml`
+1. Open `bytelight.yaml`
 2. Change `host` from `"127.0.0.1"` to `"0.0.0.0"`
 3. Set a password (important — don't leave it open on your network!)
 4. Restart byte-light
@@ -263,19 +263,19 @@ This only needs to be done once. After that, `npm run build` and `npm start` wor
 
 **"Address already in use"**
 - Another program is using port 3002
-- Either stop that program, or change the port in `resonant.yaml` and restart
+- Either stop that program, or change the port in `bytelight.yaml` and restart
 
 **"Cannot find module" errors**
 - Run `npm install` again
-- Make sure you're in the resonant directory
+- Make sure you're in the bytelight-public directory
 
 **The companion doesn't respond**
 - Check the terminal/logs for errors
 - Make sure you have an active internet connection (Claude Code needs it)
-- Try `pm2 logs resonant` if running via PM2
+- Try `pm2 logs bytelight` if running via PM2
 
 **Forgot your password**
-- Open `resonant.yaml`, find the `password` line under `auth`, clear it
+- Open `bytelight.yaml`, find the `password` line under `auth`, clear it
 - Restart byte-light
 
 ## What's Next

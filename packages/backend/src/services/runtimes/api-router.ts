@@ -300,18 +300,6 @@ export class ApiRouterRuntime implements AgentRuntime {
       }
     }
 
-    // Cross-provider handoff packet (B2/E2 design) — if present, prepend
-    // a summary turn so the new runtime has continuity. Reserved for
-    // Step 4+; Step 3 doesn't generate handoff packets but we forward
-    // them through if provided.
-    if (input.handoff) {
-      const handoffBlurb =
-        `[Handoff from ${input.handoff.fromModelRef ?? 'prior model'} to ${input.handoff.toModelRef}]\n` +
-        `Thread: ${input.handoff.threadTitle}\n\n` +
-        `Summary:\n${input.handoff.summary}`;
-      messages.unshift({ role: 'system', content: handoffBlurb });
-    }
-
     // Effective tool schemas: per-turn diffs (`input.tools`) override the
     // ctor-supplied static set. Step 3 only consults this for the
     // tool-calling path below.

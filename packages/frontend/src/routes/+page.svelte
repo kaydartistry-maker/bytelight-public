@@ -1,9 +1,10 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
+  import { base } from '$app/paths';
 
   onMount(() => {
-    goto('/chat');
+    goto(`${base}/chat`);
   });
 </script>
 

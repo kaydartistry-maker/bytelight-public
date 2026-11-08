@@ -67,6 +67,9 @@ test('every tool door refuses a guest through guestToolRefusal', () => {
   const bridge = readFileSync(join(HERE, 'mcp-bridge.ts'), 'utf-8');
   const exec = bridge.slice(bridge.indexOf('export async function executeRouterTool('));
   assert.match(exec.slice(0, exec.indexOf('executeBeltTool(')), /guestToolRefusal\(getBeltContext\(\)\?\.audience, name\)/);
+  // The .mcp.json door for the API lanes refuses before it reaches a server.
+  const foreign = bridge.slice(bridge.indexOf('export async function executeForeignLaneTool('));
+  assert.match(foreign.slice(0, foreign.indexOf('executeMcpJsonTool(')), /guestToolRefusal\(getBeltContext\(\)\?\.audience, name\)/);
   const belt = readFileSync(join(HERE, '..', 'routes', 'mcp-belt.ts'), 'utf-8');
   assert.match(belt, /deps\.activeAudience\?\.\(\)/);
 });

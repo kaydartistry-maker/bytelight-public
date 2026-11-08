@@ -50,6 +50,8 @@ import { getBytelightConfig } from '../../config.js';
 import type { registry as registryInstance } from '../registry.js';
 import type { VoiceService } from '../voice.js';
 import { errMessage } from '../../util/errors.js';
+import { discordAvatarFor, backfillDiscordAvatars } from './avatars.js';
+import { getDb } from '../db.js';
 
 type ConnectionRegistry = typeof registryInstance;
 
@@ -329,6 +331,14 @@ export class DiscordService {
     this.client.on(Events.ClientReady, (c) => {
       console.log(`[Discord] Logged in as ${c.user.tag}`);
       console.log(`[Discord] Guilds: ${c.guilds.cache.size}`);
+      // Old Discord messages were saved without a picture; fill them in once.
+      // Only rows still missing one are touched, so this is quiet after the first run.
+      backfillDiscordAvatars(getDb(), async (userId) => {
+        const user = await c.users.fetch(userId);
+        return user.displayAvatarURL({ size: 128 });
+      })
+        .then(r => { if (r.users) console.log(`[Discord] Avatar backfill: ${r.messages} messages from ${r.users - r.missed}/${r.users} people`); })
+        .catch(err => console.warn('[Discord] Avatar backfill failed:', errMessage(err)));
     });
 
     this.client.on('error', (error) => {
@@ -440,7 +450,7 @@ export class DiscordService {
       // can never come through it. (Aerie.)
       const waiting = result.allowed && judged !== 'answer';
       const heardOnly = cooledOff || waiting;
-      // A message about the owner, from either door: her phone is told.
+      // A message about the owner, from either door: the operator's phone is told.
       const ownerMention: OwnerMentionReason | undefined = cooledOff
         ? result.ownerMention
         : waiting && judged === 'hear' && aboutOwner
@@ -538,6 +548,7 @@ export class DiscordService {
           discordUserId: userId,
           discordUsername: firstMessage.author.username,
           discordDisplayName: displayNameOf(firstMessage),
+          ...(discordAvatarFor(firstMessage) ? { discordAvatarUrl: discordAvatarFor(firstMessage) } : {}),
           discordChannelId: channelId,
           discordGuildId: batch.guildId,
           discordMessageId: lastMessage.id,
@@ -569,7 +580,7 @@ export class DiscordService {
         });
       }
 
-      // A message about the owner wakes her phone: the one kind of heard
+      // A message about the owner wakes the operator's phone: the one kind of heard
       // message that does. Through sendIfOffline, so it stays quiet while she
       // is already looking at the app. Not awaited: a push is a network round
       // trip, and while this batch is still running the next one from the

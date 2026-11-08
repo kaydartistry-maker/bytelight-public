@@ -1,6 +1,7 @@
 import {StrictMode} from 'react';
 import {createRoot} from 'react-dom/client';
 import App from './App.tsx';
+import {ErrorBoundary} from './components/ErrorBoundary';
 import {BytelightProvider} from './bytelight';
 import './index.css';
 import {registerPhoneWorker} from './bytelight/push';
@@ -19,7 +20,9 @@ if (!(window as typeof window & {Capacitor?: {isNativePlatform?: () => boolean}}
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <BytelightProvider>
-      <App />
+      <ErrorBoundary fullScreen>
+        <App />
+      </ErrorBoundary>
     </BytelightProvider>
   </StrictMode>,
 );

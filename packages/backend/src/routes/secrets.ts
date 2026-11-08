@@ -27,6 +27,7 @@ import {
   listSecrets,
   setSecret,
 } from '../services/secrets.js';
+import { getPushService } from '../services/push.js';
 
 const router = Router();
 
@@ -59,6 +60,8 @@ router.put('/secrets/:name', (req: Request, res) => {
     return res.status(400).json({ error: 'value is required — use DELETE to clear' });
   }
   setSecret(name, value);
+  // The Android app's push credentials apply at once, no restart.
+  if (name === 'fcm_service_account') getPushService()?.refreshFcm();
   res.json({ ok: true, name, hasValue: true });
 });
 
@@ -69,6 +72,7 @@ router.delete('/secrets/:name', (req: Request, res) => {
   if (!def) return res.status(404).json({ error: 'unknown secret' });
   if (def.readonly) return res.status(403).json({ error: 'this key is read-only' });
   deleteSecret(name);
+  if (name === 'fcm_service_account') getPushService()?.refreshFcm();
   res.json({ ok: true, name, hasValue: !!getSecret(name) });
 });
 

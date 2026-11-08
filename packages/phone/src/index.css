@@ -1513,3 +1513,8 @@ h1, h2, h3, .micro-label {
 .bytelight-widget-grid[data-carrying] > [data-widget-cell]:empty::after {
   content: attr(data-label);
 }
+
+/* The dock's quick-pick row scrolls sideways without showing a bar. */
+.bytelight-dock-scroll::-webkit-scrollbar {
+  display: none;
+}

@@ -4,7 +4,7 @@ bytelight is a sovereign, single-operator deployment of a persistent AI companio
 
 ## What's welcome
 
-- **Bug reports** — [GitHub Issues](https://github.com/YOUR_USERNAME/bytelight/issues). Include your platform, Node version, and reproduction steps.
+- **Bug reports** — [GitHub Issues](https://github.com/kaydartistry-maker/bytelight-public/issues). Include your platform, Node version, and reproduction steps.
 - **Questions** — open an issue. If it's answered in `docs/`, you'll be pointed there.
 - **Fork it** — genuinely. bytelight itself is a fork of [Resonant](https://github.com/codependentai/resonant) and pulls selectively from sibling forks (see `NOTICE`). Taking this code and making it yours is the intended lifecycle. Apache 2.0 — keep the `LICENSE` and `NOTICE` files intact in derivatives.
 

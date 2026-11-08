@@ -51,7 +51,8 @@ gate.cjs, reply helper). The compactions shelf (migration 046, reader,
 preview, routes, Compactions page), the think-and-thin nudge and the
 stale-wall check (block drift, launch baseline, compacted.cjs), and the
 compaction work-in-hand guard. The Android shell's update and crash
-routes (/api/app). Copyright 2026 Aerie Systems.
+routes (/api/app), and the FCM push transport (service-account JWT,
+device-token rows and the push_subscriptions widening). Copyright 2026 Aerie Systems.
 Licensed under Apache License 2.0.
 
 ================================================================

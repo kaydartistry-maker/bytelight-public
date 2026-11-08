@@ -849,7 +849,7 @@ if (h.digest) {
   } catch {}
 
   // Statuses — her status (dot, line, when it clears) and what's showing under
-  // our names on her phone (services/db/statuses.ts).
+  // our names on the operator's phone (services/db/statuses.ts).
   try {
     const now = new Date();
     parts.push({ label: 'Status', content: statusContext(getStatusSnapshot(now), userName, now, config.identity.timezone) });
@@ -1048,6 +1048,10 @@ if (h.digest) {
       'GAMES:',
       `  ${SC} battleship view [gameId]                 (the Fleet Room as you may see it)`,
       `  ${SC} battleship fire <gameId> <coord> --as <your slug>   (one shot per turn for the whole table)`,
+      '',
+      'MUSIC (the Needle — put a song on for the operator):',
+      `  ${SC} spotify drop <spotify:track|album|playlist:ID> --as <your slug>`,
+      '  Plays where the operator\'s Spotify is active; with nothing active, wakes Spotify on the operator\'s phone even with the app closed. Answers path "direct" or "needle" right away — a needle may take a few seconds to start, so don\'t claim it is already playing. ok:false reason "push" means no phone could be woken.',
       '',
       'PLACES (Thresholds — the places she has pinned; you see names, never coordinates):',
       `  ${SC} places list | read <placeId>`,

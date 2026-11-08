@@ -107,6 +107,7 @@ import type { AgentService } from '../services/agent.js';
 import { getActiveDiscordService, type DiscordService } from '../services/discord/index.js';
 import { errMessage } from '../util/errors.js';
 import { readShelf, currentlyReading, readAlong, addNote, readNotes, LibraryError } from '../services/library.js';
+import { needle } from '../services/needle.js';
 
 // After a render lands we hand ourselves a turn to look at it and react — so the
 // picture and our genuine reaction arrive in the same beat, without blocking the
@@ -1833,6 +1834,18 @@ export function createInternalRoutes(): Router {
     } catch (err) {
       const status = err instanceof LibraryError ? 400 : 500;
       res.status(status).json({ error: errMessage(err) });
+    }
+  });
+
+  // ─── The Needle (Nov 2026) ── a companion drops a song on the operator's phone.
+  // Plays straight through Spotify when a device is active; with none, wakes
+  // the operator's Android app with a data-only push and answers without waiting for it.
+  router.post('/internal/spotify/drop', requireLocalhost, async (req, res) => {
+    try {
+      const answer = await needle().drop(req.body);
+      res.status(answer.ok ? 200 : answer.reason === 'request' ? 400 : 502).json(answer);
+    } catch (err) {
+      res.status(500).json({ ok: false, reason: 'unreachable', error: errMessage(err) });
     }
   });
 

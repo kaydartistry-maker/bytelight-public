@@ -138,11 +138,11 @@ export interface AppTheme {
   lockCards?: 'dark' | 'light' | 'auto';
   // The home widgets, and the quiet line on the dock (lib/home-widgets.ts).
   // Unset is none, so the home screen stays as it was.
-  homeWidgets?: ('companions' | 'note' | 'weather' | 'letter' | 'day' | 'status')[];
+  homeWidgets?: ('companions' | 'note' | 'weather' | 'letter' | 'day' | 'status' | 'soundtrack')[];
   // Where each widget sits on the four-wide grid once any has been moved: its
   // left column and its bottom row, row 0 nearest the dock. Unset is the way
   // the grid always packed them (layoutWidgets in lib/home-widgets.ts).
-  homeWidgetSpots?: Partial<Record<'companions' | 'note' | 'weather' | 'letter' | 'day' | 'status', { col: number; row: number }>>;
+  homeWidgetSpots?: Partial<Record<'companions' | 'note' | 'weather' | 'letter' | 'day' | 'status' | 'soundtrack', { col: number; row: number }>>;
   homeQuietLine?: boolean;
 }
 

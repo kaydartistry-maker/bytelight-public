@@ -405,6 +405,41 @@ export function initDb(dbPath: string): Database.Database {
   // CREATE IF NOT EXISTS.
   runMigration(db, 'migrations/046_compactions.sql', { required: true });
 
+  // 001 wrote push_subscriptions with a type list of web_push and apns, which
+  // predates Android push, so an FCM device token from the app would be
+  // refused by the CHECK constraint. SQLite cannot alter a constraint in
+  // place, so rebuild the table when the old list is still on it, carrying
+  // every existing row across. (Ported from Aerie.)
+  const pushTableSql = (
+    db
+      .prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'push_subscriptions'")
+      .get() as { sql?: string } | undefined
+  )?.sql;
+  if (pushTableSql && !pushTableSql.includes("'fcm'")) {
+    db.exec(`
+      BEGIN;
+      CREATE TABLE push_subscriptions_new (
+        id TEXT PRIMARY KEY,
+        type TEXT NOT NULL CHECK(type IN ('web_push', 'apns', 'fcm')),
+        endpoint TEXT,
+        keys_p256dh TEXT,
+        keys_auth TEXT,
+        device_token TEXT,
+        device_name TEXT,
+        created_at TEXT NOT NULL,
+        last_used_at TEXT
+      );
+      INSERT INTO push_subscriptions_new
+        (id, type, endpoint, keys_p256dh, keys_auth, device_token, device_name, created_at, last_used_at)
+        SELECT id, type, endpoint, keys_p256dh, keys_auth, device_token, device_name, created_at, last_used_at
+        FROM push_subscriptions;
+      DROP TABLE push_subscriptions;
+      ALTER TABLE push_subscriptions_new RENAME TO push_subscriptions;
+      COMMIT;
+    `);
+    console.log('[DB] Widened push_subscriptions to accept Android (FCM) device tokens');
+  }
+
 
   // Insert default config if not exists
   const stmt = db.prepare('INSERT OR IGNORE INTO config (key, value) VALUES (?, ?)');

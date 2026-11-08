@@ -1,5 +1,6 @@
 <script lang="ts">
   import { apiFetch } from '$lib/utils/api';
+  import { base } from '$app/paths';
   import { onMount } from 'svelte';
   import '../../bytelight.css';
   import ResSkeleton from '$lib/components/ResSkeleton.svelte';
@@ -28,14 +29,14 @@
   });
 
   const sections = [
-    { href: '/cc/planner', label: 'Planner', desc: 'Tasks & schedule', icon: 'M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2' },
-    { href: '/cc/care', label: 'Care', desc: 'Wellness tracking', icon: 'M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z' },
-    { href: '/cc/calendar', label: 'Calendar', desc: 'Events', icon: 'M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z' },
-    { href: '/cc/cycle', label: 'Cycle', desc: 'Predictions', icon: 'M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z' },
-    { href: '/cc/pets', label: 'Pets', desc: 'Care & meds', icon: 'M14 10h4.764a2 2 0 011.789 2.894l-3.5 7A2 2 0 0115.263 21H7a2 2 0 01-2-2v-7a2 2 0 012-2h1.5L12 3l2 7z' },
-    { href: '/cc/lists', label: 'Lists', desc: 'Shopping & more', icon: 'M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M12 11l0 6M9 14l6 0' },
-    { href: '/cc/finances', label: 'Finances', desc: 'Expenses', icon: 'M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8V6m0 8v2m9-6a9 9 0 11-18 0 9 9 0 0118 0z' },
-    { href: '/cc/stats', label: 'Stats', desc: 'Trends & insights', icon: 'M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z' },
+    { href: `${base}/cc/planner`, label: 'Planner', desc: 'Tasks & schedule', icon: 'M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2' },
+    { href: `${base}/cc/care`, label: 'Care', desc: 'Wellness tracking', icon: 'M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z' },
+    { href: `${base}/cc/calendar`, label: 'Calendar', desc: 'Events', icon: 'M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z' },
+    { href: `${base}/cc/cycle`, label: 'Cycle', desc: 'Predictions', icon: 'M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z' },
+    { href: `${base}/cc/pets`, label: 'Pets', desc: 'Care & meds', icon: 'M14 10h4.764a2 2 0 011.789 2.894l-3.5 7A2 2 0 0115.263 21H7a2 2 0 01-2-2v-7a2 2 0 012-2h1.5L12 3l2 7z' },
+    { href: `${base}/cc/lists`, label: 'Lists', desc: 'Shopping & more', icon: 'M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M12 11l0 6M9 14l6 0' },
+    { href: `${base}/cc/finances`, label: 'Finances', desc: 'Expenses', icon: 'M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8V6m0 8v2m9-6a9 9 0 11-18 0 9 9 0 0118 0z' },
+    { href: `${base}/cc/stats`, label: 'Stats', desc: 'Trends & insights', icon: 'M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z' },
   ];
 
   async function load() {
@@ -102,9 +103,9 @@
     </div>
 
     <div class="hero-actions">
-      <a href="/chat" class="hero-primary">Open chat</a>
-      <a href="/cc/planner" class="hero-secondary">Planner</a>
-      <a href="/cc/calendar" class="hero-secondary">Calendar</a>
+      <a href="{base}/chat" class="hero-primary">Open chat</a>
+      <a href="{base}/cc/planner" class="hero-secondary">Planner</a>
+      <a href="{base}/cc/calendar" class="hero-secondary">Calendar</a>
     </div>
   </div>
 
@@ -119,19 +120,19 @@
       </div>
     {:else}
       <section class="summary-grid">
-        <a href="/cc/planner" class="summary-card">
+        <a href="{base}/cc/planner" class="summary-card">
           <span class="summary-label">Active tasks</span>
           <strong>{taskCount}</strong>
         </a>
-        <a href="/cc/calendar" class="summary-card">
+        <a href="{base}/cc/calendar" class="summary-card">
           <span class="summary-label">Today</span>
           <strong>{eventCount}</strong>
         </a>
-        <a href="/cc/care" class="summary-card">
+        <a href="{base}/cc/care" class="summary-card">
           <span class="summary-label">Care tracked</span>
           <strong>{careCount}</strong>
         </a>
-        <a href="/cc/pets" class="summary-card">
+        <a href="{base}/cc/pets" class="summary-card">
           <span class="summary-label">Alerts</span>
           <strong>{petAlerts.length}</strong>
         </a>
@@ -141,7 +142,7 @@
 
       <section class="feature-grid">
         {#if petAlerts.length > 0}
-          <a href="/cc/pets" class="feature-card feature-card--urgent">
+          <a href="{base}/cc/pets" class="feature-card feature-card--urgent">
             <div class="section-head">
               <span class="res-section-title" style="margin: 0;">Pet care needed</span>
               <span class="feature-badge">{petAlerts.length}</span>
@@ -158,7 +159,7 @@
           </a>
         {/if}
 
-        <a href="/cc/calendar" class="feature-card">
+        <a href="{base}/cc/calendar" class="feature-card">
           <div class="section-head">
             <span class="res-section-title" style="margin: 0;">Today schedule</span>
             <span class="feature-badge">{eventCount}</span>
@@ -180,7 +181,7 @@
           {/if}
         </a>
 
-        <a href="/cc/planner" class="feature-card">
+        <a href="{base}/cc/planner" class="feature-card">
           <div class="section-head">
             <span class="res-section-title" style="margin: 0;">Active tasks</span>
             <span class="feature-badge">{taskCount}</span>

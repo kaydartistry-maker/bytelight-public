@@ -501,19 +501,6 @@ function buildContext(input: AgentTurnInput): Context {
       : input.orientation;
   }
 
-  // Handoff packet: prepend a synthetic system note so the destination
-  // runtime has the continuity context. Same pattern as ApiRouter.
-  if (input.handoff) {
-    const handoffBlurb =
-      `[Handoff from ${input.handoff.fromModelRef ?? 'prior model'} ` +
-      `to ${input.handoff.toModelRef}]\n` +
-      `Thread: ${input.handoff.threadTitle}\n\n` +
-      `Summary:\n${input.handoff.summary}`;
-    systemPrompt = systemPrompt
-      ? `${handoffBlurb}\n\n${systemPrompt}`
-      : handoffBlurb;
-  }
-
   // Conversation history.
   const now = Date.now();
   const messages: Message[] = [];

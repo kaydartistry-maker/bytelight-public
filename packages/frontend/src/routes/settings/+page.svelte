@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
+  import { base } from '$app/paths';
   import OrchestratorPanel from '$lib/components/OrchestratorPanel.svelte';
   import SystemStatusPanel from '$lib/components/SystemStatusPanel.svelte';
   import McpActivityPanel from '$lib/components/McpActivityPanel.svelte';
@@ -70,7 +71,7 @@
 <div class="settings-page">
   <!-- Header -->
   <header class="settings-header">
-    <a href="/chat" class="back-link">
+    <a href="{base}/chat" class="back-link">
       <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
         <path d="M19 12H5M12 19l-7-7 7-7"/>
       </svg>
@@ -210,7 +211,7 @@
     <button
       class="tab"
       type="button"
-      onclick={() => goto('/usage')}
+      onclick={() => goto(`${base}/usage`)}
     >
       Usage
     </button>

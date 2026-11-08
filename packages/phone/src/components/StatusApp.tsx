@@ -3,6 +3,7 @@ import { Activity } from 'lucide-react';
 import { AppShell } from './AppShell';
 import { SystemApp } from './SystemApp';
 import { SessionsApp } from './SessionsApp';
+import { ErrorBoundary } from './ErrorBoundary';
 import { UsageApp } from './UsageApp';
 import { ThemeConfig } from '../lib/theme';
 import { cn } from '../lib/utils';
@@ -45,7 +46,7 @@ export function StatusApp({ onClose, themeConfig, themeMode }: StatusAppProps) {
       </div>
 
       {tab === 'status' && <SystemApp embedded onClose={onClose} themeConfig={themeConfig} themeMode={themeMode} />}
-      {tab === 'sessions' && <SessionsApp embedded onClose={onClose} themeConfig={themeConfig} themeMode={themeMode} />}
+      {tab === 'sessions' && <ErrorBoundary label="Sessions"><SessionsApp embedded onClose={onClose} themeConfig={themeConfig} themeMode={themeMode} /></ErrorBoundary>}
       {tab === 'usage' && <UsageApp embedded onClose={onClose} themeConfig={themeConfig} themeMode={themeMode} />}
     </AppShell>
   );

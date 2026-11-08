@@ -45,7 +45,7 @@ import {
   InteractiveCodexRuntime,
   CODEX_CLI_CAPABILITIES,
 } from './codex-daemon.js';
-import { executeRouterTool, getRouterTools } from '../mcp-bridge.js';  // SLICE-3a ADAPTATION: tag's tools-bridge.ts == main's mcp-bridge.ts (same exports)
+import { executeForeignLaneTool, getRouterTools } from '../mcp-bridge.js';  // SLICE-3a ADAPTATION: tag's tools-bridge.ts == main's mcp-bridge.ts (same exports)
 import type { AgentRuntime } from './types.js';
 import type { AgentModelTier } from './types.js';  // SLICE-3a ADAPTATION: declared in types.ts until agent.ts exports it (Slice 3b)
 
@@ -69,11 +69,12 @@ const claudeRuntime = new ClaudeAgentRuntime();
  * callback supplied via constructor option.
  *
  * Same pattern as `getApiRouterRuntime` above (`executeTool: (name, args)
- * => executeRouterTool(name, args)`). One shared bridge surface serves
- * both runtimes — no parallel registry, no per-runtime tool list.
+ * => executeForeignLaneTool(name, args)`: the router tools plus the
+ * operator's .mcp.json servers). One shared bridge surface serves both
+ * runtimes — no parallel registry, no per-runtime tool list.
  */
 const codexRuntime = new CodexAgentRuntime({
-  executeTool: (name, args) => executeRouterTool(name, args),
+  executeTool: (name, args) => executeForeignLaneTool(name, args),
 });
 
 /**
@@ -175,7 +176,7 @@ function getApiRouterRuntime(runtimeId: RuntimeId, providerId: ProviderId): ApiR
     rt = new ApiRouterRuntime({
       runtimeId,
       providerId,
-      executeTool: (name, args) => executeRouterTool(name, args),
+      executeTool: (name, args) => executeForeignLaneTool(name, args),
       // Tools are lazy-loaded per-turn via input.tools rather than passed
       // statically — getRouterTools() requires async + the executeRouterTool
       // callback already covers in-process + MCP routing. Step 4+ may
@@ -419,7 +420,6 @@ export type {
   AgentTurnInput,
   NormalizedMessage,
   NormalizedImage,
-  ProviderHandoff,
   ToolDefinition,
   ThreadHandle,
   CapabilityKey,

@@ -142,7 +142,7 @@ export function HomeScreen({
           and the long press that opens the widget sheet. */}
       <div
         className="flex flex-1 flex-col justify-end px-5"
-        style={{ paddingBottom: quietLine ? 168 : 124 }}
+        style={{ paddingBottom: quietLine ? 150 : 106 }}
         {...holdHandlers}
         onContextMenu={(e) => e.preventDefault()}
       >
@@ -167,25 +167,31 @@ export function HomeScreen({
             <QuietLine companions={companions} onOpen={() => openById('messages')} />
           </div>
         )}
-        <div className="bytelight-dock flex gap-3 rounded-[1.7rem] px-4 py-3.5 max-w-full overflow-hidden">
+        <div className="bytelight-dock flex items-center gap-2 rounded-[1.4rem] px-3 py-2 max-w-full overflow-hidden">
+          {/* Quick picks scroll sideways when there are more than fit;
+              the Apps launcher stays pinned on the right. */}
+          <div
+            className="bytelight-dock-scroll flex min-w-0 snap-x snap-mandatory gap-2 overflow-x-auto overscroll-x-contain pt-1"
+            style={{ scrollbarWidth: 'none', WebkitOverflowScrolling: 'touch' }}
+          >
           {dockApps.map((app) => (
             <motion.button
               key={`dock-${app.id}`}
               whileHover={{ y: -2 }}
               {...pressHandlers(app.id, () => onOpenApp(app))}
-              className="bytelight-dock-button relative flex w-14 flex-col items-center gap-1.5"
+              className="bytelight-dock-button relative flex w-12 shrink-0 snap-start flex-col items-center gap-1"
               data-pressed={pressedAppId === app.id}
               aria-pressed={pressedAppId === app.id}
             >
               <div
-                className="bytelight-dock-tile flex h-12 w-12 items-center justify-center rounded-xl"
+                className="bytelight-dock-tile flex h-10 w-10 items-center justify-center rounded-xl"
                 data-pressed={pressedAppId === app.id}
               >
-                <app.icon className="h-6 w-6" />
+                <app.icon className="h-5 w-5" />
               </div>
               {app.id === 'messages' && messagesBadge > 0 && (
                 <span
-                  className="absolute -top-1 right-1 min-w-[18px] h-[18px] rounded-full text-[10px] font-bold flex items-center justify-center px-1 border-2"
+                  className="absolute top-0 -right-0.5 min-w-[16px] h-[16px] rounded-full text-[10px] font-bold flex items-center justify-center px-1 border-2"
                   style={{
                     backgroundColor: colors.accent,
                     color: '#090807',
@@ -195,25 +201,26 @@ export function HomeScreen({
                   {messagesBadge}
                 </span>
               )}
-              <span className="bytelight-dock-label w-full truncate text-center text-[9px] font-medium tracking-[0.12em] uppercase opacity-80">{app.name}</span>
+              <span className="bytelight-dock-label w-full truncate text-center text-[8px] font-medium tracking-[0.1em] uppercase opacity-80">{app.name}</span>
             </motion.button>
           ))}
+          </div>
 
           {/* App drawer launcher */}
           <motion.button
             whileHover={{ y: -2 }}
             {...pressHandlers('apps', onOpenDrawer)}
-            className="bytelight-dock-button flex w-14 flex-col items-center gap-1.5"
+            className="bytelight-dock-button flex w-12 shrink-0 flex-col items-center gap-1 pt-1"
             data-pressed={pressedAppId === 'apps'}
             aria-pressed={pressedAppId === 'apps'}
           >
             <div
-              className="bytelight-dock-tile flex h-12 w-12 items-center justify-center rounded-xl"
+              className="bytelight-dock-tile flex h-10 w-10 items-center justify-center rounded-xl"
               data-pressed={pressedAppId === 'apps'}
             >
-              <LayoutGrid className="h-6 w-6" />
+              <LayoutGrid className="h-5 w-5" />
             </div>
-            <span className="bytelight-dock-label w-full truncate text-center text-[9px] font-medium tracking-[0.12em] uppercase opacity-80">Apps</span>
+            <span className="bytelight-dock-label w-full truncate text-center text-[8px] font-medium tracking-[0.1em] uppercase opacity-80">Apps</span>
           </motion.button>
         </div>
       </div>

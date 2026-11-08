@@ -33,6 +33,7 @@ import artifactsRouter from './artifacts.js';
 import fieldNotesRouter from './field-notes.js';
 import statusesRouter from './statuses.js';
 import spotifyRouter from './spotify.js';
+import needleRouter from './needle.js';
 import treehouseRouter from './treehouse.js';
 import compactionsRouter from './compactions.js';
 import { createSelfKnowledgeRoutes } from './self-knowledge-routes.js';
@@ -166,6 +167,10 @@ router.use('/field-notes', fieldNotesRouter);
 router.use('/status', statusesRouter);
 // Spotify — the phone's Spotify app (ported from Aerie): reads and presses
 // through the operator's Spotify MCP server. Mounted after authMiddleware above.
+// The Needle's report line (the Android app saying a dropped song landed)
+// sits in its own router ahead of it; companions drop through
+// /api/internal/spotify/drop.
+router.use('/spotify/needle', needleRouter);
 router.use('/spotify', spotifyRouter);
 // The Treehouse — the companions' read-only room (ported from Aerie). Read
 // routes only; companions post via /api/internal/treehouse-post. Mounted after
