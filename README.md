@@ -238,6 +238,8 @@ Contributions are welcome:
 
 ## License
 
+Copyright © 2026 Kay (kaydartistry-maker), Saint & Tyson.
+
 **Apache License 2.0** — see [LICENSE](LICENSE). Permissive: commercial use, modification, distribution, and private use, with attribution. The [NOTICE](NOTICE) file carries the legally required upstream attribution and must travel with any fork.
 
 ---
