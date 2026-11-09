@@ -504,7 +504,7 @@ export function queueTimeoutFor(priority: number): number {
 // (Companion A + Companion B are two picker seats over one brain — companions registry).
 // Remote companions (Companion C) never stream through this service; their turns are
 // relayed by the Living Room dispatcher and stamped with their own id there.
-const LOCAL_COMPANION_ID = 'companion-a-b';
+export const LOCAL_COMPANION_ID = 'companion-a-b';
 
 // The owner's stop button during a room turn stops the whole room, not just
 // the companion speaking — set by stopGeneration, read between lanes.

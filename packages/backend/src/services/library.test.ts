@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -11,6 +11,7 @@ import {
   readShelf,
   readBook,
   setProgress,
+  setShelf,
   removeBook,
   saveBook,
   paragraphsOf,
@@ -21,6 +22,8 @@ import {
   readNotes,
   removeNote,
   LibraryError,
+  parseOpdsSearch,
+  parseOpdsBook,
 } from './library.js';
 
 const para = (n: number) => `${'The house was quiet and the rain kept on. '.repeat(n)}\n`;
@@ -133,6 +136,103 @@ describe('library catalog and shelf', () => {
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
+  });
+});
+
+describe('catalog fallback when Gutendex is down', () => {
+  const SEARCH = `<?xml version="1.0"?><feed>
+<id>http://www.gutenberg.org/ebooks/search.opds/?query=dorian</id>
+<entry><id>https://www.gutenberg.org/ebooks/subjects/search.opds/?query=dorian</id><title>Subjects</title><content type="text">One subject heading matches.</content></entry>
+<entry><id>https://www.gutenberg.org/ebooks/174.opds</id><title>The Picture of Dorian Gray</title><content type="text">Oscar Wilde</content></entry>
+<entry><id>https://www.gutenberg.org/ebooks/33689.opds</id><title>Art &amp; Morality: A Defence of &quot;Dorian&quot;</title><content type="text">Stuart Mason</content></entry>
+</feed>`;
+  const BOOK = `<feed><title>The Picture of Dorian Gray by Oscar Wilde</title>
+<entry><title>The Picture of Dorian Gray</title><content type="xhtml"><div>
+<p>Author: Wilde, Oscar, 1854-1900</p><p>EBook No.: 174</p></div></content></entry>
+<entry><title>The Picture of Dorian Gray</title></entry></feed>`;
+  const deadGutendex = async (url: string) => {
+    if (url.includes('gutendex.com')) throw new Error('The operation was aborted due to timeout');
+    return {
+      ok: true,
+      status: 200,
+      json: async () => { throw new Error('not json'); },
+      text: async () => (url.includes('search.opds') ? SEARCH : url.endsWith('/174.opds') ? BOOK : RAW),
+    };
+  };
+
+  it('reads Gutenberg search results, skipping non-book entries and decoding titles', () => {
+    const r = parseOpdsSearch(SEARCH);
+    assert.deepEqual(r.map((b) => b.id), [174, 33689]);
+    assert.deepEqual(r[0].authors, ['Oscar Wilde']);
+    assert.equal(r[1].title, 'Art & Morality: A Defence of "Dorian"');
+    assert.match(r[0].cover ?? '', /pg174\.cover\.medium\.jpg$/);
+  });
+
+  it('reads one book page, dropping the life dates from the author', () => {
+    const b = parseOpdsBook(174, BOOK);
+    assert.equal(b?.title, 'The Picture of Dorian Gray');
+    assert.deepEqual(b?.authors, [{ name: 'Wilde, Oscar' }]);
+  });
+
+  it('search and shelving both keep working with Gutendex dead', async () => {
+    const results = await searchCatalog('dorian', deadGutendex);
+    assert.equal(results[0].title, 'The Picture of Dorian Gray');
+    const root = mkdtempSync(join(tmpdir(), 'library-'));
+    try {
+      const entry = await fetchAndShelve(174, deadGutendex, root);
+      assert.equal(entry.title, 'The Picture of Dorian Gray');
+      assert.deepEqual(entry.authors, ['Oscar Wilde']);
+      assert.equal(entry.chapterCount, 2);
+      assert.equal(entry.shelf, 'tbr');
+    } finally { rmSync(root, { recursive: true, force: true }); }
+  });
+});
+
+describe('library shelves', () => {
+  const book = (id: number) => ({
+    id, title: `Book ${id}`, authors: ['A'], cover: null, source: 'gutenberg' as const,
+    fetchedAt: '2026-11-09T00:00:00Z', chapters: [{ title: 'One', text: 'x' }, { title: 'Two', text: 'y' }],
+  });
+
+  it('a new book lands on To Be Read and moves to Currently Reading when she reads it', () => {
+    const root = mkdtempSync(join(tmpdir(), 'library-'));
+    try {
+      assert.equal(saveBook(book(1), root).shelf, 'tbr');
+      assert.equal(readShelf(root)[0].favorite, false);
+      setProgress(1, 0, 0.1, root);
+      assert.equal(readShelf(root)[0].shelf, 'reading');
+    } finally { rmSync(root, { recursive: true, force: true }); }
+  });
+
+  it('moves between shelves, stars a favorite, keeps both across a re-shelve, refuses unknown shelves', () => {
+    const root = mkdtempSync(join(tmpdir(), 'library-'));
+    try {
+      saveBook(book(2), root);
+      assert.equal(setShelf(2, { shelf: 'finished', favorite: true }, root)?.shelf, 'finished');
+      setProgress(2, 1, 0.5, root);
+      assert.equal(readShelf(root)[0].shelf, 'finished', 'rereading a finished book keeps it finished');
+      saveBook(book(2), root);
+      assert.deepEqual([readShelf(root)[0].shelf, readShelf(root)[0].favorite], ['finished', true]);
+      assert.equal(setShelf(2, { favorite: false }, root)?.favorite, false);
+      assert.throws(() => setShelf(2, { shelf: 'attic' }, root), LibraryError);
+      assert.equal(setShelf(404, { shelf: 'dnf' }, root), null);
+    } finally { rmSync(root, { recursive: true, force: true }); }
+  });
+
+  it('books shelved before shelves existed read as reading (started) or tbr (not)', () => {
+    const root = mkdtempSync(join(tmpdir(), 'library-'));
+    try {
+      saveBook(book(3), root);
+      saveBook(book(4), root);
+      setProgress(3, 0, 0.2, root);
+      const path = join(root, 'shelf.json');
+      const old = JSON.parse(readFileSync(path, 'utf-8')).map(({ shelf: _s, favorite: _f, ...rest }: Record<string, unknown>) => rest);
+      writeFileSync(path, JSON.stringify(old));
+      const byId = Object.fromEntries(readShelf(root).map((e) => [e.id, e]));
+      assert.equal(byId[3].shelf, 'reading');
+      assert.equal(byId[4].shelf, 'tbr');
+      assert.equal(byId[4].favorite, false);
+    } finally { rmSync(root, { recursive: true, force: true }); }
   });
 });
 

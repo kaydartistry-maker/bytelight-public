@@ -6,7 +6,7 @@
 // particular house, which is fine right up until somebody else installs it.
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { apiFetch } from '../bytelight';
+import { apiFetch, useProfiles } from '../bytelight';
 import { fetchOwnerFromPreferences, ownerFromCompanionsPayload, type OwnerIdentity } from './owner';
 import { normalizeCompanionRows } from './companion-row';
 
@@ -58,7 +58,15 @@ export function getOwnerAvatar(): { url?: string; color?: string } {
 }
 
 export function useHouseRoster(): HouseRoster {
-  const [companions, setCompanions] = useState<HouseCompanion[]>([]);
+  // The rows as the house sent them. Faces are laid over them from main's
+  // profiles, which can land after /api/companions answers (a room opened
+  // straight off the lock screen): normalized once, those rows kept the
+  // companions table's seeded `avatar`, a copy that can point at a file
+  // long gone. So the rows are re-read whenever the profiles change, the
+  // same way the chat re-reads its own.
+  const [rows, setRows] = useState<unknown[]>([]);
+  const profiles = useProfiles();
+  const companions = useMemo<HouseCompanion[]>(() => normalizeCompanionRows(rows), [rows, profiles]);
   const [owner, setOwner] = useState<OwnerIdentity | null>(null);
   const [castLabels, setCastLabels] = useState<CastLabels>({ everyone: '', companions: '' });
   const [loaded, setLoaded] = useState(false);
@@ -70,7 +78,7 @@ export function useHouseRoster(): HouseRoster {
         const res = await apiFetch('/api/companions');
         const data = res.ok ? await res.json().catch(() => null) : null;
         if (cancelled) return;
-        if (Array.isArray(data?.companions)) setCompanions(normalizeCompanionRows(data.companions));
+        if (Array.isArray(data?.companions)) setRows(data.companions);
         if (data?.castLabels && typeof data.castLabels === 'object') {
           setCastLabels({
             everyone: typeof data.castLabels.everyone === 'string' ? data.castLabels.everyone : '',

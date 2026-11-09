@@ -52,7 +52,15 @@ preview, routes, Compactions page), the think-and-thin nudge and the
 stale-wall check (block drift, launch baseline, compacted.cjs), and the
 compaction work-in-hand guard. The Android shell's update and crash
 routes (/api/app), and the FCM push transport (service-account JWT,
-device-token rows and the push_subscriptions widening). Copyright 2026 Aerie Systems.
+device-token rows and the push_subscriptions widening). The Story
+Shelf (choose-your-own-path books the companions write and run: the
+story_books, story_pages and story_keepsakes tables as migration 047,
+its rules and page turns, the /api/story-shelf and
+/api/internal/story-shelf routes, its shared contract, the phone's
+shelf, book and table, the scene widget frame and the sealed frame
+runtime, RoomTable and RoomBubble, and the story-shelf skill), shown as
+a shelf inside byte-light's Library. Aerie is built by Tris.
+Copyright 2026 Aerie Systems.
 Licensed under Apache License 2.0.
 
 ================================================================

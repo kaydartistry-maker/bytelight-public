@@ -46,6 +46,8 @@ import codexAuthRouter from './codex-auth.js';
 import usageRouter from './usage.js';
 import starredRouter from './starred.js';
 import libraryRouter from './library.js';
+import storyShelfRouter from './story-shelf.js';
+import bookClubRouter from './library-book-club.js';
 import emojiRouter from './emojis.js';
 import studioRouter from './studio.js';
 import gifRouter from './gif.js';
@@ -180,7 +182,17 @@ router.use(treehouseRouter);
 // house's own (ported from Aerie). Read only; Memory app, Compactions tab.
 router.use('/compactions', compactionsRouter);
 // The Library — the phone's reading room (Gutenberg shelf, reader, bookmarks).
+// The Book Club — rounds of pitches and votes inside the Library. Her door;
+// the companions pitch and vote through /api/internal/library/book-club.
+router.use('/library/book-club', bookClubRouter);
 router.use('/library', libraryRouter);
+// The Story Shelf — choose-your-own-path books the companions write and run
+// (ported from Aerie, where server.ts mounted it at /api/story-shelf). The
+// phone shows it as a shelf inside the Library. Her door only; the companions
+// write through /api/internal/story-shelf. After authMiddleware above (the
+// router also carries its own, as Aerie's does). Page turns reach
+// req.app.locals.agentService, set in server.ts.
+router.use('/story-shelf', storyShelfRouter);
 router.use(createXrayRoutes());
 router.use(createStickerRoutes());
 // Custom emojis and emoji packs (ported from full-sweep). /api/emojis.

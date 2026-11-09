@@ -199,7 +199,8 @@ interface MessageBubbleProps {
 const EMOJIS = ['❤️', '👍', '🔥', '😂', '😮'];
 
 // ElevenLabs Voice IDs
-const ELEVENLABS_API_KEY = import.meta.env.VITE_ELEVENLABS_API_KEY || "";
+// `?.` so the bubble also renders outside Vite (components/room-table-faces.test.ts).
+const ELEVENLABS_API_KEY = import.meta.env?.VITE_ELEVENLABS_API_KEY || "";
 
 export function MessageBubble({ message, onReact, onBookmark, onDelete, onEdit, onReroll, rerollRemoves, onReply, onCopy, copyText, onJumpToReply, themeConfig, themeMode, elevenLabsApiKey, contacts, voiceRoster, isPrivateTab, onMediaLoad, customEmojis, voice, groupPos = 'only', userAvatar, userAvatarColor, centered }: MessageBubbleProps) {
   const [showReactions, setShowReactions] = useState(false);

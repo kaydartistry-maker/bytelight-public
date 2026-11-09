@@ -206,6 +206,7 @@ export type ServerMessage =
   | { type: 'self_knowledge'; entry: Record<string, unknown> }
   | { type: 'battleship_update'; gameId: string }
   | { type: 'card_table_update'; tableId: string }
+  | { type: 'story_update'; bookId: string | null }
   | { type: 'rate_limit'; status: string; resetsAt?: number; rateLimitType?: string; utilization?: number }
   | { type: 'tool_progress'; toolId: string; toolName: string; elapsed: number }
   | { type: 'mcp_status_updated'; servers: McpServerInfo[] }

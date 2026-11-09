@@ -21,6 +21,8 @@ let compactionTimeout: ReturnType<typeof setTimeout> | null = null;
 let rateLimitTimeout: ReturnType<typeof setTimeout> | null = null;
 let visibilityHandler: (() => void) | null = null;
 let onlineHandler: (() => void) | null = null;
+// The thread a reply is being written in, for threadWriting (ported from Aerie).
+let writingThreadId: string | null = null;
 // A SOCKET CAN BE DEAD AND STILL REPORT OPEN. On a phone the radio drops, the
 // tab is frozen, or a NAT times the connection out, and the browser does not
 // find out until it next tries to write — which for a WebSocket may be never.
@@ -38,6 +40,14 @@ let connectTimeout: ReturnType<typeof setTimeout> | null = null;
 let connectingSince = 0;
 const CONNECT_TIMEOUT_MS = 8_000; // give a real handshake room, then stop waiting
 const CONNECT_TAP_MS = 2_000;     // she is looking at it: replace a slow one on tap
+
+// Rooms that are not the chat (the Story Shelf's table) show their own
+// writing dots, so the start and end of a reply are said out loud for them.
+// (Ported from Aerie with the Story Shelf.)
+function threadWriting(threadId: string | null | undefined, writing: boolean): void {
+  if (!threadId || typeof window === 'undefined') return;
+  window.dispatchEvent(new CustomEvent('bytelight:thread-stream', { detail: { threadId, writing } }));
+}
 
 /** True when the socket claims OPEN but has not answered a ping recently. */
 function socketIsStale(): boolean {
@@ -272,6 +282,8 @@ function handleMessage(event: MessageEvent): void {
     case 'stream_start':
       setState({ streamingMessageId: msg.messageId, streamingTokens: '' });
       lastStreamActivity = Date.now();
+      writingThreadId = msg.threadId;
+      threadWriting(msg.threadId, true);
       break;
 
     case 'stream_token':
@@ -286,6 +298,8 @@ function handleMessage(event: MessageEvent): void {
       // Router lanes deliver the final reply only via stream_end (no
       // `message` broadcast) — advance the per-thread marker here too.
       if (msg.final) bumpSeen(msg.final.thread_id, msg.final.sequence);
+      threadWriting(msg.final?.thread_id ?? writingThreadId, false);
+      writingThreadId = null;
       setState((st) => {
         const next: Partial<typeof st> = { streamingMessageId: null, streamingTokens: '' };
         if (msg.final && msg.final.thread_id === st.activeThreadId) {
@@ -551,6 +565,8 @@ function handleMessage(event: MessageEvent): void {
 
     case 'generation_stopped':
       setState({ streamingMessageId: null, streamingTokens: '' });
+      threadWriting(writingThreadId, false);
+      writingThreadId = null;
       break;
 
     // ── Frames main's backend sends that the fork never had ──────────────
@@ -603,6 +619,16 @@ function handleMessage(event: MessageEvent): void {
     case 'card_table_update':
       window.dispatchEvent(new CustomEvent('bytelight:card-table-update', {
         detail: { tableId: msg.tableId },
+      }));
+      break;
+
+    // The Story Shelf changed (ported from Aerie): a book shelved, a page written,
+    // a page turn started or ended, or a keepsake tied. An open Story Shelf
+    // re-reads the shelf, and the open book when it is the one named (or when
+    // none is, which a keepsake does because it touches two books).
+    case 'story_update':
+      window.dispatchEvent(new CustomEvent('bytelight:story-update', {
+        detail: { bookId: msg.bookId },
       }));
       break;
 

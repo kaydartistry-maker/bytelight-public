@@ -648,7 +648,7 @@ export const CHAT_TOOL_BELT: BeltTool[] = [
     schema: {
       name: 'library_read',
       description:
-        'Read a chapter of a book she is reading, up to exactly where she is — never further. Defaults to her current book and chapter. Includes any margin notes already on that chapter. Never guess or hint at what happens after her place.',
+        'Read a chapter of a book she is reading, up to exactly where she is — never further. Defaults to her current book and chapter. Includes any margin notes already on that chapter, and herHighlights: the lines she highlighted on those pages (quote, color, and her own note when she wrote one). Her highlights are her telling you what landed — answer them, quote them back, notice the colors she picks. Never guess or hint at what happens after her place.',
       input_schema: {
         type: 'object',
         properties: {
@@ -662,6 +662,27 @@ export const CHAT_TOOL_BELT: BeltTool[] = [
       const body: Record<string, unknown> = { action: 'read' };
       if (typeof args.bookId === 'number') body.bookId = args.bookId;
       if (typeof args.chapter === 'number') body.chapter = args.chapter;
+      return libraryCall(body);
+    },
+  },
+
+  // 10b. library_highlights
+  {
+    schema: {
+      name: 'library_highlights',
+      description:
+        "Every line she has highlighted in a book so far, chapter by chapter, with its color and her note when she left one — never anything past her bookmark. Also works on a book she reads in the Kindle app (readInKindle on library_status): there is no text to read along with there, but her exported Kindle highlights are, with Kindle's chapter and page. Defaults to the book she is reading now.",
+      input_schema: {
+        type: 'object',
+        properties: {
+          bookId: { type: 'number', description: 'Book id from library_status. Omit for the book she is reading now.' },
+        },
+        required: [],
+      },
+    },
+    handler: async (args) => {
+      const body: Record<string, unknown> = { action: 'highlights' };
+      if (typeof args.bookId === 'number') body.bookId = args.bookId;
       return libraryCall(body);
     },
   },

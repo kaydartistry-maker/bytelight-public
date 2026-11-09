@@ -32,7 +32,7 @@ const BELT_NAMES = [
   'discord_get_server_info', 'discord_list_servers', 'discord_list_emojis', 'discord_list_stickers',
   'send_voice_note', 'generate_image', 'search_messages', 'search_web',
   'core_memory_view', 'core_memory_append', 'core_memory_replace', 'core_memory_rethink',
-  'library_status', 'library_read', 'library_note',
+  'library_status', 'library_read', 'library_highlights', 'library_note',
   'set_intention', 'cancel_intention', 'set_status',
   'battleship_fire',
 ];

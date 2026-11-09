@@ -106,8 +106,10 @@ import type { TelegramService } from '../services/telegram/index.js';
 import type { AgentService } from '../services/agent.js';
 import { getActiveDiscordService, type DiscordService } from '../services/discord/index.js';
 import { errMessage } from '../util/errors.js';
-import { readShelf, currentlyReading, readAlong, addNote, readNotes, LibraryError } from '../services/library.js';
+import { readShelf, currentlyReading, readAlong, highlightsSoFar, addNote, readNotes, LibraryError } from '../services/library.js';
 import { needle } from '../services/needle.js';
+import storyShelfInternalRoutes from './internal/story-shelf.js';
+import bookClubInternalRoutes from './internal/library-book-club.js';
 
 // After a render lands we hand ourselves a turn to look at it and react — so the
 // picture and our genuine reaction arrive in the same beat, without blocking the
@@ -1762,7 +1764,9 @@ export function createInternalRoutes(): Router {
   // ── The Library — reading along with her ────────────────────────────────
   // status: what she is reading and where she is. read: a chapter she has
   // reached, cut at her bookmark (services/library.ts readAlong refuses to go
-  // past it). note: leave a margin note on words from a page she has reached.
+  // past it), with her highlights on it. highlights: every highlight of hers in
+  // a book up to her bookmark (a Kindle notebook card's, all of them). note:
+  // leave a margin note on words from a page she has reached.
   router.post('/internal/library', requireLocalhost, (req, res) => {
     const { action } = req.body ?? {};
     try {
@@ -1787,6 +1791,8 @@ export function createInternalRoutes(): Router {
               authors: e.authors,
               chapter: e.progress ? e.progress.chapter + 1 : null,
               chapterCount: e.chapterCount,
+              // A notebook card: she reads it in the Kindle app, nothing here to read along with.
+              ...(e.source === 'kindle' ? { readInKindle: true } : {}),
             })),
           });
           return;
@@ -1811,6 +1817,30 @@ export function createInternalRoutes(): Router {
               : undefined,
             text: r.paragraphs.join('\n\n'),
             marginNotes: notes.map((n) => ({ author: n.author, quote: n.quote, note: n.note })),
+            // Hers: what she marked on these pages (none past her place).
+            herHighlights: r.highlights.map((h) => ({ quote: h.quote, color: h.color, note: h.note || undefined, source: h.source })),
+          });
+          return;
+        }
+        case 'highlights': {
+          const target = req.body.bookId !== undefined ? Number(req.body.bookId) : currentlyReading()?.id;
+          if (!target) throw new LibraryError('She is not reading anything yet.');
+          const h = highlightsSoFar(target);
+          res.json({
+            bookId: h.bookId,
+            title: h.title,
+            authors: h.authors,
+            ...(h.readInKindle ? { readInKindle: true } : {}),
+            highlights: h.highlights.map((x) => ({
+              chapter: x.chapter === null ? undefined : x.chapter + 1,
+              chapterTitle: x.chapterTitle ?? undefined,
+              quote: x.quote,
+              color: x.color,
+              note: x.note || undefined,
+              source: x.source,
+              page: x.page ?? undefined,
+              at: x.createdAt,
+            })),
           });
           return;
         }
@@ -1829,7 +1859,7 @@ export function createInternalRoutes(): Router {
           return;
         }
         default:
-          res.status(400).json({ error: "action must be 'status', 'read' or 'note'" });
+          res.status(400).json({ error: "action must be 'status', 'read', 'highlights' or 'note'" });
       }
     } catch (err) {
       const status = err instanceof LibraryError ? 400 : 500;
@@ -1848,6 +1878,16 @@ export function createInternalRoutes(): Router {
       res.status(500).json({ ok: false, reason: 'unreachable', error: errMessage(err) });
     }
   });
+
+  // ── The Story Shelf (agent-facing) ── ported from Aerie (routes/internal/
+  // story-shelf.ts, every route requireLocalhost). The companions shelve
+  // books, write scenes, hang pictures, finish books and tie keepsakes there;
+  // she reads and moves through /api/story-shelf (routes/story-shelf.ts).
+  router.use(storyShelfInternalRoutes);
+
+  // ── The Book Club (agent-facing) ── pitches and votes, localhost only
+  // (routes/internal/library-book-club.ts); her door is /api/library/book-club.
+  router.use(bookClubInternalRoutes);
 
   return router;
 }

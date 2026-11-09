@@ -405,6 +405,11 @@ export function initDb(dbPath: string): Database.Database {
   // CREATE IF NOT EXISTS.
   runMigration(db, 'migrations/046_compactions.sql', { required: true });
 
+  // 047: the Story Shelf — choose-your-own-path books the companions write and
+  // run, their pages and the keepsakes between them (ported from Aerie's 014,
+  // services/db/story-shelf.ts). CREATE IF NOT EXISTS.
+  runMigration(db, 'migrations/047_story_shelf.sql', { required: true });
+
   // 001 wrote push_subscriptions with a type list of web_push and apns, which
   // predates Android push, so an FCM device token from the app would be
   // refused by the CHECK constraint. SQLite cannot alter a constraint in

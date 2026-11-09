@@ -11,6 +11,13 @@ import {
   readBook,
   removeBook,
   setProgress,
+  setShelf,
+  setReview,
+  LibraryError,
+  shelveUpload,
+  fillSpineColors,
+  coversDir,
+  COVER_FILE_RE,
   paragraphsOf,
   segmentsOf,
   audioDir,
@@ -18,8 +25,19 @@ import {
   AUDIO_FILE_RE,
   readNotes,
   removeNote,
+  readHighlights,
+  addHighlight,
+  updateHighlight,
+  removeHighlight,
+  importKindleNotebook,
+  readKindleCard,
+  findKindleCover,
+  shelveWaitingNotebooks,
 } from '../services/library.js';
+import { parseKindleNotebook, extractPdfText, KindleError, MAX_NOTEBOOK_BYTES } from '../services/library-kindle.js';
 import type { VoiceService } from '../services/voice.js';
+import multer from 'multer';
+import { EpubError, MAX_EPUB_BYTES } from '../services/library-epub.js';
 
 const router = Router();
 
@@ -42,7 +60,23 @@ router.get('/search', async (req, res) => {
 });
 
 router.get('/shelf', (_req, res) => {
-  res.json({ books: readShelf() });
+  // Once: Kindle highlights kept before notebook cards existed get their card.
+  let made: Array<{ id: number }> = [];
+  try {
+    made = shelveWaitingNotebooks();
+  } catch (err) {
+    console.warn('[library] waiting Kindle notebooks could not be shelved:', err);
+  }
+  const books = readShelf();
+  res.json({ books });
+  // Their covers are looked up in the background; the next look shows them.
+  if (made.length) {
+    void Promise.all(made.map((c) => findKindleCover(c.id))).then(() => fillSpineColors()).catch(() => {});
+  }
+  // Spines without a cover color get one in the background; the next look shows it.
+  if (books.some((b) => b.spineColor === undefined)) {
+    fillSpineColors().catch((err) => console.warn('[library] spine colors failed:', err));
+  }
 });
 
 // Shelve a Gutenberg book: fetch its text once, split it into chapters.
@@ -56,6 +90,38 @@ router.post('/shelf', async (req, res) => {
     console.error('[library] shelve failed:', err);
     res.status(502).json({ error: err instanceof Error ? err.message : 'Could not fetch that book' });
   }
+});
+
+// Her own book: an EPUB uploaded from the phone lands on To Be Read.
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: MAX_EPUB_BYTES, files: 1 } });
+router.post('/upload', (req, res) => {
+  upload.single('file')(req, res, (err: unknown) => {
+    if (err) {
+      const tooBig = err instanceof multer.MulterError && err.code === 'LIMIT_FILE_SIZE';
+      return res.status(400).json({ error: tooBig ? 'That book is too large (60 MB max)' : 'The upload did not come through' });
+    }
+    const file = (req as typeof req & { file?: Express.Multer.File }).file;
+    if (!file) return res.status(400).json({ error: 'Pick an EPUB to upload' });
+    if (/\.(pdf|mobi|azw3?|kfx)$/i.test(file.originalname)) {
+      return res.status(400).json({ error: 'The Library reads EPUB files for now — PDF and Kindle formats are coming' });
+    }
+    try {
+      res.status(201).json({ book: shelveUpload(new Uint8Array(file.buffer)) });
+    } catch (e) {
+      if (e instanceof EpubError) return res.status(400).json({ error: e.message });
+      console.error('[library] upload failed:', e);
+      res.status(500).json({ error: 'That book could not be shelved' });
+    }
+  });
+});
+
+router.get('/covers/:file', (req, res) => {
+  const file = String(req.params.file);
+  if (!COVER_FILE_RE.test(file)) return res.status(400).json({ error: 'Bad file' });
+  const path = join(coversDir(), file);
+  if (!existsSync(path)) return res.status(404).json({ error: 'Not found' });
+  res.setHeader('Cache-Control', 'private, max-age=31536000, immutable');
+  res.sendFile(path);
 });
 
 router.delete('/shelf/:id', (req, res) => {
@@ -168,6 +234,120 @@ router.delete('/books/:id/notes/:noteId', (req, res) => {
   const id = bookId(req.params.id);
   if (!id) return res.status(400).json({ error: 'Bad book id' });
   res.json({ removed: removeNote(id, String(req.params.noteId)) });
+});
+
+// Her own highlights (made in the reader, or brought in from Kindle).
+router.get('/books/:id/highlights', (req, res) => {
+  const id = bookId(req.params.id);
+  if (!id) return res.status(400).json({ error: 'Bad book id' });
+  const chapter = req.query.chapter !== undefined ? Number(req.query.chapter) : null;
+  const list = readHighlights(id);
+  res.json({ highlights: chapter === null ? list : list.filter((h) => h.chapter === chapter) });
+});
+
+router.post('/books/:id/highlights', (req, res) => {
+  const id = bookId(req.params.id);
+  if (!id) return res.status(400).json({ error: 'Bad book id' });
+  try {
+    res.status(201).json({ highlight: addHighlight(id, req.body ?? {}) });
+  } catch (err) {
+    if (err instanceof LibraryError) return res.status(400).json({ error: err.message });
+    throw err;
+  }
+});
+
+router.patch('/books/:id/highlights/:hid', (req, res) => {
+  const id = bookId(req.params.id);
+  if (!id) return res.status(400).json({ error: 'Bad book id' });
+  try {
+    const h = updateHighlight(id, String(req.params.hid), { color: req.body?.color, note: req.body?.note });
+    if (!h) return res.status(404).json({ error: 'That highlight is gone' });
+    res.json({ highlight: h });
+  } catch (err) {
+    if (err instanceof LibraryError) return res.status(400).json({ error: err.message });
+    throw err;
+  }
+});
+
+router.delete('/books/:id/highlights/:hid', (req, res) => {
+  const id = bookId(req.params.id);
+  if (!id) return res.status(400).json({ error: 'Bad book id' });
+  res.json({ removed: removeHighlight(id, String(req.params.hid)) });
+});
+
+// A Kindle notebook (the PDF "Export Notebook" sends): its highlights go
+// onto the matching book, or wait for it to be shelved.
+const notebookUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: MAX_NOTEBOOK_BYTES, files: 1 } });
+router.post('/kindle-import', (req, res) => {
+  notebookUpload.single('file')(req, res, async (err: unknown) => {
+    if (err) {
+      const tooBig = err instanceof multer.MulterError && err.code === 'LIMIT_FILE_SIZE';
+      return res.status(400).json({ error: tooBig ? 'That PDF is too large for a notebook (10 MB max)' : 'The upload did not come through. Try again?' });
+    }
+    const file = (req as typeof req & { file?: Express.Multer.File }).file;
+    if (!file) return res.status(400).json({ error: 'Pick the notebook PDF the Kindle app sent you' });
+    if (file.buffer.subarray(0, 5).toString('latin1') !== '%PDF-') {
+      return res.status(400).json({ error: 'That isn\'t a PDF. In the Kindle app, open the book\'s notebook, tap Export, and pick the PDF it sends.' });
+    }
+    try {
+      const notebook = parseKindleNotebook(await extractPdfText(new Uint8Array(file.buffer)));
+      const result = importKindleNotebook(notebook);
+      // A new notebook card gets a cover if Open Library has one (short
+      // timeouts; none found is fine).
+      if (result.notebookCard && result.book) await findKindleCover(result.book.id);
+      res.json({
+        book: result.book,
+        notebookTitle: result.notebookTitle,
+        added: result.added,
+        duplicates: result.duplicates,
+        unplaced: result.unplaced,
+        bookmarks: result.bookmarks,
+        pending: result.pending,
+        notebookCard: result.notebookCard ?? null,
+      });
+    } catch (e) {
+      if (e instanceof KindleError) return res.status(400).json({ error: e.message });
+      console.error('[library] Kindle import failed:', e);
+      res.status(500).json({ error: 'Those highlights could not be brought in. Try again?' });
+    }
+  });
+});
+
+// A Kindle notebook card's page: the highlights from its notebook, waiting
+// for the real text. 404 for books that have text (they open in the reader).
+router.get('/books/:id/notebook', (req, res) => {
+  const id = bookId(req.params.id);
+  const card = id ? readKindleCard(id) : null;
+  if (!card) return res.status(404).json({ error: 'Not a Kindle notebook on the shelf' });
+  res.json(card);
+});
+
+// Move a book between shelves (reading / tbr / finished / dnf) and/or star it.
+router.put('/books/:id/shelf', (req, res) => {
+  const id = bookId(req.params.id);
+  if (!id) return res.status(400).json({ error: 'Bad book id' });
+  try {
+    const entry = setShelf(id, { shelf: req.body?.shelf, favorite: req.body?.favorite });
+    if (!entry) return res.status(404).json({ error: 'Not on the shelf' });
+    res.json({ book: entry });
+  } catch (err) {
+    if (err instanceof LibraryError) return res.status(400).json({ error: err.message });
+    throw err;
+  }
+});
+
+// Her rating and review: { stars: 1-5, text? }, or { stars: null } to clear it.
+router.put('/books/:id/review', (req, res) => {
+  const id = bookId(req.params.id);
+  if (!id) return res.status(400).json({ error: 'Bad book id' });
+  try {
+    const entry = setReview(id, { stars: req.body?.stars, text: req.body?.text });
+    if (!entry) return res.status(404).json({ error: 'Not on the shelf' });
+    res.json({ book: entry });
+  } catch (err) {
+    if (err instanceof LibraryError) return res.status(400).json({ error: err.message });
+    throw err;
+  }
 });
 
 router.put('/books/:id/progress', (req, res) => {
