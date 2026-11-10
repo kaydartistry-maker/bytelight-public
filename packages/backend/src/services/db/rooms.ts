@@ -33,12 +33,15 @@ export interface Companion {
   bio: string | null;
   status: string | null;
   phone: string | null;
+  /** The card's glyph and accent (048). */
+  emoji: string | null;
+  color: string | null;
 }
 
 /** List every companion in the registry, picker order (sort_order, then id). */
 export function listCompanions(): Companion[] {
   const rows = getDb()
-    .prepare('SELECT id, display_name, avatar, brain, model, sort_order, created_at, bio, status, phone FROM companions ORDER BY sort_order ASC, id ASC')
+    .prepare('SELECT id, display_name, avatar, brain, model, sort_order, created_at, bio, status, phone, emoji, color FROM companions ORDER BY sort_order ASC, id ASC')
     .all();
   return rows as unknown as Companion[];
 }
@@ -64,7 +67,7 @@ export function allCompanionsExist(ids: string[]): boolean {
 export function getThreadRoster(threadId: string): Companion[] {
   const rows = getDb()
     .prepare(
-      `SELECT c.id, c.display_name, c.avatar, c.brain, c.model, c.sort_order, c.created_at, c.bio, c.status, c.phone
+      `SELECT c.id, c.display_name, c.avatar, c.brain, c.model, c.sort_order, c.created_at, c.bio, c.status, c.phone, c.emoji, c.color
          FROM thread_companions tc
          JOIN companions c ON c.id = tc.companion_id
         WHERE tc.thread_id = ?
@@ -95,7 +98,7 @@ export function setThreadRoster(threadId: string, companionIds: string[]): Compa
 }
 
 /** The card fields a companion's profile can edit. */
-export type CompanionCardUpdate = Partial<Pick<Companion, 'display_name' | 'bio' | 'status' | 'phone'>>;
+export type CompanionCardUpdate = Partial<Pick<Companion, 'display_name' | 'bio' | 'status' | 'phone' | 'avatar' | 'emoji' | 'color'>>;
 
 /**
  * Update a companion's card fields. Only the keys present are written; a null
@@ -103,13 +106,13 @@ export type CompanionCardUpdate = Partial<Pick<Companion, 'display_name' | 'bio'
  */
 export function updateCompanionCard(id: string, updates: CompanionCardUpdate): Companion | null {
   const db = getDb();
-  const keys = (['display_name', 'bio', 'status', 'phone'] as const).filter((k) => k in updates);
+  const keys = (['display_name', 'bio', 'status', 'phone', 'avatar', 'emoji', 'color'] as const).filter((k) => k in updates);
   if (keys.length > 0) {
     const sets = keys.map((k) => `${k} = ?`).join(', ');
     const result = db.prepare(`UPDATE companions SET ${sets} WHERE id = ?`).run(...keys.map((k) => updates[k] ?? null), id);
     if (result.changes === 0) return null;
   }
   return (db
-    .prepare('SELECT id, display_name, avatar, brain, model, sort_order, created_at, bio, status, phone FROM companions WHERE id = ?')
+    .prepare('SELECT id, display_name, avatar, brain, model, sort_order, created_at, bio, status, phone, emoji, color FROM companions WHERE id = ?')
     .get(id) as Companion | undefined) ?? null;
 }

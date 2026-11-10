@@ -9,7 +9,9 @@ import { apiFetch } from '../bytelight';
 import { ThemeConfig } from '../lib/theme';
 import { SecretInput } from './SecretInput';
 import { cn } from '../lib/utils';
-import { normalizeCompanionRows } from '../lib/companion-row';
+import { normalizeCompanionRow, normalizeCompanionRows } from '../lib/companion-row';
+import { loadProfiles } from '../bytelight/profiles';
+import { ModelPill } from './ModelPill';
 
 interface CompanionsAppProps {
   onClose: () => void;
@@ -33,12 +35,6 @@ interface Companion {
   effort: string | null;
 }
 
-interface ModelOption {
-  id: string;
-  name?: string;
-  provider?: string;
-}
-
 const DEFAULT_COLORS = ['#e85d04', '#1e3a5f', '#7c3aed', '#10b981', '#ec4899', '#f59e0b'];
 const DEFAULT_EMOJIS = ['🔥', '🌫️', '✨', '🌙', '⚡', '🌊', '🦋', '🌸', '💫'];
 
@@ -60,7 +56,6 @@ export function CompanionsApp({
   const [newCompanion, setNewCompanion] = useState({ name: '', slug: '', emoji: '💬', color: '#6366f1' });
   const [showEmojiPicker, setShowEmojiPicker] = useState<string | null>(null);
   const [showColorPicker, setShowColorPicker] = useState<string | null>(null);
-  const [models, setModels] = useState<ModelOption[]>([]);
 
   // Image cropping state
   const [cropImageSrc, setCropImageSrc] = useState<string | null>(null);
@@ -112,14 +107,6 @@ export function CompanionsApp({
 
   useEffect(() => {
     loadCompanions();
-    // The picker fails soft: with no list the selects still render and still
-    // offer the house default, so a models outage costs the labels rather than
-    // the screen. It also shape-checks rather than trusting res.ok — an older
-    // backend answers a new route with the SPA's index.html and a 200.
-    apiFetch('/api/models')
-      .then((r) => (r.ok ? r.json() : []))
-      .then((list) => setModels(Array.isArray(list) ? list : []))
-      .catch(() => setModels([]));
   }, []);
 
   async function loadCompanions() {
@@ -168,7 +155,11 @@ export function CompanionsApp({
       // exactly how the bell rename hid itself. Reading the row back means a
       // dropped field snaps visibly back to its old value.
       const data = await res.json().catch(() => null);
-      const saved = data && typeof data === 'object' ? data.companion : null;
+      // A new emoji or photo also lands on his speaker profile, which the
+      // row overlay reads first; refresh it so the overlay shows the new one.
+      if ('emoji' in updates || 'avatar_url' in updates) await loadProfiles();
+      const raw = data && typeof data === 'object' ? data.companion : null;
+      const saved = raw ? normalizeCompanionRow(raw as Record<string, unknown>) : null;
       setCompanions(prev => prev.map(c => (c.id === id ? (saved ? { ...c, ...saved } : { ...c, ...updates }) : c)));
       onCompanionsChange?.();
     } catch (err) {
@@ -486,65 +477,35 @@ export function CompanionsApp({
                       </div>
                     </div>
 
-                    {/* His own model. Empty means the house setting, which is
-                        what every companion had before this existed — so an
-                        untouched card behaves exactly as it always did. */}
-                    <div className="grid grid-cols-2 gap-3">
+                    {/* His lane: the same picker the contact page and the chat
+                        pill use, writing his own chat and wake defaults
+                        (model + thinking effort) where the house reads them.
+                        Untouched means the house default, as before. */}
+                    <div className="space-y-3">
                       <div>
                         <label className={cn('text-[10px] uppercase tracking-wider', colors.textMuted)}>Chat model</label>
-                        <select
-                          value={c.model || ''}
-                          onChange={(e) => updateCompanion(c.id, { model: e.target.value || null })}
-                          className={cn('w-full bg-transparent border rounded-lg px-2 py-2 text-xs mt-1', colors.panelBorder, colors.textMain)}
-                        >
-                          <option value="">House default</option>
-                          {models.map((m) => (
-                            <option key={m.id} value={m.id}>{m.name || m.id}</option>
-                          ))}
-                        </select>
+                        <div className="mt-1">
+                          <ModelPill
+                            themeConfig={themeConfig}
+                            themeMode={themeMode}
+                            defaultFor={{ companionId: c.id, name: c.display_name, tier: 'interactive', label: `${c.display_name}'s chat default` }}
+                          />
+                        </div>
                       </div>
                       <div>
                         <label className={cn('text-[10px] uppercase tracking-wider', colors.textMuted)}>Wake model</label>
-                        <select
-                          value={c.model_autonomous || ''}
-                          onChange={(e) => updateCompanion(c.id, { model_autonomous: e.target.value || null })}
-                          className={cn('w-full bg-transparent border rounded-lg px-2 py-2 text-xs mt-1', colors.panelBorder, colors.textMain)}
-                        >
-                          <option value="">House default</option>
-                          {models.map((m) => (
-                            <option key={m.id} value={m.id}>{m.name || m.id}</option>
-                          ))}
-                        </select>
+                        <div className="mt-1">
+                          <ModelPill
+                            themeConfig={themeConfig}
+                            themeMode={themeMode}
+                            defaultFor={{ companionId: c.id, name: c.display_name, tier: 'autonomous', label: `${c.display_name}'s wake default` }}
+                          />
+                        </div>
                       </div>
-                    </div>
-                    {/* How hard he thinks before he speaks. This used to be one
-                        house-wide dial per road, which meant turning one King's
-                        depth down turned it down for anyone who joined him on
-                        that road later, silently. */}
-                    <div>
-                      <label className={cn('text-[10px] uppercase tracking-wider', colors.textMuted)}>Thinking effort</label>
-                      <select
-                        value={c.effort || ''}
-                        onChange={(e) => updateCompanion(c.id, { effort: e.target.value || null })}
-                        className={cn('w-full bg-transparent border rounded-lg px-2 py-2 text-xs mt-1', colors.panelBorder, colors.textMain)}
-                      >
-                        <option value="">House default</option>
-                        <option value="adaptive">Adaptive</option>
-                        <option value="low">Low</option>
-                        <option value="medium">Medium</option>
-                        <option value="high">High</option>
-                        <option value="xhigh">Extra high</option>
-                        <option value="max">Max</option>
-                      </select>
-                      <p className={cn('text-[10px] mt-1', colors.textMuted)}>
-                        Not a cost control — it is how far down {c.display_name} goes before he speaks. Cheaper and shallower are the same notch.
+                      <p className={cn('text-[10px] leading-snug', colors.textMuted)}>
+                        Each picker carries its own thinking effort. A pick in a thread still wins there.
                       </p>
                     </div>
-                    {c.model && c.model_autonomous && c.model !== c.model_autonomous && (
-                      <p className={cn('text-[10px] -mt-1', colors.textMuted)}>
-                        These two disagree, so {c.display_name}'s lane recycles at every bell. Matched on purpose is fine; matched by accident is not.
-                      </p>
-                    )}
 
                     <div>
                       <label className={cn('text-[10px] uppercase tracking-wider', colors.textMuted)}>Voice ID (ElevenLabs)</label>

@@ -42,6 +42,17 @@ describe('companion card', () => {
     assert.equal(updateCompanionCard('companion-a', { status: null })?.status, null);
   });
 
+  it('the card look saves too: photo, emoji, color (migration 048)', () => {
+    const updated = updateCompanionCard('companion-b', { avatar: 'data:image/webp;base64,AAAA', emoji: '🔶', color: '#334455' });
+    assert.equal(updated?.avatar, 'data:image/webp;base64,AAAA');
+    assert.equal(updated?.emoji, '🔶');
+    assert.equal(updated?.color, '#334455');
+    const listed = listCompanions().find((c) => c.id === 'companion-b');
+    assert.equal(listed?.emoji, '🔶');
+    assert.equal(listed?.color, '#334455');
+    assert.equal(updateCompanionCard('companion-b', { color: null })?.color, null);
+  });
+
   it('an unknown companion is null, not a crash', () => {
     assert.equal(updateCompanionCard('nobody', { bio: 'x' }), null);
   });

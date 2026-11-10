@@ -29,6 +29,22 @@ function getProfiles(): Record<string, ProfileEntry> {
   return out;
 }
 
+/**
+ * Keep a speaker profile in step with an edit made on the companion card.
+ * Only identities that have a profile are touched; anyone else is a no-op.
+ */
+export function syncProfileFromCard(id: string, patch: { emoji?: string; image?: string | null }): void {
+  if (!(PROFILE_KEYS as readonly string[]).includes(id)) return;
+  const merged = getProfiles();
+  const current = merged[id];
+  merged[id] = {
+    name: current.name,
+    emoji: typeof patch.emoji === 'string' ? patch.emoji : current.emoji,
+    image: 'image' in patch ? (patch.image ?? null) : current.image,
+  };
+  setConfig('profiles', JSON.stringify(merged));
+}
+
 export function createProfilesRoutes(): Router {
   const router = Router();
 

@@ -410,6 +410,28 @@ export function initDb(dbPath: string): Database.Database {
   // services/db/story-shelf.ts). CREATE IF NOT EXISTS.
   runMigration(db, 'migrations/047_story_shelf.sql', { required: true });
 
+  // 048: the card's emoji and color, kept on the companion's own row so any
+  // companion (not only the profile identities) can save them. Same
+  // one-statement-at-a-time shape as 026; "duplicate column" means done.
+  const companionLookSQL = migrationSql('migrations/048_companion_card_look.sql');
+  if (companionLookSQL !== null) {
+    const statements = companionLookSQL
+      .split('\n')
+      .filter((line) => !line.trim().startsWith('--'))
+      .join('\n')
+      .split(';')
+      .map((stmt) => stmt.trim())
+      .filter(Boolean);
+    for (const stmt of statements) {
+      try {
+        db.exec(stmt);
+      } catch (err: unknown) {
+        const msg = errMessage(err);
+        if (!msg.includes('duplicate column')) console.warn('Migration warning (048):', msg);
+      }
+    }
+  }
+
   // 001 wrote push_subscriptions with a type list of web_push and apns, which
   // predates Android push, so an FCM device token from the app would be
   // refused by the CHECK constraint. SQLite cannot alter a constraint in

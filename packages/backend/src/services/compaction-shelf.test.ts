@@ -24,7 +24,7 @@ const squash = (at: string, body: string) => JSON.stringify({
 function companion(id: string, name: string): Companion {
   return {
     id, display_name: name, avatar: null, brain: 'test', model: null, sort_order: 0, created_at: '',
-    bio: null, status: null, phone: null,
+    bio: null, status: null, phone: null, emoji: null, color: null,
   };
 }
 

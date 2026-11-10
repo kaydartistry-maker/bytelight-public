@@ -33,6 +33,7 @@ import {
   updateCompanionCard,
   type CompanionCardUpdate,
 } from '../services/db/rooms.js';
+import { syncProfileFromCard } from './profiles-routes.js';
 
 // Card fields and how long each may be. The bio is read by a companion's own
 // head, so it is allowed room to say something; the rest are one-liners.
@@ -41,6 +42,12 @@ const CARD_FIELDS: Record<keyof CompanionCardUpdate, number> = {
   bio: 8000,
   status: 200,
   phone: 40,
+  // A cropped photo arrives as a data URL (400px webp, well under a few
+  // hundred KB); a gallery or https URL is far shorter. 8 MB keeps us under
+  // the 10 MB JSON body limit in server.ts.
+  avatar: 8_000_000,
+  emoji: 16,
+  color: 32,
 };
 
 export function createRoomsRoutes(): Router {
@@ -64,7 +71,10 @@ export function createRoomsRoutes(): Router {
   // cleared — a companion always has a name.
   router.patch('/companions/:id', (req, res) => {
     try {
-      const body = (req.body ?? {}) as Record<string, unknown>;
+      const body = { ...((req.body ?? {}) as Record<string, unknown>) };
+      // The phone's card calls his photo avatar_url; the registry column is
+      // avatar. Take either name.
+      if ('avatar_url' in body && !('avatar' in body)) body.avatar = body.avatar_url;
       const updates: CompanionCardUpdate = {};
       for (const [key, max] of Object.entries(CARD_FIELDS) as Array<[keyof CompanionCardUpdate, number]>) {
         if (!(key in body)) continue;
@@ -85,13 +95,22 @@ export function createRoomsRoutes(): Router {
         (updates as Record<string, string | null>)[key] = trimmed || null;
       }
       if (Object.keys(updates).length === 0) {
-        res.status(400).json({ error: 'nothing to update (display_name, bio, status, phone)' });
+        res.status(400).json({ error: 'nothing to update (display_name, bio, status, phone, avatar, emoji, color)' });
         return;
       }
       const companion = updateCompanionCard(req.params.id, updates);
       if (!companion) {
         res.status(404).json({ error: 'Companion not found' });
         return;
+      }
+      // For the voices that also have a speaker profile (the chat bubbles'
+      // name/emoji/photo), keep that copy in step, or the phone's overlay
+      // would paint the old emoji/photo back over the one just saved.
+      if ('emoji' in updates || 'avatar' in updates) {
+        syncProfileFromCard(companion.id, {
+          ...('emoji' in updates && updates.emoji ? { emoji: updates.emoji } : {}),
+          ...('avatar' in updates ? { image: updates.avatar ?? null } : {}),
+        });
       }
       res.json({ companion });
     } catch (err) {
