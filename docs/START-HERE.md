@@ -10,18 +10,27 @@ It covers the part that happens **before** the terminal: getting your own copy o
 
 ## What you'll need
 
-Gather these before you start. Nothing here costs money except the AI subscription.
+Gather these before you start. Nothing here costs money except the brain you choose.
 
 ### Must have
 
 - [ ] **A computer.** Mac, Windows or Linux. A laptop is fine.
 - [ ] **A GitHub account.** Free. Step 1 below.
-- [ ] **A Claude subscription that includes Claude Code** ([claude.ai](https://claude.ai)). This is your companion's brain. You sign in with it; there's no key to copy.
 - [ ] **Node.js 22**, **Git** and the **GitHub CLI**. Free downloads. The steps below and [GETTING-STARTED.md](GETTING-STARTED.md) tell you exactly when to install each one.
+- [ ] **A brain for your companion.** Pick **at least one**. You can add more later and switch between them in the app.
+
+| Brain | What you need | How you connect it |
+|---|---|---|
+| **Claude** | A Claude subscription that includes Claude Code ([claude.ai](https://claude.ai)) | `npm install -g @anthropic-ai/claude-code`, then `claude login`. No key to copy. |
+| **ChatGPT (Codex)** | A ChatGPT subscription | `npm install -g @openai/codex`, then `codex login`. Or sign in from **Providers** in the app. No key to copy. |
+| **OpenRouter** | An API key from [openrouter.ai](https://openrouter.ai) | Paste it in **Providers** in the app. One key, many models. Pay as you go. |
+| **OpenAI, Groq or Grok** | An API key from [platform.openai.com](https://platform.openai.com), [console.groq.com](https://console.groq.com) or [console.x.ai](https://console.x.ai) | Paste it in **Providers** in the app. Pay as you go. |
+| **Ollama** | [Ollama](https://ollama.com) running on your computer | Turn it on in **Providers**. Free, but needs a strong computer. |
+
+> **Not using Claude?** The setup wizard starts every house on Claude. After you start byte-light the first time, go to **Agent → Models → House Engine** and pick your brain **before** you send your first message.
 
 ### Nice to have
 
-- [ ] **A ChatGPT subscription**, if you want your companion to be able to run on ChatGPT's models too. Install Codex with `npm install -g @openai/codex`, then run `codex login`. It shows up as **Codex CLI** in the engine picker.
 - [ ] **Tailscale** (free), to reach your companion from your phone. [ON-YOUR-PHONE.md](ON-YOUR-PHONE.md) walks you through it.
 
 ### Extra keys, only for the features you want
