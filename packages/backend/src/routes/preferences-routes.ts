@@ -1,8 +1,8 @@
 import { Router } from 'express';
 import { readdirSync, readFileSync, writeFileSync, existsSync } from 'fs';
-import { join, resolve } from 'path';
+import { join } from 'path';
 import yaml from 'js-yaml';
-import { getBytelightConfig, reloadConfig } from '../config.js';
+import { getBytelightConfig, reloadConfig, findBytelightConfigPath } from '../config.js';
 import { getAllConfig, setConfig, getConfig, getConfigBool } from '../services/db.js';
 import { roomBiosReady } from '../services/heartbeat/lane-identity.js';
 import { getArchivistSettings } from '../services/memory-extraction.js';
@@ -13,14 +13,6 @@ import { getArchivistSettings } from '../services/memory-extraction.js';
 const ARCHIVIST_EFFORTS = new Set(['adaptive', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra']);
 const ARCHIVIST_THINKING = new Set(['adaptive', 'enabled', 'disabled']);
 
-function findConfigPath(): string | null {
-  for (const name of ['bytelight.yaml', 'bytelight.yml']) {
-    const p = resolve(name);
-    if (existsSync(p)) return p;
-  }
-  return null;
-}
-
 export function createPreferencesRoutes(): Router {
   const router = Router();
 
@@ -28,9 +20,12 @@ export function createPreferencesRoutes(): Router {
 
   router.get('/preferences', (req, res) => {
     try {
-      const configPath = findConfigPath();
+      // The same file the loader read, found from the project root. Looking
+      // in the working directory missed it under `npm start`, which runs the
+      // backend from packages/backend.
+      const configPath = findBytelightConfigPath();
       if (!configPath) {
-        res.json({ error: 'No config file found' });
+        res.status(404).json({ error: 'No config file found' });
         return;
       }
       const raw = readFileSync(configPath, 'utf-8');
@@ -128,7 +123,7 @@ export function createPreferencesRoutes(): Router {
 
   router.put('/preferences', (req, res) => {
     try {
-      const configPath = findConfigPath();
+      const configPath = findBytelightConfigPath();
       if (!configPath) {
         res.status(404).json({ error: 'No config file found' });
         return;
