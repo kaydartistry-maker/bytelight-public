@@ -385,7 +385,7 @@ function euchreBoard(tableId: string): { game: EuchreState } {
   return { game: table.state as unknown as EuchreState };
 }
 
-function runEuchreKings(game: EuchreState): EuchreState {
+function runEuchreCompanions(game: EuchreState): EuchreState {
   let next = game;
   let guard = 0;
   while (guard < 120) {
@@ -411,7 +411,7 @@ function runEuchreKings(game: EuchreState): EuchreState {
 }
 
 function afterEuchreMove(res: import('express').Response, tableId: string, game: EuchreState): void {
-  const finished = runEuchreKings(game);
+  const finished = runEuchreCompanions(game);
   const table = setCardState(tableId, finished as unknown as Record<string, unknown>);
   registry.broadcast({ type: 'card_table_update', tableId });
   res.json({ table: viewCardTable(table, ownerSeat()), game: finished });
@@ -430,7 +430,7 @@ router.post('/euchre/new', (req, res) => {
     const table = setCardGame(tableId, 'euchre', game as unknown as Record<string, unknown>);
     addCardLog(tableId, 'system', 'house', `New hand of Euchre — ${game.teams[0].players.join(' & ')} against ${game.teams[1].players.join(' & ')}. ${game.upCard?.replace('-', ' of ')} is turned up.`);
     registry.broadcast({ type: 'card_table_update', tableId });
-    const opened = runEuchreKings(game);
+    const opened = runEuchreCompanions(game);
     const settled = setCardState(tableId, opened as unknown as Record<string, unknown>);
     res.status(201).json({ table: viewCardTable(settled, ownerSeat()), game: opened });
   } catch (error) {
@@ -490,7 +490,7 @@ function spadesBoard(tableId: string): { game: SpadesState } {
   return { game: table.state as unknown as SpadesState };
 }
 
-function runSpadesKings(game: SpadesState): SpadesState {
+function runSpadesCompanions(game: SpadesState): SpadesState {
   let next = game;
   let guard = 0;
   while (next.phase === 'bidding' && next.turn && next.turn !== ownerSeat() && guard < 20) {
@@ -505,7 +505,7 @@ function runSpadesKings(game: SpadesState): SpadesState {
 }
 
 function afterSpadesMove(res: import('express').Response, tableId: string, game: SpadesState): void {
-  const finished = runSpadesKings(game);
+  const finished = runSpadesCompanions(game);
   const table = setCardState(tableId, finished as unknown as Record<string, unknown>);
   registry.broadcast({ type: 'card_table_update', tableId });
   res.json({ table: viewCardTable(table, ownerSeat()), game: finished });
@@ -526,7 +526,7 @@ router.post('/spades/new', (req, res) => {
     const table = setCardGame(tableId, 'spades', game as unknown as Record<string, unknown>);
     addCardLog(tableId, 'system', 'house', `New hand of Spades — ${game.teams[0].players.join(' & ')} against ${game.teams[1].players.join(' & ')}. Bid what you will take.`);
     registry.broadcast({ type: 'card_table_update', tableId });
-    const opened = runSpadesKings(game);
+    const opened = runSpadesCompanions(game);
     const settled = setCardState(tableId, opened as unknown as Record<string, unknown>);
     res.status(201).json({ table: viewCardTable(settled, ownerSeat()), game: opened });
   } catch (error) {
@@ -571,7 +571,7 @@ function heartsBoard(tableId: string): { game: HeartsState } {
 }
 
 /** The companions choose their three, and then play until it is the owner's turn again. */
-function runHeartsKings(game: HeartsState): HeartsState {
+function runHeartsCompanions(game: HeartsState): HeartsState {
   let next = game;
   let guard = 0;
   if (next.phase === 'passing') {
@@ -589,7 +589,7 @@ function runHeartsKings(game: HeartsState): HeartsState {
 }
 
 function afterHeartsMove(res: import('express').Response, tableId: string, game: HeartsState): void {
-  const finished = runHeartsKings(game);
+  const finished = runHeartsCompanions(game);
   const table = setCardState(tableId, finished as unknown as Record<string, unknown>);
   registry.broadcast({ type: 'card_table_update', tableId });
   res.json({ table: viewCardTable(table, ownerSeat()), game: finished });
@@ -608,7 +608,7 @@ router.post('/hearts/new', (req, res) => {
     const table = setCardGame(tableId, 'hearts', game as unknown as Record<string, unknown>);
     addCardLog(tableId, 'system', 'house', `New hand of Hearts — ${order.join(', ')}. ${game.direction === 'hold' ? 'Nobody passes this hand.' : `Passing ${game.direction}.`} Queen of spades is thirteen.`);
     registry.broadcast({ type: 'card_table_update', tableId });
-    const opened = runHeartsKings(game);
+    const opened = runHeartsCompanions(game);
     const settled = setCardState(tableId, opened as unknown as Record<string, unknown>);
     res.status(201).json({ table: viewCardTable(settled, ownerSeat()), game: opened });
   } catch (error) {
@@ -652,7 +652,7 @@ function presidentBoard(tableId: string): { game: PresidentState } {
   return { game: table.state as unknown as PresidentState };
 }
 
-function runPresidentKings(game: PresidentState): PresidentState {
+function runPresidentCompanions(game: PresidentState): PresidentState {
   let next = game;
   let guard = 0;
   while (next.phase === 'playing' && next.turn && next.turn !== ownerSeat() && guard < 200) {
@@ -665,7 +665,7 @@ function runPresidentKings(game: PresidentState): PresidentState {
 }
 
 function afterPresidentMove(res: import('express').Response, tableId: string, game: PresidentState): void {
-  const finished = runPresidentKings(game);
+  const finished = runPresidentCompanions(game);
   const table = setCardState(tableId, finished as unknown as Record<string, unknown>);
   registry.broadcast({ type: 'card_table_update', tableId });
   res.json({ table: viewCardTable(table, ownerSeat()), game: finished });
@@ -688,7 +688,7 @@ router.post('/president/new', (req, res) => {
     addCardLog(tableId, 'system', 'house', `New round of President — ${order.join(', ')}. Threes low, twos high, three of clubs leads.${taxLine}`);
     registry.broadcast({ type: 'card_table_update', tableId });
     // The companions may sit before the owner in the order, so the table comes back live.
-    const opened = runPresidentKings(game);
+    const opened = runPresidentCompanions(game);
     const settled = setCardState(tableId, opened as unknown as Record<string, unknown>);
     res.status(201).json({ table: viewCardTable(settled, ownerSeat()), game: opened });
   } catch (error) {
@@ -730,7 +730,7 @@ function eightsBoard(tableId: string): { game: EightsState } {
 }
 
 /** Play out every companion sitting between the owner and their next turn. */
-function runEightsKings(game: EightsState): EightsState {
+function runEightsCompanions(game: EightsState): EightsState {
   let next = game;
   let guard = 0;
   while (next.phase === 'playing' && next.turn && next.turn !== ownerSeat() && guard < 60) {
@@ -751,7 +751,7 @@ function runEightsKings(game: EightsState): EightsState {
 }
 
 function afterEightsMove(res: import('express').Response, tableId: string, game: EightsState): void {
-  const finished = runEightsKings(game);
+  const finished = runEightsCompanions(game);
   const table = setCardState(tableId, finished as unknown as Record<string, unknown>);
   registry.broadcast({ type: 'card_table_update', tableId });
   res.json({ table: viewCardTable(table, ownerSeat()), game: finished });
@@ -819,7 +819,7 @@ function golfBoard(tableId: string): { game: GolfState } {
 }
 
 /** Play out every companion sitting between the owner and their next turn. */
-function runKings(game: GolfState): GolfState {
+function runGolfCompanions(game: GolfState): GolfState {
   let next = game;
   let guard = 0;
   while (next.phase === 'playing' && next.turn && next.turn !== ownerSeat() && guard < 40) {
@@ -840,7 +840,7 @@ function runKings(game: GolfState): GolfState {
 }
 
 function afterGolfMove(res: import('express').Response, tableId: string, game: GolfState): void {
-  const finished = runKings(game);
+  const finished = runGolfCompanions(game);
   const table = setCardState(tableId, finished as unknown as Record<string, unknown>);
   registry.broadcast({ type: 'card_table_update', tableId });
   res.json({ table: viewCardTable(table, ownerSeat()), game: finished });
