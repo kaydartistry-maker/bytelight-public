@@ -8,6 +8,41 @@ It covers the part that happens **before** the terminal: getting your own copy o
 
 ---
 
+## What you'll need
+
+Gather these before you start. Nothing here costs money except the AI subscription.
+
+### Must have
+
+- [ ] **A computer.** Mac, Windows or Linux. A laptop is fine.
+- [ ] **A GitHub account.** Free. Step 1 below.
+- [ ] **A Claude subscription that includes Claude Code** ([claude.ai](https://claude.ai)). This is your companion's brain. You sign in with it; there's no key to copy.
+- [ ] **Node.js 22**, **Git** and the **GitHub CLI**. Free downloads. The steps below and [GETTING-STARTED.md](GETTING-STARTED.md) tell you exactly when to install each one.
+
+### Nice to have
+
+- [ ] **A ChatGPT subscription**, if you want your companion to be able to run on ChatGPT's models too. Install Codex with `npm install -g @openai/codex`, then run `codex login`. It shows up as **Codex CLI** in the engine picker.
+- [ ] **Tailscale** (free), to reach your companion from your phone. [ON-YOUR-PHONE.md](ON-YOUR-PHONE.md) walks you through it.
+
+### Extra keys, only for the features you want
+
+Skip all of these on day one. Your companion works without them. Add one when you want what it unlocks.
+
+| You want your companion to… | Get a key from | Cost |
+|---|---|---|
+| Send you voice messages | [elevenlabs.io](https://elevenlabs.io) (API key and a Voice ID) | Free tier, paid for more |
+| Understand your voice notes | [console.groq.com](https://console.groq.com) | Free tier |
+| Hear the tone in your voice | [hume.ai](https://hume.ai) | Free tier |
+| Talk to you on Discord | [Discord Developer Portal](https://discord.com/developers/applications) (a bot token) | Free |
+| Talk to you on Telegram | [@BotFather](https://t.me/BotFather) in Telegram (a bot token) | Free |
+| Send and search GIFs | [developers.giphy.com](https://developers.giphy.com) | Free |
+
+Every key, where it goes and what it switches on: [FEATURES-AND-KEYS.md](FEATURES-AND-KEYS.md).
+
+> 🔒 Keys are passwords. Never paste one into a chat with another person, a public channel or a screenshot. Your companion can help you put them where they belong.
+
+---
+
 ## The map
 
 | | What you do | Where |
