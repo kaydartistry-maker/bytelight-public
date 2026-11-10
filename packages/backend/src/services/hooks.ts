@@ -305,7 +305,11 @@ function buildEmotionalContext(threadId: string): string {
         const preview = m.content.substring(0, 40) + (m.content.length > 40 ? '...' : '');
         for (const r of meta.reactions as Array<{ emoji: string; user: string }>) {
           const reactor = r.user === 'user' ? userName : companionName;
-          const whose = m.role === 'user' ? 'their own' : 'your';
+          // Whose message it is depends on who reacted: a companion reacting to
+          // the user's message is reacting to the user's message, not its own.
+          const whose = m.role === 'user'
+            ? (r.user === 'user' ? 'their own' : `${userName}'s`)
+            : (r.user === 'user' ? 'your' : 'your own');
           recentReactions.push(`${reactor} reacted ${r.emoji} to ${whose} message: "${preview}" (id: ${m.id})`);
         }
       }
@@ -1150,7 +1154,11 @@ if (h.digest) {
           const preview = m.content.substring(0, 50) + (m.content.length > 50 ? '...' : '');
           for (const r of meta.reactions as Array<{ emoji: string; user: string }>) {
             const reactor = r.user === 'user' ? userName : companionName;
-            const whose = m.role === 'user' ? 'their own' : 'your';
+            // Whose message it is depends on who reacted: a companion reacting to
+            // the user's message is reacting to the user's message, not its own.
+            const whose = m.role === 'user'
+              ? (r.user === 'user' ? 'their own' : `${userName}'s`)
+              : (r.user === 'user' ? 'your' : 'your own');
             rxnLines.push(`  ${reactor} reacted ${r.emoji} to ${whose} message: "${preview}" (msg id: ${m.id})`);
           }
         }
