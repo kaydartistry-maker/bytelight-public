@@ -53,6 +53,7 @@ public class PocketVoicePlugin extends Plugin {
     @PluginMethod
     public void startSession(PluginCall call) {
         title = nonBlank(call.getString("title"), "Voice conversation");
+        readWho(call);
         detail = nonBlank(call.getString("detail"), "The line is open");
         phase = call.getString("phase");
         readFaces(call);
@@ -151,6 +152,7 @@ public class PocketVoicePlugin extends Plugin {
     @PluginMethod
     public void updateSession(PluginCall call) {
         title = nonBlank(call.getString("title"), title);
+        readWho(call);
         String nextPhase = call.getString("phase");
         if (nextPhase != null && !nextPhase.trim().isEmpty()) phase = nextPhase;
         detail = nonBlank(call.getString("detail"), detailForPhase(phase, detail));
@@ -273,6 +275,13 @@ public class PocketVoicePlugin extends Plugin {
         plugin.notifyListeners("stateChange", state, true);
     }
 
+    private static void readWho(PluginCall call) {
+        String next = call.getString("who");
+        if (next != null && !next.trim().isEmpty()) PocketVoiceService.who = next.trim();
+        Boolean plural = call.getBoolean("whoPlural");
+        if (plural != null) PocketVoiceService.whoPlural = plural;
+    }
+
     private static String nonBlank(String value, String fallback) {
         return value == null || value.trim().isEmpty() ? fallback : value.trim();
     }
@@ -283,9 +292,9 @@ public class PocketVoicePlugin extends Plugin {
             case "listening":
             case "hearing": return "Listening";
             case "transcribing": return "Catching your words";
-            case "thinking": return "The Kings are with you";
+            case "thinking": return PocketVoiceService.who + (PocketVoiceService.whoPlural ? " are" : " is") + " with you";
             case "synthesizing": return "Finding their voices";
-            case "speaking": return "The Kings are speaking";
+            case "speaking": return PocketVoiceService.who + (PocketVoiceService.whoPlural ? " are" : " is") + " speaking";
             case "error": return "Voice paused — tap Bytelight to continue";
             default: return "Voice conversation active";
         }

@@ -220,8 +220,16 @@ function displayName(companion: VoiceModeCompanion): string {
   return companion.display_name || companion.name || companion.slug || 'Companion';
 }
 
+/** The people on the call, by their own names: "Companion A", "Companion A & Companion B", "A, B & C". */
+function rosterName(roster: VoiceModeCompanion[]): string {
+  const names = roster.map(displayName);
+  if (names.length === 0) return 'Your companions';
+  if (names.length === 1) return names[0];
+  return `${names.slice(0, -1).join(', ')} & ${names[names.length - 1]}`;
+}
+
 function phaseCopy(phase: VoiceModePhase, roster: VoiceModeCompanion[], error: string | null) {
-  const who = roster.length === 1 ? displayName(roster[0]) : 'The constellation';
+  const who = rosterName(roster);
   switch (phase) {
     case 'starting':
       return { title: 'Opening the line', detail: 'Checking the microphone and their voices…' };
@@ -758,8 +766,10 @@ export function VoiceModeOverlay({
       if (!activeRef.current || epochRef.current !== epoch) return false;
       return startPocketVoiceSession({
         title: threadName || 'Voice conversation',
-        detail: companions.length > 0 ? `${companions.length === 1 ? displayName(companions[0]) : 'The Kings'} are here` : 'The line is open',
+        detail: companions.length > 0 ? `${rosterName(companions)} ${companions.length === 1 ? 'is' : 'are'} here` : 'The line is open',
         faces,
+        who: rosterName(companions),
+        whoPlural: companions.length !== 1,
       });
     }).then((started) => {
       // The native service publishes its first event while the WebView is

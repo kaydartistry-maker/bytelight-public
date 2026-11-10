@@ -43,7 +43,7 @@ public class PocketVoiceBubbleActivity extends Activity {
         root.addView(crest, new LinearLayout.LayoutParams(dp(48), dp(48)));
 
         TextView title = new TextView(this);
-        title.setText("The Kings");
+        title.setText(PocketVoiceService.who);
         title.setTextColor(Color.WHITE);
         title.setTextSize(19);
         title.setTypeface(Typeface.DEFAULT, Typeface.BOLD);

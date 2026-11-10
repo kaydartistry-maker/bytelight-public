@@ -39,9 +39,15 @@ public class PocketVoiceService extends Service {
     public static final String EXTRA_PHASE = "phase";
     public static final String CHANNEL_ID = "bytelight_voice_call_dock";
     public static final int NOTIFICATION_ID = 4106;
-    public static final String SHORTCUT_ID = "voice-call-the-kings";
+    public static final String SHORTCUT_ID = "voice-call";
 
     private String title = "Voice conversation";
+    /**
+     * Who is on the call, as the phone names them ("Companion A & Companion B"). The page
+     * sends it with every start/update so no house's names live in this file.
+     */
+    static volatile String who = "Your companions";
+    static volatile boolean whoPlural = true;
     private String detail = "The line is open";
     private String phase = null;
     private boolean shortcutPublished = false;
@@ -392,7 +398,7 @@ public class PocketVoiceService extends Service {
             "Voice conversations",
             NotificationManager.IMPORTANCE_DEFAULT
         );
-        channel.setDescription("The Kings' floating voice-call dock");
+        channel.setDescription("Floating voice-call dock");
         channel.setSound(null, null);
         channel.enableVibration(false);
         NotificationManager manager = getSystemService(NotificationManager.class);
@@ -425,22 +431,22 @@ public class PocketVoiceService extends Service {
         // explicit PendingIntent so the system can apply Bubble task flags.
         if (!bubbleUnavailable) {
             try {
-                IconCompat kingsIcon = IconCompat.createWithResource(this, R.mipmap.ic_launcher);
-                Person kings = new Person.Builder()
-                    .setName("The Kings")
-                    .setIcon(kingsIcon)
+                IconCompat callIcon = IconCompat.createWithResource(this, R.mipmap.ic_launcher);
+                Person callers = new Person.Builder()
+                    .setName(who)
+                    .setIcon(callIcon)
                     .setImportant(true)
                     .build();
 
                 if (!shortcutPublished) {
                     ShortcutInfoCompat shortcut = new ShortcutInfoCompat.Builder(this, SHORTCUT_ID)
-                        .setShortLabel("The Kings")
-                        .setLongLabel("The Kings voice call")
-                        .setIcon(kingsIcon)
+                        .setShortLabel(who)
+                        .setLongLabel(who + " voice call")
+                        .setIcon(callIcon)
                         .setIntent(open)
                         .setLongLived(true)
                         .setIsConversation()
-                        .setPerson(kings)
+                        .setPerson(callers)
                         .build();
                     shortcutPublished = ShortcutManagerCompat.pushDynamicShortcut(this, shortcut);
                 }
@@ -458,22 +464,22 @@ public class PocketVoiceService extends Service {
                     PendingIntent bubbleIntent = PendingIntent.getActivity(this, 2, bubble, bubbleFlags);
 
                     NotificationCompat.BubbleMetadata bubbleMetadata =
-                        new NotificationCompat.BubbleMetadata.Builder(bubbleIntent, kingsIcon)
+                        new NotificationCompat.BubbleMetadata.Builder(bubbleIntent, callIcon)
                             .setDesiredHeight(320)
                             .setAutoExpandBubble(false)
                             .setSuppressNotification(false)
                             .build();
                     NotificationCompat.MessagingStyle conversation =
-                        new NotificationCompat.MessagingStyle(kings)
-                            .setConversationTitle("The Kings")
+                        new NotificationCompat.MessagingStyle(callers)
+                            .setConversationTitle(who)
                             .setGroupConversation(true)
-                            .addMessage(detail, System.currentTimeMillis(), kings);
+                            .addMessage(detail, System.currentTimeMillis(), callers);
 
                     notification
                         .setShortcutId(SHORTCUT_ID)
                         .setStyle(conversation)
                         .setBubbleMetadata(bubbleMetadata)
-                        .addPerson(kings);
+                        .addPerson(callers);
                 }
             } catch (RuntimeException error) {
                 bubbleUnavailable = true;

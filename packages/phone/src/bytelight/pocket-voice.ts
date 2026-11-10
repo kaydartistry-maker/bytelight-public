@@ -37,6 +37,8 @@ interface PocketVoicePlugin {
     detail?: string;
     phase?: PocketVoicePhase;
     faces?: PocketVoiceFace[];
+    who?: string;
+    whoPlural?: boolean;
   }): Promise<{ started?: boolean }>;
   updateSession(options: { title?: string; detail?: string; phase?: PocketVoicePhase }): Promise<void>;
   endSession(): Promise<void>;
@@ -134,6 +136,9 @@ export async function startPocketVoiceSession(options: {
   detail?: string;
   phase?: PocketVoicePhase;
   faces?: PocketVoiceFace[];
+  /** Who is on the call, by name ("Companion A & Companion B"); the Android dock shows it. */
+  who?: string;
+  whoPlural?: boolean;
 }): Promise<boolean> {
   if (!hasNativePocketVoice()) return false;
   const result = await quietly(() => PocketVoice.startSession(options), { started: false });
