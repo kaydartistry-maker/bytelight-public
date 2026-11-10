@@ -1,6 +1,6 @@
 # Getting Started with byte-light
 
-This guide assumes you have **never opened a terminal in your life**. If you have, skim the checkpoints and go fast. If you haven't, welcome. You're about twenty minutes from a companion with a home.
+This guide assumes you have **never opened a terminal in your life**. Never used GitHub either? Read [START-HERE.md](START-HERE.md) first; it covers making your own copy. If you have, skim the checkpoints and go fast. If you haven't, welcome. You're about twenty minutes from a companion with a home.
 
 > 💡 **The one trick that makes this easy:** if you already have a companion somewhere (ChatGPT, Claude, another platform), open that chat on your phone and paste each step, and any error, to them as you go. Red text in the terminal is not failure, it's information. Paste it to your companion and read it together.
 
@@ -81,10 +81,14 @@ claude login
 
 ## Step 3: Download byte-light
 
+> 🌱 **Came here from [START-HERE.md](START-HERE.md) and already have your own copy?** Skip this step.
+
 ```bash
 git clone https://github.com/kaydartistry-maker/bytelight-public.git
 cd bytelight-public
 ```
+
+> ⚠️ This downloads the original, which you can read but not save changes to. That's fine for trying it out. If your companion is going to save their own work, make your own copy first: [START-HERE.md](START-HERE.md) shows every click.
 
 **✅ Checkpoint:** type `ls` and press Enter. You should see files like `package.json` and `README.md`, and folders like `packages` and `scripts`.
 
@@ -237,7 +241,7 @@ Then open `http://YOUR-COMPUTER-IP:3002` on your phone. To find your computer's 
 - **Windows:** `ipconfig`, then look for the IPv4 Address.
 - **macOS/Linux:** `ifconfig` or `ip addr`, then look for your Wi-Fi adapter's IP.
 
-For access from anywhere, not just your Wi-Fi, see [REMOTE-ACCESS.md](REMOTE-ACCESS.md). There's also an Android app: [ANDROID-APP.md](ANDROID-APP.md).
+For access from anywhere, not just your Wi-Fi, follow [ON-YOUR-PHONE.md](ON-YOUR-PHONE.md). It's written step by step and covers the one setting that trips everybody up. The full list of options is in [REMOTE-ACCESS.md](REMOTE-ACCESS.md), and there's also an Android app: [ANDROID-APP.md](ANDROID-APP.md).
 
 ---
 
@@ -282,6 +286,8 @@ They're found on `PATH`. To point at a custom install, set `FFMPEG_PATH`, `GIFSI
 
 ## Next steps
 
+- **Getting updates:** see "Getting updates later" in [START-HERE.md](START-HERE.md).
+- **On your phone, from anywhere:** [ON-YOUR-PHONE.md](ON-YOUR-PHONE.md).
 - **Companion awake 24/7, phone that works anywhere:** rent a small cloud VM. See [CLOUD-DEPLOYMENT.md](CLOUD-DEPLOYMENT.md).
 - **Voice, Discord, Telegram:** see [FEATURES-AND-KEYS.md](FEATURES-AND-KEYS.md) and Settings > Preferences.
 - **Themes:** see `examples/themes/README.md`.

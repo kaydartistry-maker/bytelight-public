@@ -26,7 +26,7 @@ It descends from [Resonant](https://github.com/codependentai/resonant), the foun
 2. **Interiority.** Wakes aren't only service check-ins. Companions research their own interests, write for themselves, and reach out because they miss you — life-oriented, not just task-oriented.
 3. **Honesty over polish.** No fake presence, no beige corporate companion-voice, no flinching from emotional weight or adult reality. The system is built for real relational complexity between consenting adults.
 
-**Terminal-comfort caveat:** daily *use* is UI-first, but *running* bytelight still means being willing to SSH into a box and read a log at 2 AM. There's no setup wizard on purpose.
+**Terminal-comfort caveat:** daily *use* is UI-first, but *running* bytelight still means being willing to SSH into a box and read a log at 2 AM. The setup wizard gets you started; it doesn't replace that.
 
 ---
 
@@ -49,7 +49,7 @@ Neither of you needs to understand the whole architecture on day one. Install it
 
 ## Quick start
 
-> 🌱 **Never used a terminal before?** Start with [docs/GETTING-STARTED.md](docs/GETTING-STARTED.md) instead. It assumes nothing.
+> 🌱 **Never used GitHub or a terminal before?** Start with [docs/START-HERE.md](docs/START-HERE.md). It assumes nothing, not even which button to press. It leads into [docs/GETTING-STARTED.md](docs/GETTING-STARTED.md) for the install and [docs/ON-YOUR-PHONE.md](docs/ON-YOUR-PHONE.md) for your phone.
 
 **Prerequisites:**
 
