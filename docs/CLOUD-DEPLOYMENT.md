@@ -236,17 +236,17 @@ cloudflared tunnel run resonant
 cloudflared service install
 ```
 
-### Option B: private mesh VPN (Private Access)
+### Option B: Tailscale (Private Access)
 
-No domain needed. Access from any device on your private mesh VPN network.
+No domain needed. Access from any device on your Tailscale network.
 
 ```bash
-# Install private mesh VPN
-curl -fsSL https://example.com/vpn-install.sh | sh
-vpn-tool up
+# Install Tailscale
+curl -fsSL https://tailscale.com/install.sh | sh
+tailscale up
 
-# Get your private mesh VPN IP
-vpn-tool ip -4
+# Get your Tailscale IP
+tailscale ip -4
 
 # Update resonant.yaml
 # server:
@@ -255,7 +255,7 @@ vpn-tool ip -4
 #   password: "set-a-password"
 ```
 
-Access at `http://YOUR_PRIVATE_VPN_IP:3002` from any private mesh VPN device.
+Access at `http://YOUR_TAILSCALE_IP:3002` from any Tailscale device.
 
 ### Option C: Direct IP (Not Recommended)
 
@@ -381,7 +381,7 @@ cloudflared tunnel run resonant
 ## Security Checklist
 
 - [ ] Set a strong password in `resonant.yaml` (`auth.password`)
-- [ ] Use HTTPS (Cloudflare Tunnel or private mesh VPN) — never expose HTTP directly
+- [ ] Use HTTPS (Cloudflare Tunnel or Tailscale) — never expose HTTP directly
 - [ ] File permissions: `chmod 600` on `.env`, `.bashrc`, `.claude.json`, `ecosystem.config.cjs`
 - [ ] Keep Node.js updated: `apt update && apt upgrade`
 - [ ] The OAuth token is as powerful as your Claude Code login — treat it like a password

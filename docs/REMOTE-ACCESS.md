@@ -25,19 +25,19 @@ The easiest option. Access byte-light from any device on your WiFi.
 
 **Limitations:** Only works on your local network. No access when you're away from home.
 
-## Option 2: private mesh VPN (Recommended)
+## Option 2: Tailscale (Recommended)
 
-private mesh VPN creates a private network between your devices. It's free for personal use, works everywhere, and requires no port forwarding or DNS configuration.
+Tailscale creates a private network between your devices. It's free for personal use, works everywhere, and requires no port forwarding or DNS configuration.
 
 ### Setup
 
-1. **Install private mesh VPN** on your computer (the one running byte-light):
-   - [vpn-tool.com/download](https://example.com/vpn-download)
+1. **Install Tailscale** on your computer (the one running byte-light):
+   - [tailscale.com/download](https://tailscale.com/download)
    - Sign in with Google, Microsoft, or GitHub
 
-2. **Install private mesh VPN** on your phone/tablet:
-   - iOS: App Store → private mesh VPN
-   - Android: Play Store → private mesh VPN
+2. **Install Tailscale** on your phone/tablet:
+   - iOS: App Store → Tailscale
+   - Android: Play Store → Tailscale
    - Sign in with the same account
 
 3. **Configure byte-light** to listen on all interfaces:
@@ -48,36 +48,36 @@ private mesh VPN creates a private network between your devices. It's free for p
      password: "your-password-here"
    ```
 
-4. **Find your private mesh VPN IP:**
+4. **Find your Tailscale IP:**
    ```bash
-   vpn-tool ip -4
+   tailscale ip -4
    # Shows something like 100.64.x.x
    ```
 
-5. **Access from any private mesh VPN device:** `http://100.64.x.x:3002`
+5. **Access from any Tailscale device:** `http://100.64.x.x:3002`
 
-### Why private mesh VPN
+### Why Tailscale
 
 - Works anywhere — home, office, coffee shop, mobile data
 - Encrypted end-to-end
 - No ports to open on your router
 - No domain name needed
 - Free for up to 100 devices
-- Your byte-light instance is completely private — only your private mesh VPN devices can reach it
+- Your byte-light instance is completely private — only your Tailscale devices can reach it
 
 ### Optional: Magic DNS
 
-private mesh VPN can give your machine a name so you don't need to remember the IP:
+Tailscale can give your machine a name so you don't need to remember the IP:
 
-1. Enable MagicDNS in the private mesh VPN admin console
+1. Enable MagicDNS in the Tailscale admin console
 2. Access byte-light at: `http://your-machine-name:3002`
 
-### Optional: HTTPS with private mesh VPN
+### Optional: HTTPS with Tailscale
 
-private mesh VPN can provision HTTPS certificates automatically:
+Tailscale can provision HTTPS certificates automatically:
 
 ```bash
-vpn-tool cert device.example.com
+tailscale cert your-machine-name.your-tailnet.ts.net
 ```
 
 Then configure a reverse proxy (Caddy or nginx) to serve HTTPS.
@@ -188,7 +188,7 @@ It looks and feels like a native app, with push notifications and offline suppor
 Regardless of which method you choose:
 
 - [ ] **Set a password** in `resonant.yaml` before exposing to any network
-- [ ] **Use HTTPS** for any access outside your local network (private mesh VPN encrypts automatically, Cloudflare Tunnel provides HTTPS)
+- [ ] **Use HTTPS** for any access outside your local network (Tailscale encrypts automatically, Cloudflare Tunnel provides HTTPS)
 - [ ] **Don't expose port 3002 directly** to the internet via port forwarding — use a tunnel instead
 - [ ] **Keep Node.js updated** for security patches
 - [ ] **Check PM2 logs** periodically: `pm2 logs resonant`
