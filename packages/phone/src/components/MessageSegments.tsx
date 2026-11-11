@@ -10,7 +10,7 @@ import type { MessageSegment } from '../bytelight';
 import { resolveStickerRef } from '../bytelight';
 import { coalesceThinkingSegments, isAuthoredThinking, plainThinkingText, thinkingTitle } from '../lib/thinking';
 import { CodeBlock } from './CodeBlock';
-import { prepareChatText } from '../lib/chat-text';
+import { prepareChatText, stickerSizeClass, stickerSrc } from '../lib/chat-text';
 import { groupToolRuns, isHiddenTool } from '../lib/tool-runs';
 import { ToolRun } from './ToolRun';
 
@@ -72,7 +72,7 @@ export function MessageSegments({ segments, themeConfig, themeMode, customEmojis
         const i = item.index;
         if (seg.type === 'text') {
           if (!seg.content.trim()) return null;
-          const { markdown, stickerSharesText, emoteOnly } = prepareChatText({ text: seg.content, resolveSticker: resolveStickerRef, customEmojis });
+          const { markdown, emoteOnly } = prepareChatText({ text: seg.content, resolveSticker: resolveStickerRef, customEmojis });
           const emoteSizeClass = emoteOnly ? '!h-12' : '!h-[1.75em]';
           return (
             <div
@@ -96,13 +96,11 @@ export function MessageSegments({ segments, themeConfig, themeMode, customEmojis
                     if (alt?.startsWith('sticker:') && src) {
                       return (
                         <img
-                          src={src}
+                          src={stickerSrc(src)}
                           alt={alt.slice('sticker:'.length)}
                           className={cn(
                             '!inline-block !w-auto object-contain',
-                            stickerSharesText
-                              ? '!h-[1.75em] !max-h-[1.75em] !my-0 mx-0.5 align-text-bottom'
-                              : 'max-h-32 align-bottom',
+                            stickerSizeClass(src),
                           )}
                           referrerPolicy="no-referrer"
                         />

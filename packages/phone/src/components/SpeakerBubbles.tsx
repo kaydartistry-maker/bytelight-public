@@ -10,7 +10,7 @@ import { MessageSegments } from './MessageSegments';
 import type { MessageSegment } from '../bytelight';
 import type { CustomEmoji } from '../types';
 import { resolveStickerRef } from '../bytelight/stickers';
-import { prepareChatText } from '../lib/chat-text';
+import { prepareChatText, stickerSizeClass, stickerSrc } from '../lib/chat-text';
 
 // Per-speaker bubble stack — the visual carried over from the Svelte house
 // (MessageBubble.svelte speaker bubbles).
@@ -75,7 +75,7 @@ export function SpeakerBubbles({ rows, roster, colors, textColorClass, isLightTe
   return (
     <div className="flex flex-col gap-1.5">
       {rows.map((row, i) => {
-        const { markdown, stickerSharesText, emoteOnly } = prepareChatText({ text: row.text, resolveSticker: resolveStickerRef, customEmojis });
+        const { markdown, emoteOnly } = prepareChatText({ text: row.text, resolveSticker: resolveStickerRef, customEmojis });
         return (
           <div key={i} className="flex items-start">
           {row.speaker !== 'fallback' && (
@@ -138,9 +138,9 @@ export function SpeakerBubbles({ rows, roster, colors, textColorClass, isLightTe
                 pre: ({ children }) => <CodeBlock>{children}</CodeBlock>,
                 img: ({ node, src, alt, ...imageProps }) => {
                   if (alt?.startsWith('sticker:') && src) {
-                    return <img src={src} alt={alt.slice('sticker:'.length)} referrerPolicy="no-referrer" className={cn(
+                    return <img src={stickerSrc(src)} alt={alt.slice('sticker:'.length)} referrerPolicy="no-referrer" className={cn(
                       '!inline-block !w-auto object-contain',
-                      stickerSharesText ? '!h-[1.75em] !max-h-[1.75em] !my-0 mx-0.5 align-text-bottom' : 'max-h-32 align-bottom',
+                      stickerSizeClass(src),
                     )} />;
                   }
                   const code = alt?.startsWith('emoji:') ? alt.slice('emoji:'.length) : undefined;

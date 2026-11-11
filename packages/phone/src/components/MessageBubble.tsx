@@ -22,7 +22,7 @@ import { STANDARD_EMOJIS as EXTRA_EMOJIS } from '../lib/emoji';
 import type { VoiceCompanion } from '../lib/voices';
 import { saveToDevice } from '../lib/download';
 import { thumbSrc } from '../lib/thumb';
-import { prepareChatText } from '../lib/chat-text';
+import { prepareChatText, stickerSizeClass, stickerSrc } from '../lib/chat-text';
 
 /**
  * A link in a message that points at something this house is serving. Nothing
@@ -313,7 +313,6 @@ export function MessageBubble({ message, onReact, onBookmark, onDelete, onEdit, 
 
   const preparedText = prepareChatText({ text: textContent, resolveSticker: resolveStickerRef, customEmojis });
   textContent = preparedText.markdown;
-  const stickerSharesText = preparedText.stickerSharesText;
   const emoteSizeClass = preparedText.emoteOnly ? '!h-12' : '!h-[1.75em]';
   let voiceSpeaker = '';
   let textToSpeak = '';
@@ -1006,13 +1005,11 @@ export function MessageBubble({ message, onReact, onBookmark, onDelete, onEdit, 
                           if (alt?.startsWith('sticker:') && src) {
                             return (
                               <img
-                                src={src}
+                                src={stickerSrc(src)}
                                 alt={alt.slice('sticker:'.length)}
                                 className={cn(
                                   '!inline-block !w-auto object-contain',
-                                  stickerSharesText
-                                    ? '!h-[1.75em] !max-h-[1.75em] !my-0 mx-0.5 align-text-bottom'
-                                    : 'max-h-32 align-bottom',
+                                  stickerSizeClass(src),
                                 )}
                                 referrerPolicy="no-referrer"
                               />
