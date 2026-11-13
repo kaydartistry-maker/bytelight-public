@@ -58,6 +58,7 @@ function snapshot(overrides: Partial<CodexAuthSnapshot> = {}): CodexAuthSnapshot
     loggedIn: false,
     expiresAt: null,
     refreshable: false,
+    source: null,
     loginSession: { status: 'idle' },
     ...overrides,
   };

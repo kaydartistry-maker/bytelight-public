@@ -5,6 +5,7 @@ import { SkillsApp } from './SkillsApp';
 import { OrchestratorApp } from './OrchestratorApp';
 import { PreferencesApp } from './PreferencesApp';
 import { RuntimeHealthCard } from './RuntimeHealthCard';
+import { CodexEngineCard } from './CodexEngineCard';
 import { IdentityApp } from './IdentityApp';
 import { ThemeConfig } from '../lib/theme';
 import { cn } from '../lib/utils';
@@ -13,6 +14,8 @@ interface AgentAppProps {
   onClose: () => void;
   themeConfig: ThemeConfig;
   themeMode: 'light' | 'dark';
+  /** Jump to Integrations (Providers tab), where Codex signs in. */
+  onOpenIntegrations?: () => void;
 }
 
 type Tab = 'skills' | 'wakes' | 'models' | 'runtime' | 'identity';
@@ -28,7 +31,7 @@ const TABS: { id: Tab; label: string }[] = [
 // skills it has, what wakes fire and with which effective prompts
 // (Orchestrator), what actually runs where (Runtime), and the identity and
 // memory files behind the warm lane (Identity — formerly X-Ray).
-export function AgentApp({ onClose, themeConfig, themeMode }: AgentAppProps) {
+export function AgentApp({ onClose, themeConfig, themeMode, onOpenIntegrations }: AgentAppProps) {
   const colors = themeConfig[themeMode];
   const [tab, setTab] = useState<Tab>('models');
 
@@ -52,9 +55,15 @@ export function AgentApp({ onClose, themeConfig, themeMode }: AgentAppProps) {
       {tab === 'models' && <PreferencesApp embedded onClose={onClose} themeConfig={themeConfig} themeMode={themeMode} />}
       {tab === 'skills' && <SkillsApp embedded onClose={onClose} themeConfig={themeConfig} themeMode={themeMode} />}
       {tab === 'wakes' && <OrchestratorApp embedded onClose={onClose} themeConfig={themeConfig} themeMode={themeMode} />}
-      {/* Main's runtime health. The per-lane report (RuntimeApp, on
-          /orchestrator/runtime, which main lacks) returns with its own port slice. */}
-      {tab === 'runtime' && <RuntimeHealthCard themeConfig={themeConfig} themeMode={themeMode} />}
+      {/* Both engines: Claude (CLI lane / SDK) and Codex (which login it stands on).
+          The per-lane report (RuntimeApp, on /orchestrator/runtime, which main
+          lacks) returns with its own port slice. */}
+      {tab === 'runtime' && (
+        <>
+          <RuntimeHealthCard themeConfig={themeConfig} themeMode={themeMode} />
+          <CodexEngineCard themeConfig={themeConfig} themeMode={themeMode} onOpenProviders={onOpenIntegrations} />
+        </>
+      )}
       {tab === 'identity' && <IdentityApp embedded onClose={onClose} themeConfig={themeConfig} themeMode={themeMode} />}
     </AppShell>
   );

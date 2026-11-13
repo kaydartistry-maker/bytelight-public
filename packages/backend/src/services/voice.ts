@@ -13,6 +13,11 @@ import { registry } from './registry.js';
 import { getSecret } from './secrets.js';
 import { parseElevenLabsSubscription, type ElevenLabsUsage } from './elevenlabs-usage.js';
 import { LOCAL_STT_CONFIG_KEY, parseLocalSttUrl, transcribeLocally } from './local-stt.js';
+import {
+  createHumeRealtimeProsodySession,
+  type RealtimeProsodySession,
+  type RealtimeProsodySessionFactory,
+} from './hume-realtime-prosody.js';
 
 const GROQ_WHISPER_URL = 'https://api.groq.com/openai/v1/audio/transcriptions';
 const ELEVENLABS_BASE = 'https://api.elevenlabs.io/v1/text-to-speech';
@@ -45,7 +50,12 @@ export class VoiceService {
   private voiceIds: Record<string, string> = {};
   private voiceSettings: Record<string, Record<string, unknown>> = {};
 
-  constructor() {
+  // Live tone for voice calls: one short Hume EVI sidecar per opted-in
+  // utterance. Tests swap the factory.
+  private readonly realtimeProsodyFactory: RealtimeProsodySessionFactory;
+
+  constructor(options: { realtimeProsodyFactory?: RealtimeProsodySessionFactory } = {}) {
+    this.realtimeProsodyFactory = options.realtimeProsodyFactory ?? createHumeRealtimeProsodySession;
     // Load per-companion voice IDs from env (ELEVENLABS_VOICE_ID_COMPANION_A, ELEVENLABS_VOICE_ID_COMPANION_B, etc.)
     // Load per-companion voice settings from env (ELEVENLABS_VOICE_SETTINGS_COMPANION_A='{"stability":0.7,...}')
     for (const [key, value] of Object.entries(process.env)) {
@@ -101,6 +111,17 @@ export class VoiceService {
 
   get canAnalyzeProsody(): boolean {
     return process.env.VOICE_LEGACY_HUME_BATCH === '1' && !!this.humeApiKey;
+  }
+
+  /** Live call tone: needs only the Hume key (EVI streaming, not the dead batch API). */
+  get canAnalyzeRealtimeProsody(): boolean {
+    return !!this.humeApiKey;
+  }
+
+  /** Open one server-side EVI sidecar for an explicitly opted-in turn. */
+  createRealtimeProsodySession(): RealtimeProsodySession | null {
+    if (!this.humeApiKey) return null;
+    return this.realtimeProsodyFactory(this.humeApiKey);
   }
 
   /**

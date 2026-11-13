@@ -2,7 +2,7 @@
 // Consumed by the home-screen dock and the app drawer.
 
 import type { LucideIcon } from 'lucide-react';
-import { Library, MessageSquare, StickyNote, Settings, Activity, Sticker, LayoutDashboard, Plug, FileText, Bot, Users, Brain, Paintbrush, Box, FolderOpen, BookOpen, Inbox, Mail, ScanSearch, Radar, CloudSun, Telescope, Music, Gamepad2, TreePine } from 'lucide-react';
+import { Library, MessageSquare, StickyNote, Settings, Activity, Sticker, LayoutDashboard, Plug, FileText, Bot, Users, Brain, Paintbrush, Box, FolderOpen, BookOpen, Inbox, Mail, ScanSearch, CloudSun, Telescope, Music, Gamepad2, TreePine } from 'lucide-react';
 import { SPOTIFY_APP_ID } from './spotify';
 import type { OsScreen } from '../App';
 
@@ -39,7 +39,6 @@ export const APPS: AppDef[] = [
   { id: 'studio', name: 'Studio', icon: Paintbrush, category: 'Tools', kind: 'screen', screen: 'studio' },
   { id: 'files', name: 'Files', icon: FolderOpen, category: 'Tools', kind: 'screen', screen: 'files' },
   { id: 'inbox', name: 'Inbox', icon: Inbox, category: 'Tools', kind: 'screen', screen: 'inbox' },
-  { id: 'radar', name: 'Radar', icon: Radar, category: 'Tools', kind: 'screen', screen: 'radar' },
   { id: 'weather', name: 'Weather', icon: CloudSun, category: 'Tools', kind: 'screen', screen: 'weather' },
   { id: 'artifacts', name: 'Artifacts', icon: Box, category: 'Tools', kind: 'screen', screen: 'artifacts' },
   { id: 'xray', name: 'X-Ray', icon: ScanSearch, category: 'System', kind: 'screen', screen: 'xray' },

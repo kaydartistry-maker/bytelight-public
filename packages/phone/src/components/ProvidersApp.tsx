@@ -17,6 +17,7 @@ import {
   type ProviderCardId,
   type ProviderDot,
 } from './provider-status';
+import { manualCodeError, type CodexStatus } from './engine-status';
 
 interface ProvidersAppProps {
   onClose: () => void;
@@ -37,13 +38,6 @@ const API_PROVIDERS = [
   { key: 'openrouter', name: 'OpenRouter', tag: 'paid', placeholder: 'sk-or-…', hint: 'openrouter.ai/keys' },
   { key: 'xai', name: 'xAI', tag: 'paid', placeholder: 'xai-…', hint: 'console.x.ai' },
 ] as const;
-
-interface CodexStatus {
-  loggedIn?: boolean;
-  expiresAt?: number | null;
-  refreshable?: boolean;
-  loginSession?: { status?: string; url?: string | null; error?: string | null };
-}
 
 export function ProvidersApp({ onClose, themeConfig, themeMode, embedded }: ProvidersAppProps) {
   const colors = themeConfig[themeMode];
@@ -69,6 +63,8 @@ export function ProvidersApp({ onClose, themeConfig, themeMode, embedded }: Prov
   const [codex, setCodex] = useState<CodexStatus | null>(null);
   const [manualCode, setManualCode] = useState('');
   const [codexBusy, setCodexBusy] = useState(false);
+  // Codex sign-in trouble shows on the Codex card itself, not at the bottom.
+  const [codexError, setCodexError] = useState<string | null>(null);
   // Logging out deletes the stored credentials, so it asks first.
   const [confirmingLogout, setConfirmingLogout] = useState(false);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -237,21 +233,21 @@ export function ProvidersApp({ onClose, themeConfig, themeMode, embedded }: Prov
 
   async function codexLogin() {
     setCodexBusy(true);
-    setError(null);
+    setCodexError(null);
     try {
       const res = await apiFetch('/api/auth/codex/login', { method: 'POST' });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        setError([data.error, data.details].filter(Boolean).join(' — ') || 'Codex login failed');
+        setCodexError([data.error, data.details].filter(Boolean).join(' — ') || 'Codex login failed');
       } else {
         if (data.url) window.open(data.url, '_blank', 'noopener,noreferrer');
         // Main can answer awaiting_browser before it has a URL; the poll
         // picks the URL up and the "Reopen login URL" link appears.
         await loadCodex();
-        if (!data.url && data.status !== 'awaiting_browser') setError('Codex login failed to produce a URL.');
+        if (!data.url && data.status !== 'awaiting_browser') setCodexError('Codex login failed to produce a URL.');
       }
     } catch {
-      setError('Codex login failed');
+      setCodexError('Codex login failed');
     } finally {
       setCodexBusy(false);
     }
@@ -260,6 +256,7 @@ export function ProvidersApp({ onClose, themeConfig, themeMode, embedded }: Prov
   async function codexManualCode() {
     if (!manualCode.trim()) return;
     setCodexBusy(true);
+    setCodexError(null);
     try {
       const res = await apiFetch('/api/auth/codex/manual-code', {
         method: 'POST',
@@ -267,14 +264,14 @@ export function ProvidersApp({ onClose, themeConfig, themeMode, embedded }: Prov
         body: JSON.stringify({ code: manualCode.trim() }),
       });
       if (!res.ok) {
-        const body = await res.json().catch(() => ({}));
-        setError(body.error || 'Manual code submission failed');
+        const body = await res.json().catch(() => null);
+        setCodexError(manualCodeError(res.status, body));
         return;
       }
       setManualCode('');
       await loadCodex();
     } catch {
-      setError('Manual code submission failed');
+      setCodexError(manualCodeError(0, null));
     } finally {
       setCodexBusy(false);
     }
@@ -322,7 +319,57 @@ export function ProvidersApp({ onClose, themeConfig, themeMode, embedded }: Prov
   }
 
   const codexLoggedIn = !!codex?.loggedIn;
+  const codexViaCli = codexLoggedIn && codex?.source === 'cli';
   const codexInFlight = codex?.loginSession?.status === 'awaiting_browser';
+
+  // Cancel / reopen / paste — shown under either login button while a
+  // sign-in is open (and always under the first-time Log in button).
+  function codexLoginControls() {
+    return (
+      <>
+        {codexInFlight && (
+          <button
+            onClick={codexCancel}
+            disabled={codexBusy}
+            className={cn('mt-2 rounded-lg border px-3 py-1.5 text-xs font-semibold disabled:opacity-50', colors.panelBorder, colors.textMain)}
+          >
+            Cancel login
+          </button>
+        )}
+        {codex?.loginSession?.url && (
+          <a
+            href={codex.loginSession.url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="block text-[11px] mt-2"
+            style={{ color: colors.accent }}
+          >
+            Reopen login URL
+          </a>
+        )}
+        <div className={cn(fieldLabel, 'mt-2')}>
+          Page didn't load? That's normal on a server. Copy the whole address from the top of that page and paste it here.
+        </div>
+        <div className="flex gap-2">
+          <input
+            className={cn(input, 'flex-1')}
+            type="text"
+            placeholder="Paste the whole address (or just the code)"
+            value={manualCode}
+            onChange={(e) => setManualCode(e.target.value)}
+          />
+          <button
+            onClick={codexManualCode}
+            disabled={codexBusy || !manualCode.trim()}
+            className={cn('rounded-lg border px-3 text-xs font-semibold disabled:opacity-50', colors.panelBorder, colors.textMain)}
+          >
+            Submit
+          </button>
+        </div>
+      </>
+    );
+  }
+
 
   return (
     <AppShell embedded={embedded} title="Providers" icon={Plug} onClose={onClose} themeConfig={themeConfig} themeMode={themeMode}>
@@ -342,10 +389,26 @@ export function ProvidersApp({ onClose, themeConfig, themeMode, embedded }: Prov
                   opacity: codexLoggedIn ? 1 : codexInFlight ? 0.7 : 0.5,
                 }}
               >
-                {codexLoggedIn ? 'Logged in' : codexInFlight ? 'Login in progress' : 'Not logged in'}
+                {codexViaCli ? 'Using Codex CLI login' : codexLoggedIn ? 'Logged in' : codexInFlight ? 'Login in progress' : 'Not logged in'}
               </span>
             </div>
-            {codexLoggedIn ? (
+            {codexViaCli ? (
+              <>
+                <div className={cn('text-xs', colors.textMuted)}>
+                  Borrowing the login from <code>codex login</code>, so Codex already works. You can still give the house a login of its own.
+                </div>
+                {!codexInFlight && (
+                  <button
+                    onClick={codexLogin}
+                    disabled={codexBusy}
+                    className={cn('mt-2 rounded-lg border px-3 py-1.5 text-xs font-semibold disabled:opacity-50 flex items-center gap-1.5', colors.panelBorder, colors.textMain)}
+                  >
+                    {codexBusy && <Loader2 size={12} className="animate-spin" />} Sign the house in on its own
+                  </button>
+                )}
+                {codexInFlight && codexLoginControls()}
+              </>
+            ) : codexLoggedIn ? (
               <button
                 onClick={() => setConfirmingLogout(true)}
                 disabled={codexBusy}
@@ -364,44 +427,11 @@ export function ProvidersApp({ onClose, themeConfig, themeMode, embedded }: Prov
                 >
                   {codexBusy && <Loader2 size={12} className="animate-spin" />} Log in with ChatGPT
                 </button>
-                {codexInFlight && (
-                  <button
-                    onClick={codexCancel}
-                    disabled={codexBusy}
-                    className={cn('ml-2 rounded-lg border px-3 py-1.5 text-xs font-semibold disabled:opacity-50', colors.panelBorder, colors.textMain)}
-                  >
-                    Cancel login
-                  </button>
-                )}
-                {codex?.loginSession?.url && (
-                  <a
-                    href={codex.loginSession.url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="block text-[11px] mt-2"
-                    style={{ color: colors.accent }}
-                  >
-                    Reopen login URL
-                  </a>
-                )}
-                <div className={cn(fieldLabel, 'mt-2')}>Or paste the code from the browser</div>
-                <div className="flex gap-2">
-                  <input
-                    className={cn(input, 'flex-1')}
-                    type="text"
-                    placeholder="Authorization code"
-                    value={manualCode}
-                    onChange={(e) => setManualCode(e.target.value)}
-                  />
-                  <button
-                    onClick={codexManualCode}
-                    disabled={codexBusy || !manualCode.trim()}
-                    className={cn('rounded-lg border px-3 text-xs font-semibold disabled:opacity-50', colors.panelBorder, colors.textMain)}
-                  >
-                    Submit
-                  </button>
-                </div>
+                {codexLoginControls()}
               </>
+            )}
+            {codexError && (
+              <p className="text-[11px] mt-2" style={{ color: colors.accent, opacity: 0.8 }}>{codexError}</p>
             )}
             {codex?.loginSession?.error && (
               <p className="text-[11px] mt-2" style={{ color: colors.accent, opacity: 0.8 }}>{codex.loginSession.error}</p>

@@ -32,7 +32,6 @@ import { CanvasApp } from './components/CanvasApp';
 import { XRayApp } from './components/XRayApp';
 import { GamesApp } from './components/GamesApp';
 import { CompanionsApp } from './components/CompanionsApp';
-import { RadarApp } from './components/RadarApp';
 import { WeatherApp } from './components/WeatherApp';
 import { SpotifyApp } from './components/SpotifyApp';
 
@@ -221,7 +220,6 @@ export type OsScreen =
   | 'home'
   | 'appdrawer'
   | 'messages'
-  | 'radar'
   | 'weather'
   | 'notes'
   | 'status'
@@ -1744,6 +1742,10 @@ export default function App() {
     root.style.setProperty('--scrollbar-thumb', solid(resolved.accent, customMode?.accent));
     root.style.setProperty('--scrollbar-track', theme.mode === 'dark' ? 'rgba(0,0,0,0.3)' : 'rgba(0,0,0,0.1)');
     root.style.setProperty('--bytelight-accent', solid(resolved.accent, customMode?.accent));
+    // The filled-button color rooms ported from Aerie paint with (Story Shelf,
+    // Theater, …). Never defined here, so those buttons came out unpainted:
+    // dark on dark. It is the theme's own accent.
+    root.style.setProperty('--bytelight-selected-fill', solid(resolved.accent, customMode?.accent));
     root.style.setProperty('--bytelight-on-accent', contrastTextColor(accentForContrast, theme.mode === 'dark' ? '#090807' : '#ffffff'));
     root.style.setProperty('--bytelight-page', solid(resolved.pageBg, customMode?.pageBg));
     root.style.setProperty('--bytelight-header', theme.mode === 'light' ? '#ffffff' : solid(resolved.pageBg, customMode?.pageBg));
@@ -1813,6 +1815,10 @@ export default function App() {
       {customThemeStyles && <style>{customThemeStyles}</style>}
       {/* Global Wallpaper Layer */}
       <AppBackground theme={theme} />
+      {/* The Cosmos aura lives on the house itself, under every screen: the
+          chat, the drawer and every app show it through their own glass.
+          Painted only under .skin-cosmos (index.css). */}
+      <div aria-hidden="true" className="bytelight-cosmos-aura pointer-events-none absolute inset-0 z-0" />
 
       {/* Bytelight auth gate — overlays everything when a passcode is required */}
       <BytelightLoginGate />
@@ -1909,6 +1915,8 @@ export default function App() {
           <AgentApp
             key="agent"
             onClose={closeApp}
+            // Integrations opens on Providers; back still returns to where Agent was opened from.
+            onOpenIntegrations={() => setOsState('integrations')}
             themeConfig={activeTheme}
             themeMode={theme.mode}
           />
@@ -1958,15 +1966,6 @@ export default function App() {
             onClose={closeApp}
             themeConfig={activeTheme}
             themeMode={theme.mode}
-          />
-        )}
-        {osState === 'radar' && (
-          <RadarApp
-            key="radar"
-            onClose={closeApp}
-            themeConfig={activeTheme}
-            themeMode={theme.mode}
-            companions={dbCompanions}
           />
         )}
         {osState === 'weather' && (

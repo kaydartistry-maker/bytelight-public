@@ -36,6 +36,7 @@ import mcpBeltRouter, { closeBeltMcpSessions } from './routes/mcp-belt.js';
 import { closeMcpJsonClients } from './services/mcp-json-bridge.js';
 import clientErrorRoutes from './routes/client-errors.js';
 import appShellRoutes from './routes/app.js';
+import { requireLocalhost } from './middleware/localhost.js';
 
 // Load config FIRST — before any other initialization
 const config = loadConfig();
@@ -200,9 +201,12 @@ app.use('/api/app', appShellRoutes);
 // All API routes — auth middleware is applied selectively inside the router
 app.use('/api', apiRoutes);
 
-// Command Center MCP endpoint
+// Command Center MCP endpoint — localhost only. Its one caller is .mcp.json
+// (localhost:3002); with trust proxy on, tunnel traffic carries the outside
+// client's IP and is refused, same as /api/internal/*. It was open to the
+// internet with no auth until 2026-11-09.
 if (config.command_center.enabled) {
-  import('./routes/cc-mcp.js').then(m => app.use('/mcp/cc', m.default));
+  import('./routes/cc-mcp.js').then(m => app.use('/mcp/cc', requireLocalhost, m.default));
 }
 
 // House tool-belt MCP endpoint. Mount synchronously before listen() so the

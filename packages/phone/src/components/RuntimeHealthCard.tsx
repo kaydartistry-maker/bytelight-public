@@ -7,14 +7,7 @@ import { Loader2, RefreshCw } from 'lucide-react';
 import { cn } from '../lib/utils';
 import type { ThemeConfig } from '../lib/theme';
 import { apiFetch } from '../bytelight';
-
-interface RuntimeHealth {
-  activeRuntimeVersion: string | null;
-  installedRuntimeVersion: string | null;
-  systemCcVersion: string | null;
-  minRequired: { version: string; reason: string } | null;
-  restartRequired: boolean;
-}
+import { claudeHealthView, type ClaudeHealth as RuntimeHealth } from './engine-status';
 
 interface SdkUpdateResult {
   success: boolean;
@@ -30,19 +23,6 @@ interface SdkUpdateResult {
 interface RuntimeHealthCardProps {
   themeConfig: ThemeConfig;
   themeMode: 'light' | 'dark';
-}
-
-// Numeric per-component compare, mirroring the backend helper.
-function compareVersions(a: string, b: string): number {
-  const pa = a.split('.').map(Number);
-  const pb = b.split('.').map(Number);
-  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
-    const va = pa[i] ?? 0;
-    const vb = pb[i] ?? 0;
-    if (va > vb) return 1;
-    if (va < vb) return -1;
-  }
-  return 0;
 }
 
 const STATUS_COLOR = { red: '#e5484d', yellow: '#f5a524', green: '#30a46c' } as const;
@@ -93,12 +73,13 @@ export function RuntimeHealthCard({ themeConfig, themeMode }: RuntimeHealthCardP
 
   // Both warnings can apply at once (right after upgrading to a model whose
   // minimum exceeded the old runtime) — red beats yellow beats green.
-  const outdated = !!(health?.activeRuntimeVersion && health.minRequired
-    && compareVersions(health.activeRuntimeVersion, health.minRequired.version) < 0);
-  const restartRequired = !!health?.restartRequired;
-  const unknown = !!health && !health.activeRuntimeVersion;
-  const headline: keyof typeof STATUS_COLOR = outdated ? 'red' : (restartRequired || unknown) ? 'yellow' : 'green';
-  const statusLabel = headline === 'red' ? 'Outdated' : headline === 'yellow' ? (restartRequired ? 'Restart required' : 'Unknown') : 'OK';
+  // With the CLI lane on, the box's own Claude Code answers; the SDK numbers
+  // below are kept for the SDK lane and its update button.
+  const view = health ? claudeHealthView(health) : null;
+  const outdated = !!view?.outdated;
+  const restartRequired = !!view?.restartRequired;
+  const headline: keyof typeof STATUS_COLOR = view?.headline ?? 'green';
+  const statusLabel = view?.label ?? '';
 
   const row = (label: string, value: React.ReactNode) => (
     <div className="flex items-baseline justify-between gap-3 py-1">
@@ -113,7 +94,7 @@ export function RuntimeHealthCard({ themeConfig, themeMode }: RuntimeHealthCardP
       style={health ? { borderColor: STATUS_COLOR[headline] } : undefined}
     >
       <div className="mb-2 flex items-center gap-2">
-        <h3 className={cn('flex-1 text-sm font-bold', colors.textMain)}>Claude runtime health</h3>
+        <h3 className={cn('flex-1 text-sm font-bold', colors.textMain)}>Claude</h3>
         <button
           onClick={() => void refresh()}
           disabled={loading || updating}
@@ -139,18 +120,23 @@ export function RuntimeHealthCard({ themeConfig, themeMode }: RuntimeHealthCardP
           </div>
           {outdated && health.minRequired && (
             <p className="mb-2 text-[11px] leading-snug" style={{ color: STATUS_COLOR.red }}>
-              Active runtime {health.activeRuntimeVersion} is below the minimum required by {health.minRequired.reason} ({health.minRequired.version}).
+              SDK runtime {health.activeRuntimeVersion} is below the minimum required by {health.minRequired.reason} ({health.minRequired.version}).
             </p>
           )}
           {restartRequired && (
             <p className="mb-2 text-[11px] leading-snug" style={{ color: STATUS_COLOR.yellow }}>
-              Installed runtime is newer than active — restart the backend to load it.
+              The SDK on disk is newer than the one loaded — restart the backend to load it.
+            </p>
+          )}
+          {view?.cliAnswering && (
+            <p className={cn('mb-2 text-[11px] leading-snug', colors.textMuted)}>
+              Chats go through the Claude Code app on the house's computer, signed in with your Claude subscription.
             </p>
           )}
           <div className={cn('border-t pt-1', colors.panelBorder)}>
-            {row('Active runtime (in memory)', health.activeRuntimeVersion ?? '—')}
-            {row('Installed runtime (on disk)', health.installedRuntimeVersion ?? '—')}
-            {row('System Claude Code (terminal)', health.systemCcVersion ?? '—')}
+            {row(view?.cliAnswering ? 'Claude Code (answering now)' : 'System Claude Code (terminal)', health.systemCcVersion ?? '—')}
+            {row('SDK runtime (in memory)', health.activeRuntimeVersion ?? '—')}
+            {row('SDK runtime (on disk)', health.installedRuntimeVersion ?? '—')}
             {row('Required by configured models', health.minRequired
               ? <>{health.minRequired.version} <span className="opacity-60">({health.minRequired.reason})</span></>
               : <span className="opacity-60">no minimum declared</span>)}

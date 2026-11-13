@@ -8,7 +8,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkBreaks from 'remark-breaks';
 import { CodeBlock } from './CodeBlock';
-import { Check, CheckCheck, Star, Heart, Smile, ThumbsUp, MoreHorizontal, Trash2, Play, Square, Loader2, Mic, FileText, Download, Pencil, RefreshCw, Copy, Reply, X, Volume2, Plus } from 'lucide-react';
+import { Check, CheckCheck, Star, Heart, Smile, ThumbsUp, MoreHorizontal, Trash2, Play, Square, Loader2, Mic, FileText, Download, Pencil, RefreshCw, Copy, Reply, X, Volume2, Plus, ChevronDown } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { MessageSegments } from './MessageSegments';
 import { SpeakerBubbles, SpeakerSegmentStack } from './SpeakerBubbles';
@@ -211,6 +211,9 @@ export function MessageBubble({ message, onReact, onBookmark, onDelete, onEdit, 
   // Falling back to their initial keeps a broken image out of the rail.
   const [avatarFailed, setAvatarFailed] = useState(false);
   const [isPlaying, setIsPlaying] = useState(false);
+  // Voice notes show only the player; the words stay folded until the reader
+  // taps to read them.
+  const [showTranscript, setShowTranscript] = useState(false);
   const [showRerollConfirm, setShowRerollConfirm] = useState(false);
   const [isLoadingAudio, setIsLoadingAudio] = useState(false);
   const [audioElement, setAudioElement] = useState<HTMLAudioElement | null>(null);
@@ -866,9 +869,22 @@ export function MessageBubble({ message, onReact, onBookmark, onDelete, onEdit, 
                   )}
                 </div>
                 {message.transcript && (
-                  <div className={cn("text-[13px] italic opacity-80 mb-2 px-1 select-text", textColorClass)}>
-                    {message.transcript}
-                  </div>
+                  <>
+                    <button
+                      type="button"
+                      onClick={(e) => { e.stopPropagation(); setShowTranscript((v) => !v); }}
+                      aria-expanded={showTranscript}
+                      className={cn("flex items-center gap-1 text-[11px] opacity-60 hover:opacity-90 transition-opacity mb-2 px-1", textColorClass)}
+                    >
+                      <ChevronDown size={12} className={cn("transition-transform duration-200", showTranscript && "rotate-180")} />
+                      {showTranscript ? 'Hide words' : 'Read it'}
+                    </button>
+                    {showTranscript && (
+                      <div className={cn("text-[13px] italic opacity-80 mb-2 px-1 select-text", textColorClass)}>
+                        {message.transcript}
+                      </div>
+                    )}
+                  </>
                 )}
               </>
             )}

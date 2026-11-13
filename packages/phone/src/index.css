@@ -637,8 +637,10 @@ select:-webkit-autofill {
   --fx-glow: 1;
 }
 
-/* Aura on the chat surface — violet crown, teal shoulder, rose floor */
-.skin-cosmos main.bytelight-wallpaper-text {
+/* Aura over the whole house — violet crown, teal shoulder, rose floor.
+   One layer under every screen (App.tsx, beside the wallpaper), so apps
+   and the drawer carry it too, not only the chat. */
+.skin-cosmos .bytelight-cosmos-aura {
   background:
     radial-gradient(120% 55% at 88% 0%, rgba(var(--aura-violet), calc(0.11 * var(--fx-aura))), transparent 55%),
     radial-gradient(85% 45% at 0% 4%, rgba(var(--aura-teal), calc(0.07 * var(--fx-aura))), transparent 52%),

@@ -123,7 +123,9 @@ router.get('/voice/status', authMiddleware, (req, res) => {
   res.json({
     canTranscribe: voiceService.canTranscribe,
     canTTS: voiceService.canTTS,
-    canAnalyzeProsody: voiceService.canAnalyzeProsody,
+    // The phone asks this before offering the tone switch on a call, and a
+    // call's tone is the live EVI path, not the retired batch API.
+    canAnalyzeProsody: voiceService.canAnalyzeRealtimeProsody,
   });
 });
 

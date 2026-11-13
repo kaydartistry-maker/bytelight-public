@@ -21,7 +21,7 @@ export const loginRateLimiter = rateLimit({
 export function securityHeaders(req: Request, res: Response, next: NextFunction): void {
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
-  // geolocation=(self): Thresholds, Weather and Radar ask for her position;
+  // geolocation=(self): Thresholds and Weather ask for her position;
   // an empty list refused them before Chrome could ever prompt.
   res.setHeader('Permissions-Policy', 'geolocation=(self), microphone=(self), camera=()');
   next();
