@@ -71,12 +71,14 @@ npm start
 
 Open `http://localhost:3002`.
 
+🔑 **Want voice, web search, GIFs or the Theater's subtitles?** Each needs a key from somewhere else. [docs/KEYS.md](docs/KEYS.md) lists them all: where to get each one and where to paste it.
+
 **First-time checklist:**
 
 1. `claude login` is done
 2. `identity.companion_name` and `identity.user_name` are set in `bytelight.yaml`
 3. `CLAUDE.md` exists (see the companion's guide above — write it together)
-4. Optional: Discord, Telegram, voice keys — see [docs/FEATURES-AND-KEYS.md](docs/FEATURES-AND-KEYS.md)
+4. Optional: every key the house can use (voice, web search, subtitles, GIFs, Discord, Telegram, push, other engines), where to get each one and where it goes — see **[docs/KEYS.md](docs/KEYS.md)**
 
 ---
 

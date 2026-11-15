@@ -1,5 +1,7 @@
 # Features & API Keys
 
+> Looking for a plain list of every key, where to get it, and where it goes in the app? See **[KEYS.md](KEYS.md)**. This page is the deeper reference.
+
 byte-light can run as a basic local companion with no third-party API keys beyond your Claude Code login. Optional features require their own keys, tokens, or external services.
 
 ---

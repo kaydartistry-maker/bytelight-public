@@ -283,7 +283,7 @@ They're found on `PATH`. To point at a custom install, set `FFMPEG_PATH`, `GIFSI
 ## Next steps
 
 - **Companion awake 24/7, phone that works anywhere:** rent a small cloud VM. See [CLOUD-DEPLOYMENT.md](CLOUD-DEPLOYMENT.md).
-- **Voice, Discord, Telegram:** see [FEATURES-AND-KEYS.md](FEATURES-AND-KEYS.md) and Settings > Preferences.
+- **Voice, web search, subtitles, Discord, Telegram and more:** every key, where to get it and where to paste it, is in [KEYS.md](KEYS.md).
 - **Themes:** see `examples/themes/README.md`.
 - **Context hooks (advanced):** see [HOOKS.md](HOOKS.md).
 - **Windows note:** byte-light runs on Windows directly (use the `better-sqlite3` fix above if the install complains), but it's smoothest on macOS, Linux, or Windows with WSL. To use WSL: open PowerShell as administrator, run `wsl --install`, reboot, then do everything above inside the Ubuntu terminal.

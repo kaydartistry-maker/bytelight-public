@@ -9,7 +9,7 @@ byte-light is a fork of [Resonant](https://github.com/codependentai/resonant), t
 ## 2026-11-15 — the Theater: your companions on the couch for movie night
 
 - **The Theater.** Start a night from the phone, run the clock, and your companions sit on the couch with you while you watch. They react on their own at beats (the Mouth), answer when you talk to them, and the couch draws the chat's own bubbles. "Next one" or the Next episode button starts the next episode; "Let them react" is set on the start form. Tap the slate to fold the clock and give the couch more room.
-- **Subtitles find themselves.** The start form looks up a night's subtitles as you type (OpenSubtitles). Add an `OpenSubtitles API key` in Settings → Secrets to turn it on.
+- **Subtitles find themselves.** The start form looks up a night's subtitles as you type (OpenSubtitles). Add an `OpenSubtitles API key` in Settings → Keys to turn it on (see `docs/KEYS.md`).
 - **Computer nights and the Ear.** Watching on a laptop instead of the TV? `packages/theater-ear` is a small Chrome extension that hears Netflix and Hulu captions and sends them to your house, so the couch follows the show live. Set your house's address in `lib.js` and `manifest.json` first (see its README).
 
 ## 2026-11-15 — warm lanes survive a restart, the Nook keeps reading, one emoji note
