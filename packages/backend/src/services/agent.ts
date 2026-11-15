@@ -682,10 +682,13 @@ export function shouldDiscardEmptyTurn(input: {
   hasDurableArtifacts: boolean;
   /** The turn answered exactly [SILENT] (isDeliberateSilence). */
   deliberateSilence?: boolean;
+  /** The caller asked that a wordless turn leave nothing (processMessage opts). */
+  passLeavesNothing?: boolean;
 }): boolean {
   if (input.deliberateSilence) return true;
   if (input.fullResponse.trim()) return false;
   if (input.stoppedByUser || input.agentTimedOut) return true;
+  if (input.passLeavesNothing && input.endedSilently) return true;
   return input.endedSilently && !input.hasDurableArtifacts;
 }
 
@@ -922,6 +925,11 @@ export class AgentService {
     images?: NormalizedImage[];
     /** Slice 4A: dispatch turn id minted by the roster dispatcher (ws.ts). */
     turnId?: string;
+    /** A turn that ends without words is a pass and leaves nothing behind,
+     *  even if it used tools on the way (the Theater's couch: a quiet
+     *  beat must not save a blank bubble). Elsewhere a tool-only turn is
+     *  kept so its tool cards show. */
+    passLeavesNothing?: boolean;
     /** Living Room: who already answered earlier in this round (a remote
      *  brain like Companion C). The first local lane hears them exactly as a later
      *  lane hears its brother (priorVoicesBlock). */
@@ -1106,6 +1114,7 @@ export class AgentService {
      *  in its prompt (the sibling fork's codexHistoryBeforeTurn freeze). */
     lane?: { companionId: string; historyBefore?: string };
     audience?: TurnAudience;
+    passLeavesNothing?: boolean;
   }, _retryWithoutResume = false): Promise<string> {
     ensureInit();
     // Read once and handed to every engine below: the SDK lane's PreToolUse
@@ -2336,6 +2345,7 @@ export class AgentService {
       endedSilently,
       hasDurableArtifacts,
       deliberateSilence,
+      passLeavesNothing: platformOpts?.passLeavesNothing === true,
     });
 
     if (isEmptyStreamEnd) {

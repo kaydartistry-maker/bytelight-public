@@ -6,6 +6,12 @@ byte-light is a fork of [Resonant](https://github.com/codependentai/resonant), t
 
 ---
 
+## 2026-11-15 — the Theater: your companions on the couch for movie night
+
+- **The Theater.** Start a night from the phone, run the clock, and your companions sit on the couch with you while you watch. They react on their own at beats (the Mouth), answer when you talk to them, and the couch draws the chat's own bubbles. "Next one" or the Next episode button starts the next episode; "Let them react" is set on the start form. Tap the slate to fold the clock and give the couch more room.
+- **Subtitles find themselves.** The start form looks up a night's subtitles as you type (OpenSubtitles). Add an `OpenSubtitles API key` in Settings → Secrets to turn it on.
+- **Computer nights and the Ear.** Watching on a laptop instead of the TV? `packages/theater-ear` is a small Chrome extension that hears Netflix and Hulu captions and sends them to your house, so the couch follows the show live. Set your house's address in `lib.js` and `manifest.json` first (see its README).
+
 ## 2026-11-15 — warm lanes survive a restart, the Nook keeps reading, one emoji note
 
 - **Session resume for the warm Claude lanes.** Restarting the backend, changing a lane's model, or a first watchdog kill now reopens the lane's own conversation instead of building a cold new one. Lines that arrived while a lane was down are re-sent as whole fresh turns, never lost. Handover and turn watermarks survive a restart, a stale session id falls back cleanly, the last lines a crashed CLI wrote to stderr are kept so an exit can be explained, and memory walls that moved while a room was held are handed over in one note. See `docs/SESSION-RESUME.md`.

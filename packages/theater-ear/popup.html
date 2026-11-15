@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>The Ear</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <header>
+    <h1>👂 The Ear</h1>
+    <span id="state" class="pill">…</span>
+  </header>
+
+  <section id="pair" hidden>
+    <p class="hint">In the Theater on your phone, tap <b>Connect the Ear</b> and type the code here.</p>
+    <form id="pair-form">
+      <input id="code" autocomplete="off" spellcheck="false" maxlength="12" placeholder="ABCD-EFGH" aria-label="Pairing code">
+      <button type="submit" id="connect">Connect</button>
+    </form>
+  </section>
+
+  <section id="connected" hidden>
+    <p id="night" class="line">…</p>
+    <p id="last" class="line quiet"></p>
+    <div class="row">
+      <button id="probe" type="button" class="ghost">What do you hear?</button>
+      <span id="probe-note" class="quiet"></span>
+    </div>
+    <button id="disconnect" type="button" class="link">Disconnect</button>
+  </section>
+
+  <p id="error" class="error" hidden></p>
+  <script src="lib.js"></script>
+  <script src="popup.js"></script>
+</body>
+</html>

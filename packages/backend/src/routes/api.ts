@@ -48,6 +48,8 @@ import starredRouter from './starred.js';
 import libraryRouter from './library.js';
 import storyShelfRouter from './story-shelf.js';
 import bookClubRouter from './library-book-club.js';
+import theaterRouter from './theater.js';
+import { createEarRoutes } from './theater-ear.js';
 import emojiRouter from './emojis.js';
 import studioRouter from './studio.js';
 import gifRouter from './gif.js';
@@ -71,6 +73,13 @@ router.use(createPublicRoutes());
 // 2. Internal routes (localhost-only, no auth)
 // ----------------------------------------------------------------------------
 router.use(createInternalRoutes());
+
+// ----------------------------------------------------------------------------
+// 2b. The Theater's Ear (browser extension): no cookie session, its own
+// bearer token instead (routes/theater-ear.ts). Only status, heard lines,
+// clock reports, a probe, and the one-time pairing claim.
+// ----------------------------------------------------------------------------
+router.use('/theater-ear', createEarRoutes());
 
 // ----------------------------------------------------------------------------
 // 3. Auth boundary (all routes below require authentication)
@@ -193,6 +202,10 @@ router.use('/library', libraryRouter);
 // router also carries its own, as Aerie's does). Page turns reach
 // req.app.locals.agentService, set in server.ts.
 router.use('/story-shelf', storyShelfRouter);
+// The Theater — Saint and Tyson on the couch while she watches something on
+// her TV: nights, subtitles, the clock, couch talk. Her door only; the
+// companions read the clock through /api/internal/theater.
+router.use('/theater', theaterRouter);
 router.use(createXrayRoutes());
 router.use(createStickerRoutes());
 // Custom emojis and emoji packs (ported from full-sweep). /api/emojis.

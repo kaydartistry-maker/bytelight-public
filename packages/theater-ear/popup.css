@@ -1,0 +1,34 @@
+:root {
+  --bg: #17141c;
+  --ink: #f2eef6;
+  --muted: #a79fb3;
+  --accent: #e0a96d;
+  --line: #2c2734;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  width: 300px;
+  padding: 14px;
+  background: var(--bg);
+  color: var(--ink);
+  font: 13px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+h1 { margin: 0; font-size: 16px; }
+.pill { font-size: 11px; padding: 2px 8px; border-radius: 999px; background: var(--line); color: var(--muted); }
+.pill.on { background: var(--accent); color: #1b1408; }
+.hint, .quiet { color: var(--muted); }
+.line { margin: 4px 0; overflow: hidden; text-overflow: ellipsis; }
+form { display: flex; gap: 6px; margin-top: 8px; }
+input {
+  flex: 1; min-width: 0; padding: 7px 9px; border-radius: 8px; border: 1px solid var(--line);
+  background: transparent; color: var(--ink); font: 600 15px/1 ui-monospace, monospace; letter-spacing: 0.12em; text-transform: uppercase;
+}
+button { font: inherit; border-radius: 8px; border: 0; padding: 7px 12px; font-weight: 600; cursor: pointer; background: var(--accent); color: #1b1408; }
+button:disabled { opacity: 0.5; cursor: default; }
+button.ghost { background: var(--line); color: var(--ink); }
+button.link { background: none; color: var(--muted); text-decoration: underline; padding: 6px 0 0; font-weight: 400; }
+.row { display: flex; align-items: center; gap: 8px; margin-top: 10px; }
+.error { color: var(--accent); margin: 10px 0 0; }

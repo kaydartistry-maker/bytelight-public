@@ -18,6 +18,7 @@ import { JournalApp } from './components/JournalApp';
 import { LibraryApp } from './components/LibraryApp';
 import { LettersApp } from './components/LettersApp';
 import { TreehouseApp } from './components/TreehouseApp';
+import { TheaterApp } from './components/TheaterApp';
 import { FieldNotesApp } from './components/FieldNotesApp';
 import { StudioApp } from './components/StudioApp';
 import { ThreadSwitcher } from './components/ThreadSwitcher';
@@ -244,7 +245,8 @@ export type OsScreen =
   | 'artifacts'
   | 'inbox'
   | 'games'
-  | 'library';
+  | 'library'
+  | 'theater';
 
 export default function App() {
   // byte-light opens on home as it always has; the lock button on home (or
@@ -2032,6 +2034,14 @@ export default function App() {
             userAvatar={ownerAvatar}
             userAvatarColor={appSettings.userAvatarColor}
             ownerName={ownerName}
+          />
+        )}
+        {osState === 'theater' && (
+          <TheaterApp
+            key="theater"
+            onClose={closeApp}
+            themeConfig={activeTheme}
+            themeMode={theme.mode}
           />
         )}
         {osState === 'fieldnotes' && (

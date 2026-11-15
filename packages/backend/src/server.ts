@@ -37,6 +37,7 @@ import { closeMcpJsonClients } from './services/mcp-json-bridge.js';
 import clientErrorRoutes from './routes/client-errors.js';
 import appShellRoutes from './routes/app.js';
 import { requireLocalhost } from './middleware/localhost.js';
+import { armTheaterMouth, stopTheaterMouth } from './services/theater-mouth.js';
 
 // Load config FIRST — before any other initialization
 const config = loadConfig();
@@ -365,6 +366,9 @@ server.listen(PORT, HOST, () => {
   // and MCP servers have come up before anyone answers.
   setTimeout(() => {
     recoverCutOffTurns(agentService).catch((err) => console.error('[turn-leases] Recovery failed:', err));
+    // The Theater's Mouth: a night left live and playing across a reload
+    // starts listening for beats again (services/theater-mouth.ts).
+    try { armTheaterMouth(agentService); } catch (err) { console.error('[theater] could not re-arm the Mouth:', err); }
   }, 10_000).unref();
 });
 
@@ -401,6 +405,7 @@ async function gracefulShutdown(signal: string): Promise<void> {
 
   // 2. Stop orchestrator (clears all intervals/crons)
   orchestrator.stop();
+  try { stopTheaterMouth(); } catch { /* best-effort */ }
 
   // 3. Stop gateway services
   if (discordService) await discordService.stop().catch(() => {});

@@ -111,6 +111,7 @@ import { readShelf, currentlyReading, readAlong, highlightsSoFar, addNote, readN
 import { needle } from '../services/needle.js';
 import storyShelfInternalRoutes from './internal/story-shelf.js';
 import bookClubInternalRoutes from './internal/library-book-club.js';
+import theaterInternalRoutes from './internal/theater.js';
 
 // After a render lands we hand ourselves a turn to look at it and react — so the
 // picture and our genuine reaction arrive in the same beat, without blocking the
@@ -1892,6 +1893,10 @@ export function createInternalRoutes(): Router {
   // ── The Book Club (agent-facing) ── pitches and votes, localhost only
   // (routes/internal/library-book-club.ts); her door is /api/library/book-club.
   router.use(bookClubInternalRoutes);
+
+  // ── The Theater (agent-facing) ── the live night, its clock and the
+  // lookback window, read only, localhost only (routes/internal/theater.ts).
+  router.use(theaterInternalRoutes);
 
   return router;
 }

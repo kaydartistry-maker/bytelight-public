@@ -2,7 +2,7 @@
 // Consumed by the home-screen dock and the app drawer.
 
 import type { LucideIcon } from 'lucide-react';
-import { Library, MessageSquare, StickyNote, Settings, Activity, Sticker, LayoutDashboard, Plug, FileText, Bot, Users, Brain, Paintbrush, Box, FolderOpen, BookOpen, Inbox, Mail, ScanSearch, CloudSun, Telescope, Music, Gamepad2, TreePine } from 'lucide-react';
+import { Library, MessageSquare, StickyNote, Settings, Activity, Sticker, LayoutDashboard, Plug, FileText, Bot, Users, Brain, Paintbrush, Box, FolderOpen, BookOpen, Inbox, Mail, ScanSearch, CloudSun, Telescope, Music, Gamepad2, TreePine, Clapperboard } from 'lucide-react';
 import { SPOTIFY_APP_ID } from './spotify';
 import type { OsScreen } from '../App';
 
@@ -31,6 +31,8 @@ export const APPS: AppDef[] = [
   { id: 'journal', name: 'Journal', icon: BookOpen, category: 'Companion', kind: 'screen', screen: 'journal' },
   { id: 'letters', name: 'Letters', icon: Mail, category: 'Companion', kind: 'screen', screen: 'letters' },
   { id: 'library', name: 'Reading Nook', icon: Library, category: 'Companion', kind: 'screen', screen: 'library' },
+  // The Theater: the couch for whatever's on the TV.
+  { id: 'theater', name: 'Theater', icon: Clapperboard, category: 'Companion', kind: 'screen', screen: 'theater' },
   { id: 'fieldnotes', name: 'Field Notes', icon: Telescope, category: 'Companion', kind: 'screen', screen: 'fieldnotes' },
   // Spotify (ported from Aerie): the operator's listening, played through her Spotify MCP server.
   { id: SPOTIFY_APP_ID, name: 'Spotify', icon: Music, category: 'Tools', kind: 'screen', screen: 'spotify' },

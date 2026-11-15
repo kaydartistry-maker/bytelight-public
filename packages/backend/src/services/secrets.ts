@@ -89,6 +89,13 @@ export const SECRETS: SecretDef[] = [
     envVar: 'TAVILY_API_KEY',
     hint: 'tavily.com — powers the search_web tool for foreign engines',
   },
+  {
+    name: 'opensubtitles_api_key',
+    label: 'OpenSubtitles API key',
+    category: 'search',
+    envVar: 'OPENSUBTITLES_API_KEY',
+    hint: 'opensubtitles.com/consumers — the Theater finds subtitles for a night on its own',
+  },
 
   // ── Voice ──────────────────────────────────────────────────────────
   {
