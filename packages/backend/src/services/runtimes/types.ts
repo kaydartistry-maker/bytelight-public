@@ -133,6 +133,12 @@ export interface AgentTurnInput {
   /** Pre-assembled orientation context block (thread, time, gap, status,
    *  vault). Runtime prepends or includes as appropriate. */
   orientation: string;
+  /** The same orientation minus the per-session manual (tool docs, skills,
+   *  brain protocol, digest, sticker catalog). A warm lane that already holds
+   *  the manual in its session uses this on ordinary turns; it falls back to
+   *  `orientation` after a (re)launch or a compaction. Absent → use
+   *  `orientation`. */
+  orientationLean?: string;
   systemPrompt: RuntimeSystemPrompt;
   /** Last-N conversation history in normalized form. Most runtimes
    *  with native session resume ignore this when `sessionId` is set;

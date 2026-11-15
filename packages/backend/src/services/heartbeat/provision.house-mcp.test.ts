@@ -19,6 +19,7 @@ const { initDb } = await import('../db.js');
 const {
   buildHouseMcpConfig, laneMcpArgs, provisionSessionDir, HOUSE_MCP_FILENAME, NEURALIS_MCP_FILENAME,
 } = await import('./provision.js');
+const { buildLaunchArgs } = await import('./supervisor.js');
 const { readMcpJson } = await import('../mcp-json.js');
 
 before(() => { initDb(join(tmpRoot, 'test.db')); });
@@ -61,6 +62,11 @@ test('the lane launches with its brain wire and the house servers in one flag', 
   assert.deepEqual(laneMcpArgs(dir), [
     '--mcp-config', join(dir, NEURALIS_MCP_FILENAME), join(dir, HOUSE_MCP_FILENAME),
   ]);
+  const args = buildLaunchArgs({
+    model: 'claude-sonnet-4-6', effort: 'adaptive', sessionId: 'abc', resuming: false,
+    freshPrompt: 'hello', resumePrompt: 'again', trailingArgs: laneMcpArgs(dir),
+  });
+  assert.deepEqual(args.slice(-4), ['hello', '--mcp-config', join(dir, NEURALIS_MCP_FILENAME), join(dir, HOUSE_MCP_FILENAME)]);
 });
 
 test('the house servers ride alone when no brain is configured', () => {

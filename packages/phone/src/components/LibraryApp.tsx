@@ -17,9 +17,10 @@ import { apiFetch, sendUserMessageToThread, useThreads, useRoutingThreadId, useA
 import { getOwnerAvatar, useHouseRoster } from '../lib/house';
 import type { RoomBubbleSettings } from './RoomBubble';
 import { useBackHandler } from '../lib/use-back-handler';
-import { markPage, segmentForParagraph, HIGHLIGHT_COLORS, type MarginNote, type Segment, type Highlight, type HighlightColor } from '../lib/library-reader';
+import { markPage, segmentForParagraph, chapterParagraphs, chapterSegments, toParagraphs, HIGHLIGHT_COLORS, type MarginNote, type Segment, type Highlight, type HighlightColor } from '../lib/library-reader';
 import { spineLook, spineTitle } from '../lib/story-shelf';
-import { useAudiobook } from '../lib/use-audiobook';
+import { useNookPlayer } from '../lib/nook-player';
+import { readerRelation } from '../lib/library-audiobook';
 import { LibraryListening } from './LibraryListening';
 import { thumbSrc } from '../lib/thumb';
 import { LibraryBookClub } from './LibraryBookClub';
@@ -77,23 +78,9 @@ function highlightWash(color: HighlightColor, mode: 'light' | 'dark'): string {
   return `rgb(${HIGHLIGHT_RGB[color] ?? HIGHLIGHT_RGB.yellow} / ${mode === 'dark' ? 0.3 : 0.4})`;
 }
 
-function chapterParagraphs(ch: Chapter): string[] {
-  return ch.paragraphs ?? toParagraphs(ch.text);
-}
-
-function chapterSegments(ch: Chapter): Segment[] {
-  if (ch.segments) return ch.segments;
-  const n = chapterParagraphs(ch).length;
-  return n ? [{ from: 0, to: n - 1 }] : [];
-}
-
-/** Gutenberg hard-wraps lines at ~70 columns; rejoin each paragraph. */
-export function toParagraphs(text: string): string[] {
-  return text
-    .split(/\n{2,}/)
-    .map((p) => p.replace(/\s*\n\s*/g, ' ').trim())
-    .filter(Boolean);
-}
+// The chapter helpers live with the reader's other pure helpers now, so the
+// app-wide player (lib/nook-player.tsx) can split a chapter without the Nook.
+export { toParagraphs };
 
 /** The message a shared passage becomes in the thread. */
 export function passageMessage(book: { title: string }, chapterTitle: string, passage: string, note: string): string {
@@ -203,6 +190,20 @@ export function LibraryApp({ onClose, themeConfig, themeMode }: LibraryAppProps)
 
   const [stories, setStories] = useState(false);
   const [club, setClub] = useState(false);
+  // The now-playing bar (anywhere on the phone) opens the Nook straight into
+  // the playing book's reader, with the listening view up.
+  const nook = useNookPlayer();
+  const [listenOnOpen, setListenOnOpen] = useState(false);
+  useEffect(() => {
+    const req = nook.openRequest;
+    if (!req) return;
+    nook.clearOpenRequest();
+    setStories(false);
+    setClub(false);
+    setListenOnOpen(true);
+    setReading(req.bookId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [nook.openRequest]);
   const [storyBooks, setStoryBooks] = useState<StorySpine[]>([]);
   // Back from the Story Shelf's own front page comes back to the Library.
   useBackHandler(stories, () => setStories(false));
@@ -311,8 +312,10 @@ export function LibraryApp({ onClose, themeConfig, themeMode }: LibraryAppProps)
   if (reading !== null) {
     return (
       <Reader
+        key={reading}
         bookId={reading}
-        onBack={() => { setReading(null); void loadShelf(); }}
+        startListening={listenOnOpen}
+        onBack={() => { setReading(null); setListenOnOpen(false); void loadShelf(); }}
         themeConfig={themeConfig}
         themeMode={themeMode}
       />
@@ -912,8 +915,10 @@ function KindleNotebook({ bookId, onBack, themeConfig, themeMode }: {
   );
 }
 
-function Reader({ bookId, onBack, themeConfig, themeMode }: {
+function Reader({ bookId, startListening = false, onBack, themeConfig, themeMode }: {
   bookId: number;
+  /** Opened from the now-playing bar: land on the listening view. */
+  startListening?: boolean;
   onBack: () => void;
   themeConfig: ThemeConfig;
   themeMode: 'light' | 'dark';
@@ -943,41 +948,42 @@ function Reader({ bookId, onBack, themeConfig, themeMode }: {
 
   // Read-aloud is audiobook mode (slice 5): one ~1200-character piece at a
   // time, rendered by the house in the chosen voice and cached there, played
-  // on through the chapters on one <audio> element (lib/use-audiobook.ts).
-  const [playerOpen, setPlayerOpen] = useState(false);
-  const [listening, setListening] = useState(false);
+  // on through the chapters on one <audio> element. The player belongs to the
+  // whole phone (lib/nook-player.tsx), so it keeps reading when she leaves the
+  // Nook; this reader is a client of it, and follows along only when it is
+  // open on the book being read.
+  const ab = useNookPlayer();
+  const abRef = useRef(ab);
+  abRef.current = ab;
+  // 'this': the player holds this book. 'other': another book is playing —
+  // the reader shows "Now playing" with a switch button and never takes the
+  // player over by itself. 'idle': nothing loaded; play starts this book.
+  const relation = readerRelation(ab.book?.id, bookId);
+  const relationRef = useRef(relation);
+  relationRef.current = relation;
+  const ours = relation === 'this';
+  const [playerOpen, setPlayerOpen] = useState(() => startListening || ours);
+  const [listening, setListening] = useState(() => startListening && ours);
   const chapterRef = useRef<Chapter | null>(null);
   chapterRef.current = chapter;
-  const companionSlugs = useMemo(() => companions.map((c) => c.slug), [companions]);
   const audiobookBook = useMemo(
     () => (book ? { id: book.id, title: book.title, cover: book.cover, chapterCount: book.chapters.length } : null),
     [book],
   );
-  const loadAudioChapter = useCallback(async (n: number) => {
-    const res = await apiFetch(`/api/library/books/${bookId}/chapters/${n}`);
-    if (!res.ok) throw new Error('That chapter could not be opened.');
-    const ch = (await res.json()) as Chapter;
-    return { index: ch.index, title: ch.title, paragraphs: chapterParagraphs(ch), segments: chapterSegments(ch) };
-  }, [bookId]);
-  const saveProgressRef = useRef<(n: number, fraction: number) => void>(() => {});
-  const ab = useAudiobook({
-    book: audiobookBook,
-    voices: companionSlugs,
-    labelOf,
-    loadChapter: loadAudioChapter,
-    saveProgress: (n, fraction) => saveProgressRef.current(n, fraction),
-    onMessage: (msg) => flash(msg),
-  });
-  const abRef = useRef(ab);
-  abRef.current = ab;
-  const playing = ab.playing;
+  const playing = ours && ab.playing;
+  const rendering = ours && ab.rendering;
+  const abPos = ours ? ab.pos : null;
   // The piece being read, when it's on the page she has open.
-  const segIndex = ab.pos && chapter && ab.pos.chapter === chapter.index ? ab.pos.seg : null;
+  const segIndex = abPos && chapter && abPos.chapter === chapter.index ? abPos.seg : null;
+  // Where the open book first lands: the voice's piece if it is reading this
+  // book (opened from the now-playing bar), else her bookmark.
+  const landOnSeg = useRef<number | null>(null);
   useBackHandler(listening, () => setListening(false));
 
   /** `follow`: the voice turned the page, so keep it reading. */
   const openChapter = useCallback(async (n: number, fraction = 0, follow = false) => {
-    if (!follow) abRef.current.stop();
+    // Turning pages by hand puts this book's voice down — never another book's.
+    if (!follow && relationRef.current === 'this') abRef.current.stop();
     setLoading(true);
     try {
       const res = await apiFetch(`/api/library/books/${bookId}/chapters/${n}`);
@@ -997,7 +1003,15 @@ function Reader({ bookId, onBack, themeConfig, themeMode }: {
       if (!res.ok || stale) return;
       const info = (await res.json()) as BookInfo;
       setBook(info);
-      await openChapter(info.progress?.chapter ?? 0, info.progress?.fraction ?? 0);
+      // Opening the book is not turning a page: a voice already reading it
+      // keeps reading, and the page opens on its piece.
+      const p = relationRef.current === 'this' ? abRef.current.pos : null;
+      if (p) {
+        landOnSeg.current = p.seg;
+        await openChapter(p.chapter, 0, true);
+      } else {
+        await openChapter(info.progress?.chapter ?? 0, info.progress?.fraction ?? 0, true);
+      }
     })();
     return () => { stale = true; };
   }, [bookId, openChapter]);
@@ -1008,8 +1022,13 @@ function Reader({ bookId, onBack, themeConfig, themeMode }: {
     if (!el || !chapter || restoreFraction.current === null) return;
     const fraction = restoreFraction.current;
     restoreFraction.current = null;
+    const seg = landOnSeg.current;
+    landOnSeg.current = null;
     requestAnimationFrame(() => {
-      el.scrollTop = fraction * Math.max(0, el.scrollHeight - el.clientHeight);
+      const from = seg !== null ? chapterSegments(chapter)[seg]?.from : undefined;
+      const target = from !== undefined ? el.querySelector<HTMLElement>(`[data-p="${from}"]`) : null;
+      if (target) target.scrollIntoView({ block: 'start' });
+      else el.scrollTop = fraction * Math.max(0, el.scrollHeight - el.clientHeight);
     });
   }, [chapter]);
 
@@ -1020,7 +1039,6 @@ function Reader({ bookId, onBack, themeConfig, themeMode }: {
       body: JSON.stringify({ chapter: n, fraction }),
     });
   }, [bookId]);
-  saveProgressRef.current = saveProgress;
 
   // The bookmark follows the page, a moment after scrolling stops.
   function onScroll() {
@@ -1138,16 +1156,22 @@ function Reader({ bookId, onBack, themeConfig, themeMode }: {
   // ── read-aloud (audiobook mode) ──
   // The chapter on the page is handed over, so the voice never fetches it twice.
   useEffect(() => {
-    if (chapter) ab.seed({ index: chapter.index, title: chapter.title, paragraphs, segments });
+    if (chapter) ab.seed(bookId, { index: chapter.index, title: chapter.title, paragraphs, segments });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [chapter, paragraphs, segments]);
+  }, [chapter, paragraphs, segments, bookId]);
 
   // The page follows the voice: when it turns into the next chapter, so does
   // the reader (unless she's in the middle of opening one herself).
   useEffect(() => {
-    if (!ab.pos || !chapter || loading || !(ab.playing || ab.rendering)) return;
-    if (ab.pos.chapter !== chapter.index) void openChapter(ab.pos.chapter, 0, true);
-  }, [ab.pos, ab.playing, ab.rendering, chapter, loading, openChapter]);
+    if (!abPos || !chapter || loading || !(playing || rendering)) return;
+    if (abPos.chapter !== chapter.index) void openChapter(abPos.chapter, 0, true);
+  }, [abPos, playing, rendering, chapter, loading, openChapter]);
+
+  // The player's notes ("The end.", the sleep timer, a failed render) for this book.
+  useEffect(() => {
+    if (ab.notice && ab.notice.bookId === bookId) flash(ab.notice.text);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ab.notice]);
 
   // The page follows the voice; the scroll carries the bookmark with it.
   useEffect(() => {
@@ -1166,14 +1190,30 @@ function Reader({ bookId, onBack, themeConfig, themeMode }: {
     return hit ? Number(hit.dataset.p) : 0;
   }
 
-  /** Play/pause; with nothing queued, begin at the piece on screen. */
+  /** The piece on screen, where a fresh start begins. */
+  function hereOnPage() {
+    return chapter ? { chapter: chapter.index, seg: segmentForParagraph(segments, firstVisibleParagraph()) } : null;
+  }
+
+  /** Play/pause; with nothing queued, begin at the piece on screen. Never
+   *  reaches another book's voice: that one is switched with `switchHere`. */
   function togglePlay() {
-    if (!chapter) return;
-    ab.toggle({ chapter: chapter.index, seg: segmentForParagraph(segments, firstVisibleParagraph()) });
+    const at = hereOnPage();
+    if (!at) return;
+    if (relation === 'this') ab.toggle(at);
+    else if (relation === 'idle' && audiobookBook) ab.begin(audiobookBook, at);
+  }
+
+  /** "Read this one instead": the other book's place is saved, this one starts here. */
+  function switchHere() {
+    const at = hereOnPage();
+    if (!at || !audiobookBook) return;
+    ab.begin(audiobookBook, at);
+    setPlayerOpen(true);
   }
 
   function closePlayer() {
-    ab.stop({ save: true });
+    if (relation === 'this') ab.stop({ save: true });
     setListening(false);
     setPlayerOpen(false);
   }
@@ -1182,6 +1222,8 @@ function Reader({ bookId, onBack, themeConfig, themeMode }: {
   const canListen = (book?.chapters.length ?? 0) > 0;
 
   const reading = playerOpen && segIndex !== null ? segments[segIndex] : null;
+  // A bar at the foot of the page (her player, or another book's Now playing).
+  const barShown = playerOpen || relation === 'other';
 
   return (
     <AppShell
@@ -1190,11 +1232,17 @@ function Reader({ bookId, onBack, themeConfig, themeMode }: {
       themeConfig={themeConfig}
       themeMode={themeMode}
       bodyClassName="p-0 overflow-hidden flex flex-col"
+      hideNowPlaying
       headerRight={
         <>
           {canListen && (
             <button
-              onClick={() => { setListening((v) => (playerOpen ? !v : true)); setPlayerOpen(true); }}
+              onClick={() => {
+                // Another book is reading: the Now playing bar below is the way to switch.
+                if (relation === 'other') { flash(`${ab.book?.title ?? 'Another book'} is playing. Tap Switch to hear this one.`); return; }
+                setListening((v) => (playerOpen ? !v : true));
+                setPlayerOpen(true);
+              }}
               className={cn('rounded-full p-2', colors.textMuted)}
               style={playerOpen ? { color: colors.accent } : undefined}
               title="Listen"
@@ -1314,7 +1362,43 @@ function Reader({ bookId, onBack, themeConfig, themeMode }: {
         )}
       </div>
 
-      {playerOpen && !listening && (
+      {relation === 'other' && ab.book && (
+        // Another book is reading. It keeps reading; this reader says so, and
+        // switching is her tap, never the reader's.
+        <div className={cn('absolute inset-x-3 bottom-4 z-30 flex items-center gap-2 rounded-2xl border px-3 py-2 shadow-xl backdrop-blur-xl', colors.panelBg, colors.panelBorder)}>
+          <button
+            onClick={ab.openNook}
+            className={cn('flex min-w-0 flex-1 items-center gap-1.5 text-left', colors.textMain)}
+            aria-label={`Open ${ab.book.title}`}
+          >
+            <Headphones size={15} className={cn('shrink-0', colors.textMuted)} />
+            <span className="min-w-0">
+              <span className={cn('block truncate text-[10px] uppercase tracking-[0.14em]', colors.textMuted)}>Now playing</span>
+              <span className="block truncate text-xs font-medium">{ab.book.title}</span>
+            </span>
+          </button>
+          <div className="ml-auto flex shrink-0 items-center gap-1">
+            <button
+              onClick={() => ab.toggle()}
+              className={cn('rounded-full p-2', colors.textMain)}
+              aria-label={ab.playing ? `Pause ${ab.book.title}` : `Play ${ab.book.title}`}
+            >
+              {ab.rendering ? <Loader2 size={16} className="animate-spin" /> : ab.playing ? <Pause size={16} /> : <Play size={16} />}
+            </button>
+            <button
+              onClick={switchHere}
+              disabled={!canListen || !chapter || !ab.pick}
+              className="rounded-full px-3 py-1.5 text-xs font-semibold disabled:opacity-40"
+              style={{ background: colors.accent, color: 'var(--bytelight-on-accent)' }}
+              aria-label={`Switch to ${book?.title ?? 'this book'}`}
+            >
+              Switch
+            </button>
+          </div>
+        </div>
+      )}
+
+      {relation !== 'other' && playerOpen && !listening && (
         <div className={cn('absolute inset-x-3 bottom-4 z-30 flex items-center gap-2 rounded-2xl border px-3 py-2 shadow-xl backdrop-blur-xl', colors.panelBg, colors.panelBorder)}>
           <button
             onClick={() => setListening(true)}
@@ -1325,14 +1409,14 @@ function Reader({ bookId, onBack, themeConfig, themeMode }: {
             <span className="min-w-0">
               <span className="block truncate text-xs font-medium">{ab.readBy || 'Listen'}</span>
               <span className={cn('block truncate text-[10px]', colors.textMuted)}>
-                {ab.pos ? `${ab.chapterTitle || `Chapter ${ab.pos.chapter + 1}`} · ${ab.pos.seg + 1}/${ab.segCount}` : `${segments.length} pieces in this chapter`}
+                {abPos ? `${ab.chapterTitle || `Chapter ${abPos.chapter + 1}`} · ${abPos.seg + 1}/${ab.segCount}` : `${segments.length} pieces in this chapter`}
               </span>
             </span>
           </button>
           <div className="ml-auto flex items-center gap-1">
             <button
               onClick={ab.prevPieceNow}
-              disabled={!ab.pos || (ab.pos.chapter === 0 && ab.pos.seg === 0)}
+              disabled={!abPos || (abPos.chapter === 0 && abPos.seg === 0)}
               className={cn('rounded-full p-2 disabled:opacity-30', colors.textMain)}
               aria-label="Back a piece"
             >
@@ -1345,11 +1429,11 @@ function Reader({ bookId, onBack, themeConfig, themeMode }: {
               style={{ background: colors.accent, color: 'var(--bytelight-on-accent)' }}
               aria-label={playing ? 'Pause' : 'Read to me'}
             >
-              {ab.rendering ? <Loader2 size={16} className="animate-spin" /> : playing ? <Pause size={16} /> : <Play size={16} />}
+              {rendering ? <Loader2 size={16} className="animate-spin" /> : playing ? <Pause size={16} /> : <Play size={16} />}
             </button>
             <button
               onClick={ab.nextPieceNow}
-              disabled={!ab.pos}
+              disabled={!abPos}
               className={cn('rounded-full p-2 disabled:opacity-30', colors.textMain)}
               aria-label="On a piece"
             >
@@ -1362,7 +1446,7 @@ function Reader({ bookId, onBack, themeConfig, themeMode }: {
         </div>
       )}
 
-      {playerOpen && listening && book && (
+      {relation !== 'other' && playerOpen && listening && book && (
         <LibraryListening
           ab={ab}
           bookTitle={book.title}
@@ -1420,7 +1504,7 @@ function Reader({ bookId, onBack, themeConfig, themeMode }: {
       )}
 
       {selection && !sharing && !marking && (
-        <div className={cn('absolute left-1/2 z-30 flex -translate-x-1/2 items-center gap-2', playerOpen ? 'bottom-20' : 'bottom-6')}>
+        <div className={cn('absolute left-1/2 z-30 flex -translate-x-1/2 items-center gap-2', barShown ? 'bottom-20' : 'bottom-6')}>
           <button
             onMouseDown={(e) => e.preventDefault()}
             onClick={() => setMarking({ quote: selection })}
@@ -1455,7 +1539,7 @@ function Reader({ bookId, onBack, themeConfig, themeMode }: {
       )}
 
       {toast && (
-        <div className={cn('absolute left-1/2 z-30 -translate-x-1/2 rounded-full px-4 py-2 text-xs font-medium shadow-xl', playerOpen ? 'bottom-20' : 'bottom-6')} style={{ background: colors.accent, color: 'var(--bytelight-on-accent)' }}>
+        <div className={cn('absolute left-1/2 z-30 -translate-x-1/2 rounded-full px-4 py-2 text-xs font-medium shadow-xl', barShown ? 'bottom-20' : 'bottom-6')} style={{ background: colors.accent, color: 'var(--bytelight-on-accent)' }}>
           {toast}
         </div>
       )}

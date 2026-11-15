@@ -1,6 +1,7 @@
 import { Router, type Response } from 'express';
 import { requireLocalhost } from '../middleware/localhost.js';
 import { staleBlockText } from '../services/heartbeat/stale-walls.js';
+import { markLaneManualDue } from '../services/heartbeat/runtime.js';
 import { normalizeNoteColor } from '@bytelight/shared';
 import crypto from 'crypto';
 import { readFileSync, existsSync } from 'fs';
@@ -202,6 +203,9 @@ export function createInternalRoutes(): Router {
   // reads words back into a room after a compaction.
   router.get('/internal/compaction-refresh', requireLocalhost, (req, res) => {
     const lane = typeof req.query.lane === 'string' ? req.query.lane : '';
+    // The squash folded the per-session manual away with everything else, so
+    // the lane's next turn carries the full [Context] again.
+    markLaneManualDue(lane);
     res.json({ success: true, refresh: staleBlockText(lane) });
   });
 

@@ -24,9 +24,9 @@
  * glue) — it lands here typecheck-clean but unreachable.
  */
 
-import { writeFileSync, appendFileSync } from 'fs';
+import { writeFileSync, appendFileSync, readFileSync } from 'fs';
 import { join } from 'path';
-import { randomUUID } from 'crypto';
+import { randomUUID, createHash } from 'crypto';
 import type { ModelRef, ProviderId, RuntimeId } from '@bytelight/shared';
 import type {
   AgentRuntime,
@@ -40,6 +40,7 @@ import { buildEmojiSightBlock } from './emoji-sight.js';
 import { getEmojiByName } from '../db/emojis.js';
 import { PROJECT_ROOT } from '../../config.js';
 import { BUSY_FRESH_MS, laneTagFor } from './constants.js';
+import { laneDirName } from './lane-dir.js';
 import { thinNudgeForTurn } from './thin-nudge.js';
 import { selectOtherLaneReplies, nextOtherLaneMark, renderOtherLaneBlock, clampForDelivery, speakerName } from './other-lane-net.js';
 // Re-exported so existing callers and tests keep one import site.
@@ -65,55 +66,91 @@ import { errMessage } from '../../util/errors.js';
 // body initialized (TDZ). Deferring those imports to call time means the
 // cycle is resolved before either side actually needs the symbol.
 
+import {
+  HANDED_WATERMARK_FILE, missedInboundBanner, missedInboundReason, readHandedWatermark,
+  rollbackHandedWatermark, selectMissedInbound, writeHandedWatermark,
+} from './missed-inbound.js';
+// Re-exported so existing callers and tests keep one import site. The
+// handover rules (selection, banner, the on-disk marks and their rollback)
+// live in missed-inbound.ts.
+export {
+  HANDED_WATERMARK_FILE, missedInboundBanner, missedInboundReason, readHandedWatermark,
+  rollbackHandedWatermark, selectMissedInbound, writeHandedWatermark,
+} from './missed-inbound.js';
+
+/** A handover mark that means nothing has been handed yet, so everything in
+ *  the window still counts as missed. An unset mark means the same thing. */
+export const HANDED_FROM_THE_BEGINNING = '1970-01-01T00:00:00.000Z';
+
 /**
- * Which of her messages reached no turn.
+ * Where a lane remembers when it last finished a turn.
  *
- * Exported and pure ON PURPOSE. Aerie's first version of this rule lived
- * inside the runtime and its test held a hand-written COPY of the same filter,
- * so the test agreed with the bug and went green through every misfire. A
- * check that mirrors the implementation cannot fail on it.
- *
- * `currentPrompt` is NOT the bare message — it can carry a platform frame or
- * other prefixes — so matching by equality announced the message being read
- * right now as lost on every turn that carried one. Ask what the prompt can
- * answer: does it END with this message.
- *
- * Deliberately one-way: it may hand a message over twice, never zero times.
+ * Same fault as the handover watermark and found the same way: lastTurnAt
+ * lived only in the in-memory laneStates map, so a backend restart wiped it.
+ * That is precisely the turn a resumed room is most likely to have missed
+ * something, and a reopened room has no other way to date itself. Both files
+ * hold exactly one ISO stamp and nothing else.
  */
-export function selectMissedInbound<T extends { content: string; createdAt: string }>(
-  users: T[],
-  since: string | undefined,
-  currentPrompt: string,
-  newestAt: string,
-): T[] {
-  const prompt = currentPrompt.trim();
-  const arrivingNow = (m: T): boolean => {
-    const body = m.content.trim();
-    // An image-only row has no text to match on, and every string ends with
-    // the empty one. Identify it by position instead: the newest row is the
-    // turn arriving now.
-    if (body === '') return m.createdAt === newestAt;
-    return prompt === body || prompt.endsWith(body);
-  };
-  return users.filter(m => (!since || m.createdAt > since) && !arrivingNow(m));
+export const TURN_WATERMARK_FILE = '.last-turn';
+
+/**
+ * Which room wrote the marks above.
+ *
+ * The marks belong to the LANE directory, but a lane can hold more than one
+ * room over a morning. A room replaced by a fresh one, the fresh one answering
+ * for an hour and moving the marks up to its own last turn, and then a restart
+ * reopening the OLD room by --resume: the old room would be handed everything
+ * since the fresh room's last turn, which is nothing, and come back with no
+ * idea the morning had happened. When the room reading the marks is not the
+ * room that wrote them, they say nothing about what this room has seen and
+ * are treated as unknown. An absent file means marks from before this existed
+ * and leaves them as they are.
+ */
+export const ROOM_WATERMARK_FILE = '.marks-room';
+
+/**
+ * Where a lane remembers, per thread, how far its other-lane net has read.
+ *
+ * Adapted to this house: the source's catch-up re-reads thread history through
+ * a loader and dates it with the lane-wide turn mark. Here the companion
+ * replies a lane never heard come through the other-lane net
+ * (other-lane-net.ts), which is bounded by a per-THREAD mark, so that is the
+ * mark that has to survive a restart. One file per thread, the thread id
+ * hashed so arbitrary ids never reach a path name.
+ */
+export const OTHER_LANE_MARK_PREFIX = '.other-lane-read.';
+export function otherLaneMarkPath(ioDir: string, threadId: string): string {
+  return join(ioDir, `${OTHER_LANE_MARK_PREFIX}${createHash('sha256').update(threadId).digest('hex')}`);
+}
+
+/** True when the marks on disk were written by a different room than the one
+ *  running now. An absent marker (marks from before the marker existed) or an
+ *  unnamed room proves nothing either way and leaves the marks standing. */
+export function marksFromAnotherRoom(room: string | null | undefined, marksRoom: string): boolean {
+  return !!room && !!marksRoom && marksRoom !== room;
 }
 
 /**
- * What the [MISSED] banner says — two different events wearing one sentence
- * until you separate them. Every genuinely late batch Aerie measured landed
- * within seconds of a session birth, not in a gap between two turns of a
- * living lane: nothing raced; there was no window alive to hand them to.
- * Those arrive already replayed in the recycle context, so telling a fresh
- * session they "reached no turn at all" invites it to answer, at length, a
- * conversation it is holding in its other hand.
+ * Where the other-lane net starts looking on this turn.
+ *
+ * Adapted from the source's catch-up rule ("too much, never nothing"): a room
+ * reopened by --resume after a backend restart is not handed the recycle seed,
+ * so on its first turn an unknown mark must not mean "nothing missed".
+ *  - marks written by another room: the whole window (capped by the net);
+ *  - a reopened room's first turn: this thread's mark, else the lane-wide
+ *    sight mark (any other-lane reply after the lane last finished a turn is
+ *    one it never saw), else the whole window;
+ *  - any other turn: this thread's mark, exactly as before (no mark, nothing).
  */
-export function missedInboundBanner(count: number, afterRestart: boolean): string {
-  const s = count === 1 ? '' : 's';
-  const it = count === 1 ? 'it' : 'them';
-  if (afterRestart) {
-    return `[MISSED — ${count} message${s} of hers landed while this lane was restarting, so no window was alive to take ${it}. They are almost certainly in the replayed conversation above. READ THAT FIRST and answer only what is genuinely unanswered — do not re-answer a thread you are already holding.]`;
-  }
-  return `[MISSED — ${count} message${s} of hers reached no turn at all. Stored, stamped delivered, handed to nobody. Answer ${it} now; if you already have, say so rather than repeating yourself.]`;
+export function otherLaneSinceFor(o: {
+  reopened: boolean;
+  marksForeign: boolean;
+  threadMark?: string;
+  lastTurnAt?: string;
+}): string | undefined {
+  if (o.marksForeign) return HANDED_FROM_THE_BEGINNING;
+  if (!o.reopened) return o.threadMark;
+  return o.threadMark ?? o.lastTurnAt ?? HANDED_FROM_THE_BEGINNING;
 }
 
 // 600s default, re-armed by every chunk the session writes — only sustained
@@ -138,6 +175,10 @@ export const RECYCLE_SEED_MESSAGES = 30;
 export const RECYCLE_SEED_MSG_CHARS = 4_000;
 export const RECYCLE_SEED_TOTAL_CHARS = 50_000;
 const POLL_MS = 500;
+/** The most of her missed messages one turn lists (newest kept). The witness
+ *  file still records every one; the block must never become a replay of the
+ *  whole thread, which an unknown mark would otherwise make it. */
+export const MISSED_INBOUND_CAP = 10;
 const MAX_UNRESOLVED = 8;
 
 // H1 inert default — flag must be explicitly set to 'true' to enable any
@@ -218,13 +259,74 @@ interface LaneState {
    */
   lastHandedUserAt?: string;
   /**
+   * When this lane last finished a turn (its sight mark). Read from and
+   * written to io/.last-turn so a restart does not wipe it. Unset means this
+   * lane has said nothing yet, or its marks belonged to another room.
+   */
+  lastTurnAt?: string;
+  /**
+   * Where the handover watermark stood when THIS turn began, held so a turn
+   * that says nothing at all can give her message back to the net. See
+   * rollbackHandedWatermark. Cleared by the rollback; meaningless between
+   * turns.
+   */
+  handedBeforeTurn?: string;
+  /** True until this lane state has run a non-guest turn on a non-fresh
+   *  session. The first such turn on a REOPENED room gets the bounded
+   *  catch-up (otherLaneSinceFor); a fresh launch clears it (the seed covers). */
+  reopenCatchUpPending: boolean;
+  /** The room that actually read this turn's inbox line, once that is known,
+   *  plus what is needed to settle it at the turn's end. Only a room that read
+   *  a line has been handed a turn, so only that room may be claimed in
+   *  .marks-room — the supervisor reads that claim to decide whether the room
+   *  is safe to reopen. */
+  turnLine?: { end: number; room: string | null; consumedBy: string | null };
+  /** The fresh room (launch generation) that has already been handed the
+   *  history re-prime and the full manual by a re-sent line. Each fresh room
+   *  gets them once, however many set-aside lines are re-sent into it. */
+  primedGeneration?: number;
+  /** Set when the marks on disk turned out to belong to another room: per-thread
+   *  marks left on disk are then not evidence for this room. */
+  diskThreadMarksUntrusted: boolean;
+  /**
    * Per thread: when this lane last STARTED a turn there (when it last read
    * that thread's history). Bounds how far back the other-lane net
-   * (selectOtherLaneReplies) looks in that thread.
+   * (selectOtherLaneReplies) looks in that thread. Persisted per thread
+   * (otherLaneMarkPath) and hydrated lazily by otherLaneMarkFor.
    */
   lastReadThreadAt: Map<string, string>;
+  /** True once this session has been handed the full orientation manual
+   *  (tool docs, skills, brain, digest, stickers). Until then, and after any
+   *  (re)launch or compaction, a turn carries the full [Context]; otherwise
+   *  the lean one. Reset by a fresh launch and by markLaneManualDue. */
+  manualDelivered: boolean;
 }
 const laneStates = new Map<string, LaneState>();
+
+/** Lane dirs whose session just compacted — the manual is folded away with
+ *  the rest, so the next turn re-sends it. Set by the compaction-refresh
+ *  route (hooks/compacted.cjs asks there right after a squash). */
+const manualDueLanes = new Set<string>();
+export function markLaneManualDue(laneDir: string): void {
+  if (laneDir) manualDueLanes.add(laneDir);
+}
+
+/**
+ * Which orientation a warm-lane turn carries. The full one (with the manual)
+ * when the session may not hold the manual yet: never delivered since the
+ * backend started, a fresh (re)launch, or a compaction just folded it away.
+ * Otherwise the lean one. No lean variant offered → full, unchanged.
+ */
+export function pickWarmOrientation(o: {
+  fresh: boolean;
+  compacted: boolean;
+  manualDelivered: boolean;
+  orientation: string;
+  orientationLean?: string;
+}): { text: string; full: boolean } {
+  const full = o.fresh || o.compacted || !o.manualDelivered || o.orientationLean == null;
+  return { text: full ? o.orientation : (o.orientationLean ?? o.orientation), full };
+}
 
 function laneStateFor(key: string, session: HeartbeatSession): LaneState {
   let state = laneStates.get(key);
@@ -241,10 +343,31 @@ function laneStateFor(key: string, session: HeartbeatSession): LaneState {
       lastUsage: null,
       sideNotesOffset: session.sideNotesSize(),
       lastReadThreadAt: new Map(),
+      manualDelivered: false,
+      reopenCatchUpPending: true,
+      diskThreadMarksUntrusted: false,
+      // Read from disk, because this map is empty after every restart and the
+      // marks are the fields in it that must outlive the process.
+      lastHandedUserAt: readHandedWatermark(join(session.dir, 'io', HANDED_WATERMARK_FILE)),
+      lastTurnAt: readHandedWatermark(join(session.dir, 'io', TURN_WATERMARK_FILE)),
     };
     laneStates.set(key, state);
   }
   return state;
+}
+
+/**
+ * The other-lane mark for one thread: memory first, then the file a previous
+ * process left. Absent or damaged reads as no mark (the net hands nothing and
+ * the recycle seed or resume catch-up covers the gap).
+ */
+function otherLaneMarkFor(state: LaneState, session: HeartbeatSession, threadId: string): string | undefined {
+  const inMemory = state.lastReadThreadAt.get(threadId);
+  if (inMemory) return inMemory;
+  if (state.diskThreadMarksUntrusted) return undefined;
+  const onDisk = readHandedWatermark(otherLaneMarkPath(join(session.dir, 'io'), threadId));
+  if (onDisk) state.lastReadThreadAt.set(threadId, onDisk);
+  return onDisk;
 }
 
 // ─── Outbox line classification (shared: turn-start sweep + idle watcher) ──
@@ -390,7 +513,11 @@ export const CLAUDE_CLI_CAPABILITIES = {
   vision: true,           // images flow as files the session can Read
   reasoning: true,        // self-reported via the outbox `thinking` field
   mcp: false,
-  sessionResume: true,    // the warm session IS the resume
+  // Both senses now. The process stays warm across turns, AND a launch after
+  // a backend restart reopens the same conversation with --resume. This line
+  // read "the warm session IS the resume", which sounds like the second sense
+  // while only ever meaning the first.
+  sessionResume: true,
   fileCheckpointing: false,
   streaming: false,       // coarse chunked replies, no token streaming
 } as const;
@@ -638,8 +765,17 @@ export class InteractiveCliRuntime implements AgentRuntime {
     key: string,
     threadId: string,
     messages: readonly { role: string; content: string; createdAt: string; lane?: string; companionId?: string }[],
+    session?: HeartbeatSession,
+    reopen?: { reopened: boolean; marksForeign: boolean },
   ): string {
-    const theirs = selectOtherLaneReplies(messages, state.lastReadThreadAt.get(threadId), laneTagFor('claude-cli', key));
+    const threadMark = session ? otherLaneMarkFor(state, session, threadId) : state.lastReadThreadAt.get(threadId);
+    const since = otherLaneSinceFor({
+      reopened: reopen?.reopened ?? false,
+      marksForeign: reopen?.marksForeign ?? false,
+      threadMark,
+      lastTurnAt: state.lastTurnAt,
+    });
+    const theirs = selectOtherLaneReplies(messages, since, laneTagFor('claude-cli', key));
     return renderOtherLaneBlock(theirs, this.options.companionName || 'Companion');
   }
 
@@ -668,8 +804,16 @@ export class InteractiveCliRuntime implements AgentRuntime {
     currentPrompt: string,
     afterRestart: boolean,
     missedPath: string,
+    handedPath: string,
   ): string {
-    const since = state.lastHandedUserAt;
+    // Strictly per-turn. A turn that never reaches the advance below must not
+    // leave a previous turn's stamp standing for the rollback to restore.
+    state.handedBeforeTurn = undefined;
+    const since = state.lastHandedUserAt || state.lastTurnAt;
+    // Read before anything below can move it: the end of the PREVIOUS turn is
+    // what separates a message that landed mid-turn from one that landed into
+    // an idle lane, and those are different faults.
+    const lastTurnBefore = state.lastTurnAt;
 
     const users = messages.filter(m => m.role === 'user');
     const newestAt = users.reduce((a, m) => (m.createdAt > a ? m.createdAt : a), '');
@@ -678,9 +822,19 @@ export class InteractiveCliRuntime implements AgentRuntime {
 
     // Advance the watermark past everything of hers we can see, including the
     // message arriving now — otherwise the same one is offered again forever.
-    if (newestAt) state.lastHandedUserAt = newestAt > (since || '') ? newestAt : (since || newestAt);
+    // Written to disk in the same breath: forever has to mean across restarts,
+    // or the net re-reports an afternoon she has already been answered on.
+    if (newestAt) {
+      // Held for the rollback: if this turn says nothing at all, the advance
+      // about to happen is what would swallow her message.
+      state.handedBeforeTurn = since;
+      state.lastHandedUserAt = newestAt > (since || '') ? newestAt : (since || newestAt);
+      writeHandedWatermark(handedPath, state.lastHandedUserAt);
+    }
 
     if (mine.length === 0) return '';
+    const shown = mine.slice(-MISSED_INBOUND_CAP);
+    const omitted = mine.length - shown.length;
 
     // How late each one is. A miss found seconds after it was sent is the
     // handover working; one found an hour later is the seam this exists for,
@@ -699,10 +853,10 @@ export class InteractiveCliRuntime implements AgentRuntime {
           found_at: new Date().toISOString(),
           sent_at: m.createdAt,
           late: lateness(m),
-          // Why it was late: the lane was being born, or a live lane was busy.
-          // Averaging those two together is what made a healthy median out of
-          // an outage.
-          reason: afterRestart ? 'session-birth' : 'race',
+          // Why it was late: the lane was being born, a turn was in flight
+          // (a side-note gap), or it landed into an idle lane. Averaging those
+          // together is what made a healthy median out of an outage.
+          reason: missedInboundReason(afterRestart, m.createdAt, lastTurnBefore),
           content: m.content,
         }) + '\n', 'utf8');
       }
@@ -711,8 +865,9 @@ export class InteractiveCliRuntime implements AgentRuntime {
     const userName = this.options.userName || 'User';
     return [
       '',
-      missedInboundBanner(mine.length, afterRestart),
-      ...mine.map(m => `${userName} (${m.createdAt}, ${lateness(m)}): ${this.clampForSeed(m.content, 4_000)}`),
+      missedInboundBanner(shown.length, afterRestart),
+      ...(omitted > 0 ? [`[${omitted} older message${omitted === 1 ? '' : 's'} of hers omitted here; they are older than the ones below.]`] : []),
+      ...shown.map(m => `${userName} (${m.createdAt}, ${lateness(m)}): ${this.clampForSeed(m.content, 4_000)}`),
       '[End of missed messages.]',
       '',
     ].join('\n');
@@ -755,6 +910,7 @@ export class InteractiveCliRuntime implements AgentRuntime {
     // tag, so the earlier mark cannot echo them.
     const turnStartedIso = new Date().toISOString();
     let turnCompleted = false;
+    state.turnLine = undefined;
     // Mirror onto the session so the supervisor's watchdog can measure a live
     // turn from its own start instead of a file older than it is.
     session.turnActive = true;
@@ -787,11 +943,32 @@ export class InteractiveCliRuntime implements AgentRuntime {
         guest: input.audience?.kind === 'guest',
         fallback: turnStartedIso,
       });
-      if (mark) state.lastReadThreadAt.set(input.thread.id, mark);
+      if (mark) {
+        const prevMark = state.lastReadThreadAt.get(input.thread.id);
+        state.lastReadThreadAt.set(input.thread.id, mark);
+        // On disk too, so a reopened room still knows where it stopped reading.
+        if (mark !== prevMark) {
+          writeHandedWatermark(otherLaneMarkPath(join(session.dir, 'io'), input.thread.id), mark);
+        }
+      }
       state.turnActive = false;
       session.turnActive = false;
       session.turnStartedAt = 0;
       session.turnThreadId = null;
+      // Mark where this lane's sight ends. Written to disk as well, because the
+      // map it lives in is empty after every restart and a reopened room has
+      // no other way to date itself. The room that wrote it goes beside it.
+      const sightEndsAt = new Date().toISOString();
+      state.lastTurnAt = sightEndsAt;
+      writeHandedWatermark(join(session.dir, 'io', TURN_WATERMARK_FILE), sightEndsAt);
+      // The room that READ this turn's line, not whichever room is running
+      // now: a relaunch after the read must not claim a room that never got
+      // a turn (and never got its prime).
+      const line = state.turnLine as LaneState['turnLine'];
+      let room = line?.consumedBy ?? null;
+      if (line && !room && line.room && session.inboxOffset() >= line.end) room = line.room;
+      if (room) writeHandedWatermark(join(session.dir, 'io', ROOM_WATERMARK_FILE), room);
+      state.turnLine = undefined;
     }
   }
 
@@ -924,6 +1101,26 @@ export class InteractiveCliRuntime implements AgentRuntime {
     }
 
     const fresh = session.consumeFreshFlag();
+    // Marks written by another room say nothing about what this room has seen.
+    // Too much, never nothing: a reopened room that missed another room's hour
+    // is handed the window rather than an empty diff.
+    let marksForeign = false;
+    if (!fresh) {
+      let marksRoom = '';
+      try { marksRoom = readFileSync(join(session.dir, 'io', ROOM_WATERMARK_FILE), 'utf8').trim(); } catch { /* none yet */ }
+      if (marksFromAnotherRoom(session.currentSessionId, marksRoom)) {
+        marksForeign = true;
+        state.lastTurnAt = undefined;
+        state.lastHandedUserAt = undefined;
+        state.lastReadThreadAt.clear();
+        state.diskThreadMarksUntrusted = true;
+      }
+    }
+    if (fresh) state.reopenCatchUpPending = false;
+    // A room reopened by --resume, on its first real turn since the backend
+    // started: no recycle seed rides, so this turn is its only chance to learn
+    // what the restart swallowed.
+    const reopened = !fresh && (marksForeign || (state.reopenCatchUpPending && session.resumedLaunch));
     if (fresh) {
       // A relaunched session has NOT lost its in-flight work — the relaunch
       // resumes the transcript, so a session killed mid-turn finishes the
@@ -952,8 +1149,22 @@ export class InteractiveCliRuntime implements AgentRuntime {
     // EXCEPT core memory: on this lane the blocks ride the session's CLAUDE.md
     // (provision/recycle), not the pipe — strip them so the delivery cap is
     // spent on the conversation, not on re-sending memory every turn.
-    const orientationStrip = input.orientation
-      ? stripCoreMemoryFromOrientation(input.orientation)
+    // The manual (tool docs, skills, brain, digest, stickers) lives in the warm
+    // session once handed over, so it rides only when the session might not
+    // hold it: first turn since the backend started, a fresh (re)launch, or
+    // right after a compaction. Every other turn gets the lean context — live
+    // state only — so her words are not buried under the same pages each time.
+    const picked = pickWarmOrientation({
+      fresh,
+      compacted: manualDueLanes.delete(laneDirName(key)),
+      manualDelivered: state.manualDelivered,
+      orientation: input.orientation,
+      orientationLean: input.orientationLean,
+    });
+    const orientationSource = picked.text;
+    if (picked.full && input.orientation) state.manualDelivered = true;
+    const orientationStrip = orientationSource
+      ? stripCoreMemoryFromOrientation(orientationSource)
       : { text: '', stripped: 0 };
     const orientationBlock = orientationStrip.text.trim()
       ? `[Context]\n${orientationStrip.text}\n[/Context]\n\n`
@@ -965,6 +1176,12 @@ export class InteractiveCliRuntime implements AgentRuntime {
       yield {
         type: 'thinking_delta',
         text: '[Session recycled — warm CLI session restarted; re-primed with recent thread history.]',
+        kind: 'system',
+      };
+    } else if (reopened) {
+      yield {
+        type: 'thinking_delta',
+        text: '[Session reopened — the backend restarted and this lane resumed the same conversation; no history re-prime needed.]',
         kind: 'system',
       };
     }
@@ -1061,15 +1278,32 @@ export class InteractiveCliRuntime implements AgentRuntime {
     // lane to answer the owner's missed messages now. So on a guest's turn it
     // hands none over and leaves the watermark where it is: they come with the
     // owner's own next turn instead, late and never lost.
+    const handedPath = join(session.dir, 'io', HANDED_WATERMARK_FILE);
+    if (guestTurn && !state.lastHandedUserAt) {
+      // With no handover mark the net starts from the end of the lane's last
+      // turn, and this guest turn's end is about to move that past her
+      // messages. So the start it would have used is pinned as the mark, on
+      // disk too, before that happens.
+      state.lastHandedUserAt = state.lastTurnAt || HANDED_FROM_THE_BEGINNING;
+      writeHandedWatermark(handedPath, state.lastHandedUserAt);
+    }
+    if (guestTurn) state.handedBeforeTurn = undefined;
     const missedBlock = guestTurn ? '' : this.buildMissedInboundBlock(
-      state, input.messages, userContent, fresh, session.missedInboundPath,
+      // A reopened room's first turn is also a session birth: what it finds was
+      // missed while no window was alive, and its own transcript is "above".
+      state, input.messages, userContent, fresh || reopened, session.missedInboundPath, handedPath,
     );
 
     // Same net, other half: what the room said that this lane never heard.
     // Not on a fresh session (the recycle seed already carries the history)
     // and not on a guest's turn (household words do not ride into a guest's
     // room).
-    const otherLaneBlock = (guestTurn || fresh) ? '' : this.buildOtherLaneBlock(state, key, input.thread.id, input.messages);
+    const otherLaneBlock = (guestTurn || fresh) ? '' : this.buildOtherLaneBlock(
+      state, key, input.thread.id, input.messages, session, { reopened, marksForeign },
+    );
+    // The catch-up debt is paid by the first turn that actually built the
+    // block; a guest's turn leaves it owed to the owner's next turn.
+    if (!guestTurn && !fresh) state.reopenCatchUpPending = false;
 
     // Side notes sent while the last turn was working. The session may read
     // them live from io/side-notes.jsonl, but nothing guarantees it looked —
@@ -1120,8 +1354,17 @@ export class InteractiveCliRuntime implements AgentRuntime {
 
     // Her custom emojis arrive as shortcode text; name the file so we can look.
     const emojiBlock = buildEmojiSightBlock(userContent, getEmojiByName, join(PROJECT_ROOT, 'data', 'emojis'));
-    const deliveredContent =
-      thinBlock + contextBlock + orientationBlock + otherLaneBlock + missedBlock + whisperBlock + unfiledBlock + sideNoteBlock + userContent + emojiBlock;
+    // The turn's content around two swappable parts: the history re-prime and
+    // the orientation. A line re-sent to a fresh room is rebuilt from the same
+    // parts as a fresh turn (see the set-aside handling below).
+    const assemble = (seed: string, orientation: string): string =>
+      thinBlock + seed + orientation + otherLaneBlock + missedBlock + whisperBlock + unfiledBlock + sideNoteBlock + userContent + emojiBlock;
+    const deliveredContent = assemble(contextBlock, orientationBlock);
+    const fullOrientationBlock = (): string => {
+      if (picked.full || !input.orientation) return orientationBlock;
+      const t = stripCoreMemoryFromOrientation(input.orientation).text;
+      return t.trim() ? `[Context]\n${t}\n[/Context]\n\n` : '';
+    };
 
     // The shiver — tell the reply message what recall surfaced, but only when
     // the whisper actually SURVIVED the cap fit. If fitRecallToCap trimmed the
@@ -1179,18 +1422,34 @@ export class InteractiveCliRuntime implements AgentRuntime {
       console.warn(`[Heartbeat:${key}] payload measurement failed:`, err);
     }
 
-    session.appendInbox({
+    const inboxLine = (content: string, primed: boolean) => ({
       ts: new Date().toISOString(),
       ...(timeLabel ? { time: timeLabel } : {}),
       channel: 'bytelight',
       author: this.options.userName || 'user',
-      content: deliveredContent,
+      content,
       turn: turnId,
+      // Whether this line carries the re-prime a fresh room needs. A fresh
+      // launch sets unprimed unread lines aside (supervisor
+      // setAsideUnprimedBacklog) so they are re-sent primed.
+      primed,
+      // Where the handover mark stood before this turn advanced it. If the
+      // line is ever set aside and the backend dies before re-sending it, the
+      // next process rewinds the mark to this (supervisor
+      // settleSetAsideBacklog), so the message is not lost.
+      handed_before: state.handedBeforeTurn ?? null,
       ...(images.length > 0 ? { images } : {}),
       // Read by the Stop hook into io/.turn-audience, where the tool gate
       // looks before every tool call. See services/turn-audience.ts.
       ...(input.audience ? { audience: input.audience } : {}),
     });
+    // Where this turn's line sits in the inbox. The hook's read offset passing
+    // its end is the only proof a room actually read it.
+    session.registerWaitingTurn(turnId);
+    let lineStart = session.inboxSize();
+    session.appendInbox(inboxLine(deliveredContent, fresh));
+    let lineEnd = session.inboxSize();
+    state.turnLine = { end: lineEnd, room: session.currentSessionId, consumedBy: null };
 
     const turnStartedAt = Date.now();
     let deadline = turnStartedAt + REPLY_TIMEOUT_MS;
@@ -1208,8 +1467,69 @@ export class InteractiveCliRuntime implements AgentRuntime {
     const abortHandler = () => { this.aborted = true; };
     input.abortSignal?.addEventListener('abort', abortHandler);
 
+    /**
+     * Which spawn this turn is speaking into.
+     *
+     * A relaunch while a turn is open hands the new (or reopened) room its
+     * launch prompt. What happens to this turn depends on whether the room
+     * that died had READ the line:
+     *  - it had (the hook's offset passed the line): the answer died with it,
+     *    and the new room was told to wait silently for a turn that already
+     *    went. The turn ends and says so.
+     *  - it had not, and the new room is a reopened one: the line is still
+     *    waiting in the inbox and that room reads it. Keep waiting.
+     *  - it had not, and the new room is fresh: the launch set the unprimed
+     *    line aside, so it is handed over again here with the re-prime, under
+     *    the same turn id. No room ever answers a line it was not primed for.
+     */
+    let launchGeneration = session.launchGeneration;
+    let relaunchedMidTurn = false;
+    let resentFor = 0;
+
     try {
       while (Date.now() < deadline) {
+        // Checked first: nothing this loop does afterwards can be answered by a
+        // room that is no longer there, and the old turn id went with it.
+        {
+          const gen = session.launchGeneration;
+          const aside = session.skippedBacklog();
+          if (aside && aside.generation === gen && resentFor !== gen
+            && aside.from <= lineStart && aside.to >= lineEnd) {
+            resentFor = gen;
+            launchGeneration = gen;
+            // Take the prime this fresh room armed, so the next turn does not
+            // send it again, and rebuild the line as a fresh turn: the history
+            // re-prime and the full manual, each handed to this room once.
+            const armed = session.consumeFreshFlag();
+            const firstIntoRoom = state.primedGeneration !== gen;
+            const primedContent = firstIntoRoom
+              ? assemble(contextBlock || this.buildRecycleContext(input.messages), fullOrientationBlock())
+              : assemble('', orientationBlock);
+            if (firstIntoRoom) {
+              state.primedGeneration = gen;
+              if (input.orientation) state.manualDelivered = true;
+            }
+            lineStart = session.inboxSize();
+            session.appendInbox(inboxLine(primedContent, true));
+            lineEnd = session.inboxSize();
+            state.turnLine = { end: lineEnd, room: session.currentSessionId, consumedBy: null };
+            deadline = Date.now() + REPLY_TIMEOUT_MS;
+            console.log(`[Heartbeat:${key}] turn ${turnId} re-sent primed to the fresh room (its line was set aside unread${armed ? '' : '; no prime flag was armed'})`);
+            yield { type: 'thinking_delta', text: '[The warm session restarted before reading this message — handed to the new session again, with recent history.]', kind: 'system' };
+          } else if (gen !== launchGeneration) {
+            if (session.inboxOffset() >= lineEnd) {
+              // The room that died had read it. Claim that room, not the new one.
+              if (state.turnLine && !state.turnLine.consumedBy) state.turnLine.consumedBy = state.turnLine.room;
+              relaunchedMidTurn = true;
+              break;
+            }
+            // Unread, and the room now launching reads it.
+            launchGeneration = gen;
+            if (state.turnLine) state.turnLine.room = session.currentSessionId;
+          } else if (state.turnLine && !state.turnLine.consumedBy && session.inboxOffset() >= lineEnd) {
+            state.turnLine.consumedBy = state.turnLine.room;
+          }
+        }
         if (this.aborted) {
           // Intentional retraction (message edit) — do NOT ledger this turn:
           // a late answer to a retracted message should stay retracted.
@@ -1407,6 +1727,7 @@ export class InteractiveCliRuntime implements AgentRuntime {
       }
     } finally {
       input.abortSignal?.removeEventListener('abort', abortHandler);
+      session.unregisterWaitingTurn(turnId);
     }
 
     // Window closed on sustained silence. Ledger the turn so its reply is
@@ -1419,9 +1740,36 @@ export class InteractiveCliRuntime implements AgentRuntime {
       // Something already reached the UI — end the turn gracefully; the
       // remainder arrives with the next message via the ledger.
       state.silentTimeouts = 0; // chunks flowed — the session can speak
-      const note = `[Reply window closed after ${REPLY_TIMEOUT_MS / 1000}s of silence mid-delivery — any remaining chunks will arrive with the next message.]`;
+      const why = relaunchedMidTurn
+        ? 'The warm session was replaced mid-delivery'
+        : `Reply window closed after ${REPLY_TIMEOUT_MS / 1000}s of silence mid-delivery`;
+      const note = `[${why} — any remaining chunks will arrive with the next message.]`;
       yield { type: 'thinking_delta', text: note, kind: 'system' };
       yield { type: 'done', finishReason: 'stop' };
+      return;
+    }
+
+    // Nothing reached her at all, so the message this turn was carrying was
+    // never answered — and the net has already stepped past it. Put the mark
+    // back where it stood when this turn began so the next one hands it over
+    // and writes a row for it. One-way, as ever: twice rather than never.
+    const restored = rollbackHandedWatermark(state, join(session.dir, 'io', HANDED_WATERMARK_FILE));
+
+    // The room went out from under this turn. Say so and stop — do NOT spend
+    // the rest of the window, and do NOT count it toward the mute-zombie
+    // heuristic below: this silence is fully explained, and the session now
+    // running has done nothing wrong. Counting it would answer a crash by
+    // recycling the room that replaced it.
+    if (relaunchedMidTurn) {
+      state.silentTimeouts = 0;
+      yield {
+        type: 'error',
+        message: 'the warm session was replaced while this turn was open, so the room it was speaking into is gone — '
+          + 'the room now running (a new conversation, or the same one reopened) was handed its launch prompt rather than this message.'
+          + (restored ? ' Nothing was said, so the handover mark was rewound and her message goes to the next turn.' : '')
+          + ` Session status: ${session.status}${session.lastError ? ` (${session.lastError})` : ''}.`,
+        recoverable: true,
+      };
       return;
     }
 
@@ -1440,7 +1788,7 @@ export class InteractiveCliRuntime implements AgentRuntime {
     yield {
       type: 'error',
       message:
-        `heartbeat reply timeout after ${REPLY_TIMEOUT_MS / 1000}s — if the reply lands late it will be delivered with the next message.${recycleNote} ` +
+        `heartbeat reply timeout after ${REPLY_TIMEOUT_MS / 1000}s — if the reply lands late it will be delivered with the next message.${restored ? ' Nothing was said, so the handover mark was rewound and her message goes back to the next turn.' : ''}${recycleNote} ` +
         `Session status: ${session.status}${session.lastError ? ` (${session.lastError})` : ''}. ` +
         `Check data/heartbeat/${key}/session.log`,
       recoverable: true,

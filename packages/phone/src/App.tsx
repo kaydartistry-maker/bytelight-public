@@ -126,6 +126,9 @@ import { deliverLastCrashReport } from './bytelight/pocket-voice';
 import { normalizeCompanionRow } from './lib/companion-row';
 import { buildSearchRequest, parseSearchPage, searchDelayMs, type SearchMode } from './lib/search-domain';
 import { pushJumpFromMessage, pushJumpFromSearch, stripPushJumpParams, type PushJump } from './bytelight/push-target';
+import { NookPlayerProvider } from './lib/nook-player';
+import { nookReturnTo } from './lib/library-audiobook';
+import { NookNowPlaying } from './components/NookNowPlaying';
 
 // A push tap that cold-started the app carries its target in the URL. Read
 // once at load and strip it, so a later reload doesn't jump again.
@@ -1797,7 +1800,19 @@ export default function App() {
     }
   }, [colors, theme.mode, theme.id, theme.customColors, theme.shapeRadius, theme.skin, theme.fx, theme.accentOverride, theme.accentPalette, theme.typography]);
 
+  // The audiobook's now-playing bar opens the Reading Nook on the book being
+  // read; back from there returns to the thread or drawer she tapped it in.
+  const openNookFromBar = () => {
+    if (osState === 'library') return;
+    setAppReturnTo(nookReturnTo(osState));
+    setShowSettings(false);
+    setOsState('library');
+  };
+
   return (
+    // The Reading Nook's audiobook player belongs to the whole phone, so the
+    // voice keeps reading when she leaves the Nook (lib/nook-player.tsx).
+    <NookPlayerProvider onOpenNook={openNookFromBar}>
     <div
       className={cn(
         // Pinned to the screen's edges rather than sized in viewport units:
@@ -2287,6 +2302,10 @@ export default function App() {
         )}
       </header>
 
+      {/* The audiobook's now-playing bar: its own row under the header, so it
+          never covers the thread or the composer. */}
+      <NookNowPlaying className="relative z-10 shrink-0 px-4 pb-2 pt-1" />
+
       <CompactionBanner themeConfig={activeTheme} themeMode={theme.mode} />
 
       {/* Message Thread */}
@@ -2433,5 +2452,6 @@ export default function App() {
         )}
       </AnimatePresence>
     </div>
+    </NookPlayerProvider>
   );
 }

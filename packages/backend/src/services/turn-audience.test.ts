@@ -42,8 +42,11 @@ test('the Discord handler stamps every turn it hands over with its audience', ()
 
 test('the lane is handed the audience in the inbox record', () => {
   const runtime = readFileSync(join(HERE, 'heartbeat', 'runtime.ts'), 'utf-8');
-  const append = runtime.slice(runtime.indexOf('session.appendInbox({'));
-  assert.match(append.slice(0, append.indexOf('});')), /audience/);
+  // The record is built once (inboxLine) and appended, and appended again
+  // primed if a fresh room set the first copy aside.
+  const record = runtime.slice(runtime.indexOf('const inboxLine = ('));
+  assert.match(record.slice(0, record.indexOf('});')), /audience/);
+  assert.match(runtime, /session\.appendInbox\(inboxLine\(/);
 });
 
 // byte-light runs its engines from agent.ts rather than a router module, so

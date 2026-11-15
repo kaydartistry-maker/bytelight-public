@@ -1317,7 +1317,7 @@ function renderCoreMemorySection(): string {
 export function provisionSessionDir(
   dir: string,
   lane: LaneIdentity | null = null,
-  opts: { mcpJsonServers?: Record<string, McpJsonServer> } = {},
+  opts: { keepClaudeMd?: boolean; mcpJsonServers?: Record<string, McpJsonServer> } = {},
 ): ProvisionResult {
   mkdirSync(join(dir, '.claude'), { recursive: true });
   mkdirSync(join(dir, 'hooks'), { recursive: true });
@@ -1350,7 +1350,9 @@ export function provisionSessionDir(
       templateChanged = sha(existingOperational) !== sha(operational);
     } catch { /* treat as changed */ }
   }
-  if (fileChanged) {
+  // A resumed room reading the copy it already holds keeps it on disk for a
+  // moment (held-instructions.ts); the next turn writes the current file.
+  if (fileChanged && !opts.keepClaudeMd) {
     writeFileSync(claudeMdPath, claudeMd, 'utf8');
     if (memorySection) {
       // The CLAUDE.md-side counterpart of the per-turn payload measurement:

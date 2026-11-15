@@ -4,8 +4,52 @@ import test from 'node:test';
 import {
   nextPiece, prevPiece, resolveSeg, voiceFor, readByLine, BOTH_VOICES, SPEEDS, nextSpeed, validSpeed,
   sleepsAfterThisPiece, tickSleep, fadeVolume, nextSleep, sleepLabel, chapterProgress, bookmarkFraction, seekTarget,
+  readerRelation, showsNowPlaying, nookReturnTo, pieceKey, sleepResumePoint,
   type SleepMode,
 } from './library-audiobook';
+
+test('a reader knows whether the book in the player is its own', () => {
+  assert.equal(readerRelation(null, 7), 'idle');
+  assert.equal(readerRelation(undefined, 7), 'idle');
+  assert.equal(readerRelation(7, 7), 'this');
+  assert.equal(readerRelation(3, 7), 'other');
+  // Book 0 would be a real book, not "nothing playing".
+  assert.equal(readerRelation(0, 0), 'this');
+  assert.equal(readerRelation(0, 7), 'other');
+});
+
+test('the now-playing bar shows while a book is loaded, never over the reader, gone once stopped', () => {
+  assert.equal(showsNowPlaying(null), false);
+  assert.equal(showsNowPlaying(undefined), false);
+  assert.equal(showsNowPlaying(4), true);
+  assert.equal(showsNowPlaying(0), true);
+  assert.equal(showsNowPlaying(4, true), false);
+});
+
+test('back from a Nook opened by the bar returns to the thread or drawer she was in, else home', () => {
+  assert.equal(nookReturnTo('messages'), 'messages');
+  assert.equal(nookReturnTo('appdrawer'), 'appdrawer');
+  assert.equal(nookReturnTo('home'), 'home');
+  assert.equal(nookReturnTo('journal'), 'home');
+  assert.equal(nookReturnTo('library'), 'home');
+});
+
+test('after a sleep timer, play resumes at the next chapter\'s start (end of chapter) or the paused piece (minutes)', () => {
+  // End of chapter: the next chapter's first piece, not the finished chapter's piece on screen.
+  assert.deepEqual(sleepResumePoint('chapter', { chapter: 2, seg: 6 }, 7, 10), { chapter: 3, seg: 0 });
+  // Even if the position somehow sits earlier in the finished chapter.
+  assert.deepEqual(sleepResumePoint('chapter', { chapter: 2, seg: 1 }, 7, 10), { chapter: 3, seg: 0 });
+  // The book's last chapter: that's the end of the book.
+  assert.equal(sleepResumePoint('chapter', { chapter: 9, seg: 6 }, 7, 10), 'end');
+  // Minute timers: the very piece it paused on.
+  assert.deepEqual(sleepResumePoint('minutes', { chapter: 4, seg: 3 }, 9, 10), { chapter: 4, seg: 3 });
+});
+
+test('a rendered piece is keyed by its book, so two books never share audio', () => {
+  assert.equal(pieceKey(3, 1, 4, 'companion-a'), '3:1-4-companion-a');
+  assert.notEqual(pieceKey(3, 1, 4, 'companion-a'), pieceKey(5, 1, 4, 'companion-a'));
+  assert.notEqual(pieceKey(3, 1, 4, 'companion-a'), pieceKey(3, 1, 4, 'companion-b'));
+});
 
 test('the voice steps piece to piece, chapter to chapter, and stops at the end of the book', () => {
   assert.deepEqual(nextPiece({ chapter: 0, seg: 0 }, 3, 2), { kind: 'piece', chapter: 0, seg: 1 });

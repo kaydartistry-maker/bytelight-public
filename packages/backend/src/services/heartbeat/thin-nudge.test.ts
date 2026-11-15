@@ -88,6 +88,9 @@ test('the runtime asks with this turn, and the note rides ahead of the bridge', 
   assert.match(src, /thinNudgeForTurn\(\{ fresh, guest: guestTurn, autonomous: input\.isAutonomous, laneKey: key \}\)/);
   assert.equal(src.includes('+ buildThinNudge()'), false, 'and no longer stapled to the recycle context');
   assert.match(src, /const baseChars = \(thinBlock \+ contextBlock \+/);
-  assert.match(src, /deliveredContent =\s+thinBlock \+ contextBlock \+/);
+  // The content is built from parts (so a re-sent line can swap the bridge
+  // and orientation); the note still goes first, ahead of the bridge.
+  assert.match(src, /const assemble = \(seed: string, orientation: string\): string =>\s+thinBlock \+ seed \+/);
+  assert.match(src, /const deliveredContent = assemble\(contextBlock, orientationBlock\)/);
   assert.ok(src.indexOf('const guestTurn =') < src.indexOf('const thinBlock ='), 'guestTurn is known before it is asked for');
 });

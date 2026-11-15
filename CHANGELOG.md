@@ -6,6 +6,12 @@ byte-light is a fork of [Resonant](https://github.com/codependentai/resonant), t
 
 ---
 
+## 2026-11-15 — warm lanes survive a restart, the Nook keeps reading, one emoji note
+
+- **Session resume for the warm Claude lanes.** Restarting the backend, changing a lane's model, or a first watchdog kill now reopens the lane's own conversation instead of building a cold new one. Lines that arrived while a lane was down are re-sent as whole fresh turns, never lost. Handover and turn watermarks survive a restart, a stale session id falls back cleanly, the last lines a crashed CLI wrote to stderr are kept so an exit can be explained, and memory walls that moved while a room was held are handed over in one note. See `docs/SESSION-RESUME.md`.
+- **The Reading Nook's audiobook keeps playing across the whole phone.** Leave the Nook and the book keeps reading, with a slim now-playing pill. Sleep timers pause the book instead of closing it.
+- **An emoji sent as a picture isn't also pointed at as a file**, so a companion stops getting the same custom emoji twice.
+
 ## 2026-11-15 — every engine sees your stickers, and the API lanes got real hands
 
 - **Stickers and custom emoji reach every engine as pictures.** They're turned into images before the house picks an engine, so a companion on OpenRouter, Codex or any other lane sees what you sent, not only the Claude SDK lane. Big still stickers are resized to frame size on the way in.

@@ -4,6 +4,7 @@ import { ChevronLeft } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { ThemeConfig } from '../lib/theme';
 import { cn } from '../lib/utils';
+import { NookNowPlaying } from './NookNowPlaying';
 
 interface AppShellProps {
   title: string;
@@ -21,10 +22,12 @@ interface AppShellProps {
    * standalone apps inside.
    */
   embedded?: boolean;
+  /** Hide the Reading Nook's now-playing bar here (the Reader carries its own player). */
+  hideNowPlaying?: boolean;
 }
 
 // Shared chrome for feature-apps: a back-button header and a scrollable body.
-export function AppShell({ title, icon: Icon, onClose, themeConfig, themeMode, headerRight, bodyClassName, children, embedded }: AppShellProps) {
+export function AppShell({ title, icon: Icon, onClose, themeConfig, themeMode, headerRight, bodyClassName, children, embedded, hideNowPlaying = false }: AppShellProps) {
   const colors = themeConfig[themeMode];
   // False for the whole of the exit animation, while this is still mounted.
   const present = useIsPresent();
@@ -59,6 +62,9 @@ export function AppShell({ title, icon: Icon, onClose, themeConfig, themeMode, h
         <h1 className={cn('text-base font-semibold', colors.textMain)}>{title}</h1>
         <div className="ml-auto flex items-center gap-1">{headerRight}</div>
       </header>
+      {/* The audiobook keeps reading app-wide; its bar takes its own row here,
+          under the header, so it never covers the app's own controls. */}
+      <NookNowPlaying hidden={hideNowPlaying} className={cn('shrink-0 px-3 pb-2', colors.pageBg)} />
       <div className={cn('bytelight-app-body min-h-0 flex-1 overflow-y-auto scrollbar-hide px-4 py-4', bodyClassName)}>{children}</div>
     </motion.div>
   );

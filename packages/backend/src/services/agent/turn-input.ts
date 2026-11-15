@@ -53,6 +53,7 @@ export interface BuildAgentTurnInputParams {
   platform?: AgentTurnInput['platform'] | string | null;
   isAutonomous: boolean;
   orientation?: string | null;
+  orientationLean?: string | null;
   systemPromptText?: string | null;
   messages: AgentTurnInput['messages'];
   cwd?: string;
@@ -78,6 +79,7 @@ export function buildAgentTurnInput(
     platform: (params.platform as AgentTurnInput['platform']) ?? 'internal',
     isAutonomous: params.isAutonomous,
     orientation: params.orientation ?? '',
+    ...(params.orientationLean != null ? { orientationLean: params.orientationLean } : {}),
     systemPrompt: { kind: 'text', value: params.systemPromptText ?? '' },
     messages: params.messages,
     cwd: params.cwd,

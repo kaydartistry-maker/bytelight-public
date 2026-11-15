@@ -88,7 +88,7 @@ import { postCompactionHandoff } from './treehouse-triggers.js';
 import { isDeliberateSilence } from './silence.js';
 import { extractStatusTags, stripStatusTags } from '@bytelight/shared';
 import { applyStatusTagUpdates } from './db/statuses.js';
-import { createHooks, buildOrientationContext, summarizeInput, type HookContext, type ToolInsertion } from './hooks.js';
+import { createHooks, buildOrientationParts, joinOrientationParts, summarizeInput, type HookContext, type ToolInsertion } from './hooks.js';
 import type { MessageSegment, ThoughtKind } from '@bytelight/shared';
 import type { PushService } from './push.js';
 import { getBytelightConfig } from '../config.js';
@@ -1434,10 +1434,15 @@ export class AgentService {
       // Build orientation context (thread, time, gap, status, vault)
       // Prepended to prompt because SessionStart hooks don't fire in V1 query()
       // Static content (CHAT TOOLS, skills, vault path) only on first message of session
-      const baseOrientation = await buildOrientationContext(hookContext, isFirstMessage, content, resolvedModelRef.canonical);
+      const orientationParts = await buildOrientationParts(hookContext, isFirstMessage, content, resolvedModelRef.canonical);
+      const baseOrientation = joinOrientationParts(orientationParts);
       // Port f1e3727a/8beeee4e: all our lanes retain their session on reroll.
-      const orientation = baseOrientation + (platformOpts?.withdrawn
-        ? `\n[Screen change: ${platformOpts.withdrawn}]\n` : '');
+      const screenChange = platformOpts?.withdrawn
+        ? `\n[Screen change: ${platformOpts.withdrawn}]\n` : '';
+      const orientation = baseOrientation + screenChange;
+      // Same context minus the per-session manual. Only a warm lane that knows
+      // whether its session already holds the manual uses this (heartbeat).
+      const orientationLean = joinOrientationParts(orientationParts, true) + screenChange;
       const bridgeBlock = bridgePrior ? buildBridgeBlock(bridgePrior) : '';
       if (bridgePrior && bridgePrior.length > 0) {
         console.log(`[Agent] Bridge injected: ${bridgePrior.length} prior turns (model swap to ${model})`);
@@ -1668,6 +1673,7 @@ export class AgentService {
           platform,
           isAutonomous,
           orientation: foreignRecallBlock ? orientation + '\n' + foreignRecallBlock : orientation,
+          orientationLean: foreignRecallBlock ? orientationLean + '\n' + foreignRecallBlock : orientationLean,
           // A Codex lane is handed its identity (it walks no folders): the
           // shared CLAUDE.md plus his lane note and bio. A Claude CLI lane
           // gets the same layering from its session folder instead.

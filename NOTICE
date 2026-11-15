@@ -59,7 +59,13 @@ its rules and page turns, the /api/story-shelf and
 /api/internal/story-shelf routes, its shared contract, the phone's
 shelf, book and table, the scene widget frame and the sealed frame
 runtime, RoomTable and RoomBubble, and the story-shelf skill), shown as
-a shelf inside byte-light's Library. Aerie is built by Tris.
+a shelf inside byte-light's Library. Session resume for the warm Claude
+lanes (the session and room id bank, reopening a room after a backend
+restart, a model change or a first watchdog kill, the stale-id
+fallback, the stderr ring and exit log, persisted handover and turn
+watermarks with the silent-turn rollback, the resume catch-up, the
+transcript trim, held instructions and the mid-turn replacement guard).
+Aerie is built by Tris.
 Copyright 2026 Aerie Systems.
 Licensed under Apache License 2.0.
 

@@ -1184,6 +1184,26 @@ if (h.digest) {
  * byte-identical to the pre-refactor function: same parts, same order, same
  * '\n' join.
  */
+/**
+ * Orientation segments that are the per-session MANUAL rather than live
+ * state: tool docs, skills, the brain protocol, the weekly digest and the
+ * sticker catalog. A warm lane (claude-cli heartbeat) keeps these in its
+ * session after the first delivery, so re-sending them every turn only buries
+ * the conversation. Everything else (time, presence, status, promises, mood,
+ * canvas refs, reactions) is live and always rides.
+ */
+export const WARM_LANE_MANUAL_LABELS: ReadonlySet<string> = new Set([
+  'Skills', 'Brain', 'Weekly digest', 'Stickers', 'Memory tools', 'Chat tools', 'Outreach tools',
+]);
+
+/** Join orientation parts; `lean` drops the warm-lane manual segments. */
+export function joinOrientationParts(parts: OrientationPart[], lean = false): string {
+  return parts
+    .filter(p => !lean || !WARM_LANE_MANUAL_LABELS.has(p.label))
+    .map(p => p.content)
+    .join('\n');
+}
+
 export async function buildOrientationContext(ctx: HookContext, includeStatic = true, userMessage?: string, runtimeLabel?: string): Promise<string> {
   const parts = await buildOrientationParts(ctx, includeStatic, userMessage, runtimeLabel);
   return parts.map(p => p.content).join('\n');

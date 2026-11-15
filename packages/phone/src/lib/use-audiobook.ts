@@ -1,9 +1,15 @@
 // Audiobook mode (Library slice 5): press play, put the phone down, and the
 // companions keep reading, piece after piece and chapter after chapter.
 //
+// The player belongs to the whole phone: lib/nook-player.tsx mounts this hook
+// once, above every screen, so the voice keeps reading when she leaves the
+// Reading Nook and moves around the app. A reader is a client of it — it
+// starts a book (`begin`), drives the controls, and follows along when it is
+// open on the book being read.
+//
 // How it keeps going with the screen off: ONE <audio> element lives for as
-// long as the reader is open, and each piece is a new `src` on it — never a
-// new element — so Android Chrome keeps the page's media session (and its
+// long as the app does, and each piece is a new `src` on it — never a new
+// element — so Android Chrome keeps the page's media session (and its
 // notification / lock-screen controls) alive between pieces. The next piece
 // is rendered and downloaded as a blob while this one plays, so the hop from
 // one to the next is a src swap with no network in between.
@@ -18,8 +24,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { apiFetch } from '../bytelight';
 import type { Segment } from './library-reader';
 import {
-  BOTH_VOICES, bookmarkFraction, chapterProgress, fadeVolume, nextPiece, prevPiece, readByLine, resolveSeg,
-  seekTarget, sleepMinutes, sleepsAfterThisPiece, tickSleep, validSpeed, voiceFor, type PiecePos, type SleepMode,
+  BOTH_VOICES, bookmarkFraction, chapterProgress, fadeVolume, nextPiece, pieceKey, prevPiece, readByLine, resolveSeg,
+  seekTarget, sleepMinutes, sleepResumePoint, sleepsAfterThisPiece, tickSleep, validSpeed, voiceFor, type PiecePos, type SleepMode,
 } from './library-audiobook';
 
 export const VOICE_KEY = 'bytelight.library.voice';
@@ -30,16 +36,17 @@ export interface AudiobookChapter { index: number; title: string; paragraphs: st
 export interface AudiobookBook { id: number; title: string; cover: string | null; chapterCount: number }
 
 export interface AudiobookOptions {
-  book: AudiobookBook | null;
   /** Companion slugs in house order; the first two are the Both pair. */
   voices: string[];
   labelOf: (slug: string) => string;
-  loadChapter: (n: number) => Promise<AudiobookChapter>;
-  saveProgress: (chapter: number, fraction: number) => void;
-  onMessage: (msg: string) => void;
+  loadChapter: (bookId: number, n: number) => Promise<AudiobookChapter>;
+  saveProgress: (bookId: number, chapter: number, fraction: number) => void;
+  onMessage: (msg: string, bookId: number) => void;
 }
 
 export interface Audiobook {
+  /** The book in the player — null once it stops (× or the end of the book; a sleep timer only pauses). */
+  book: AudiobookBook | null;
   pos: PiecePos | null;
   playing: boolean;
   rendering: boolean;
@@ -55,19 +62,21 @@ export interface Audiobook {
   setPick: (pick: string) => void;
   setSpeed: (speed: number) => void;
   setSleep: (mode: SleepMode) => void;
-  /** Play/pause. `startAt` is where to begin when nothing is queued yet. */
+  /** Load `book` (putting any other book down, its place saved) and read from `at`. */
+  begin: (book: AudiobookBook, at: PiecePos) => void;
+  /** Play/pause the book in the player. `startAt` is where to begin when nothing is queued yet. */
   toggle: (startAt?: PiecePos) => void;
   playAt: (chapter: number, seg: number) => void;
   pause: () => void;
-  /** Stop for good (the player closing, or her turning pages by hand). */
+  /** Stop for good and put the book down (the × on a player, or her turning pages by hand). */
   stop: (opts?: { save?: boolean }) => void;
   nextPieceNow: () => void;
   prevPieceNow: () => void;
   nextChapter: () => void;
   prevChapter: () => void;
   seekBy: (seconds: number) => void;
-  /** Hand over a chapter the reader already fetched, so it isn't fetched twice. */
-  seed: (ch: AudiobookChapter) => void;
+  /** Hand over a chapter a reader already fetched, so it isn't fetched twice. */
+  seed: (bookId: number, ch: AudiobookChapter) => void;
 }
 
 function readLocal(key: string): string {
@@ -83,10 +92,13 @@ function absolute(url: string): string {
 
 const media = (): MediaSession | null => (typeof navigator !== 'undefined' && 'mediaSession' in navigator ? navigator.mediaSession : null);
 
+const chapterKey = (bookId: number, n: number) => `${bookId}:${n}`;
+
 export function useAudiobook(opts: AudiobookOptions): Audiobook {
   const o = useRef(opts);
   o.current = opts;
 
+  const [book, setBook] = useState<AudiobookBook | null>(null);
   const [pos, setPos] = useState<PiecePos | null>(null);
   const [playing, setPlaying] = useState(false);
   const [rendering, setRendering] = useState(false);
@@ -99,6 +111,7 @@ export function useAudiobook(opts: AudiobookOptions): Audiobook {
   const [sleepLeftMs, setSleepLeftMs] = useState<number | null>(null);
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const bookRef = useRef<AudiobookBook | null>(null);
   const token = useRef(0);
   const posRef = useRef<PiecePos | null>(null);
   const pickRef = useRef(pick);
@@ -108,7 +121,7 @@ export function useAudiobook(opts: AudiobookOptions): Audiobook {
   const lastTick = useRef(0);
   const switching = useRef(false);
   const loadedKey = useRef<string | null>(null);
-  const chapters = useRef(new Map<number, AudiobookChapter>());
+  const chapters = useRef(new Map<string, AudiobookChapter>());
   const urls = useRef(new Map<string, string>());
   const blobs = useRef(new Map<string, string>());
   pickRef.current = pick;
@@ -127,25 +140,30 @@ export function useAudiobook(opts: AudiobookOptions): Audiobook {
   }, [opts.voices, pick]);
 
   // ── the pieces ──
-  const chapterAt = useCallback(async (n: number): Promise<AudiobookChapter> => {
-    const have = chapters.current.get(n);
+  const chapterAt = useCallback(async (bookId: number, n: number): Promise<AudiobookChapter> => {
+    const have = chapters.current.get(chapterKey(bookId, n));
     if (have) return have;
-    const ch = await o.current.loadChapter(n);
-    chapters.current.set(n, ch);
+    const ch = await o.current.loadChapter(bookId, n);
+    chapters.current.set(chapterKey(bookId, n), ch);
     return ch;
   }, []);
 
-  const seed = useCallback((ch: AudiobookChapter) => { chapters.current.set(ch.index, ch); }, []);
+  const seed = useCallback((bookId: number, ch: AudiobookChapter) => {
+    chapters.current.set(chapterKey(bookId, ch.index), ch);
+  }, []);
 
-  const keyOf = (chapter: number, seg: number, voice: string) => `${chapter}-${seg}-${voice}`;
+  /** The chapter of the book in the player, if it has been fetched. */
+  const loaded = (n: number): AudiobookChapter | undefined => {
+    const b = bookRef.current;
+    return b ? chapters.current.get(chapterKey(b.id, n)) : undefined;
+  };
 
-  async function render(chapter: number, seg: number, voice: string): Promise<string> {
-    const key = keyOf(chapter, seg, voice);
+  async function render(bookId: number, chapter: number, seg: number, voice: string): Promise<string> {
+    const key = pieceKey(bookId, chapter, seg, voice);
     const blob = blobs.current.get(key);
     if (blob) return blob;
     const have = urls.current.get(key);
     if (have) return have;
-    const bookId = o.current.book?.id;
     const res = await apiFetch(`/api/library/books/${bookId}/chapters/${chapter}/segments/${seg}/tts`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -160,10 +178,10 @@ export function useAudiobook(opts: AudiobookOptions): Audiobook {
   }
 
   /** Render the piece and bring its audio onto the phone, ready to swap in. */
-  async function warm(chapter: number, seg: number, voice: string) {
-    const key = keyOf(chapter, seg, voice);
+  async function warm(bookId: number, chapter: number, seg: number, voice: string) {
+    const key = pieceKey(bookId, chapter, seg, voice);
     if (blobs.current.has(key)) return;
-    const url = await render(chapter, seg, voice);
+    const url = await render(bookId, chapter, seg, voice);
     try {
       const res = await apiFetch(url);
       if (!res.ok) return;
@@ -215,26 +233,42 @@ export function useAudiobook(opts: AudiobookOptions): Audiobook {
 
   function setMetadata(chTitle: string) {
     const ms = media();
-    const book = o.current.book;
-    if (!ms || !book || typeof MediaMetadata === 'undefined') return;
+    const b = bookRef.current;
+    if (!ms || !b || typeof MediaMetadata === 'undefined') return;
     try {
       ms.metadata = new MediaMetadata({
-        title: book.title,
+        title: b.title,
         artist: readByLine(pickRef.current, pairRef.current, o.current.labelOf),
         album: chTitle,
-        artwork: book.cover ? [{ src: absolute(book.cover) }] : [],
+        artwork: b.cover ? [{ src: absolute(b.cover) }] : [],
       });
     } catch { /* metadata is a nicety */ }
   }
 
+  function clearMetadata() {
+    const ms = media();
+    if (!ms) return;
+    try { ms.metadata = null; ms.playbackState = 'none'; } catch { /* fine */ }
+  }
+
   // ── playing ──
+  function save(chapter: number, fraction: number) {
+    const b = bookRef.current;
+    if (b) o.current.saveProgress(b.id, chapter, fraction);
+  }
+
+  function message(msg: string) {
+    const b = bookRef.current;
+    if (b) o.current.onMessage(msg, b.id);
+  }
+
   function savePlace() {
     const p = posRef.current;
-    const ch = p ? chapters.current.get(p.chapter) : null;
+    const ch = p ? loaded(p.chapter) : null;
     if (!p || !ch) return;
     const a = audioRef.current;
     const within = a && Number.isFinite(a.duration) && a.duration > 0 ? a.currentTime / a.duration : 0;
-    o.current.saveProgress(p.chapter, bookmarkFraction(ch.segments, p.seg, ch.paragraphs.length, within));
+    save(p.chapter, bookmarkFraction(ch.segments, p.seg, ch.paragraphs.length, within));
   }
 
   function place(p: PiecePos | null, ch?: AudiobookChapter) {
@@ -256,28 +290,65 @@ export function useAudiobook(opts: AudiobookOptions): Audiobook {
     setMediaState('paused');
   }
 
+  /** Put the book down: the player empties, and the now-playing bar goes. */
+  function unload() {
+    halt();
+    loadedKey.current = null;
+    const a = audioRef.current;
+    if (a) { a.removeAttribute('src'); a.volume = 1; }
+    place(null);
+    setChapterTitle('');
+    setSegCount(0);
+    setProgress(0);
+    setSleep('off');
+    clearMetadata();
+    prune([]);
+    const b = bookRef.current;
+    if (b) for (const key of [...chapters.current.keys()]) if (!key.startsWith(`${b.id}:`)) chapters.current.delete(key);
+    bookRef.current = null;
+    setBook(null);
+  }
+
   function theEnd(last: PiecePos) {
     halt();
-    o.current.saveProgress(last.chapter, 1);
-    loadedKey.current = null;
-    o.current.onMessage('The end.');
+    save(last.chapter, 1);
+    message('The end.');
+    unload();
+  }
+
+  function load(next: AudiobookBook) {
+    const cur = bookRef.current;
+    if (cur && cur.id === next.id) {
+      // The same book, maybe with a fresher title or cover.
+      bookRef.current = next;
+      setBook(next);
+      return;
+    }
+    if (cur) {
+      if (posRef.current) savePlace();
+      unload();
+    }
+    // Chapters a reader seeded for this book stay; any other book's go.
+    for (const key of [...chapters.current.keys()]) if (!key.startsWith(`${next.id}:`)) chapters.current.delete(key);
+    bookRef.current = next;
+    setBook(next);
   }
 
   async function playAt(chapter: number, seg: number, direction: 1 | -1 = 1) {
-    const book = o.current.book;
-    if (!book) return;
+    const b = bookRef.current;
+    if (!b) return;
     const t = ++token.current;
     setPlaying(true);
     setRendering(true);
     try {
       let n = chapter;
       let s = seg;
-      let ch = await chapterAt(n);
+      let ch = await chapterAt(b.id, n);
       // A chapter with nothing to read is passed over in the direction of travel.
       while (ch.segments.length === 0) {
         n += direction;
-        if (n < 0 || n >= book.chapterCount) { if (t === token.current) theEnd({ chapter: n - direction, seg: 0 }); return; }
-        ch = await chapterAt(n);
+        if (n < 0 || n >= b.chapterCount) { if (t === token.current) theEnd({ chapter: n - direction, seg: 0 }); return; }
+        ch = await chapterAt(b.id, n);
         s = direction > 0 ? 0 : -1;
       }
       if (t !== token.current) return;
@@ -285,10 +356,10 @@ export function useAudiobook(opts: AudiobookOptions): Audiobook {
       place({ chapter: n, seg: s }, ch);
       const voice = voiceFor(pickRef.current, s, pairRef.current);
       if (!voice) throw new Error('Pick who reads first.');
-      const url = await render(n, s, voice);
+      const url = await render(b.id, n, s, voice);
       if (t !== token.current) return;
       const a = audio();
-      const key = keyOf(n, s, voice);
+      const key = pieceKey(b.id, n, s, voice);
       switching.current = true;
       a.src = url;
       loadedKey.current = key;
@@ -303,54 +374,53 @@ export function useAudiobook(opts: AudiobookOptions): Audiobook {
       if (t !== token.current) return;
       setRendering(false);
       setMediaState('playing');
-      o.current.saveProgress(n, bookmarkFraction(ch.segments, s, ch.paragraphs.length));
-      void prefetchAfter({ chapter: n, seg: s }, ch.segments.length, key, t);
+      save(n, bookmarkFraction(ch.segments, s, ch.paragraphs.length));
+      void prefetchAfter(b, { chapter: n, seg: s }, ch.segments.length, key, t);
     } catch (err) {
       switching.current = false;
       if (t !== token.current) return;
       halt();
-      o.current.onMessage(err instanceof Error ? err.message : 'Read-aloud failed');
+      message(err instanceof Error ? err.message : 'Read-aloud failed');
     }
   }
 
   /** The next piece only — never more (each render spends voice credit). */
-  async function prefetchAfter(p: PiecePos, count: number, nowKey: string, t: number) {
-    const book = o.current.book;
-    if (!book) return;
-    const step = nextPiece(p, count, book.chapterCount);
+  async function prefetchAfter(b: AudiobookBook, p: PiecePos, count: number, nowKey: string, t: number) {
+    const step = nextPiece(p, count, b.chapterCount);
     if (step.kind === 'end') { prune([nowKey]); return; }
     try {
-      const ch = await chapterAt(step.chapter);
+      const ch = await chapterAt(b.id, step.chapter);
       if (t !== token.current || !ch.segments.length) return;
       const voice = voiceFor(pickRef.current, step.seg, pairRef.current);
       if (!voice) return;
-      const nextKey = keyOf(step.chapter, step.seg, voice);
+      const nextKey = pieceKey(b.id, step.chapter, step.seg, voice);
       prune([nowKey, nextKey]);
-      await warm(step.chapter, step.seg, voice);
+      await warm(b.id, step.chapter, step.seg, voice);
     } catch { /* it renders when its turn comes */ }
   }
 
   function onEnded() {
     const p = posRef.current;
-    const book = o.current.book;
-    if (!p || !book) return;
+    const b = bookRef.current;
+    if (!p || !b) return;
     lastTick.current = 0;
-    const count = chapters.current.get(p.chapter)?.segments.length ?? 0;
-    const step = nextPiece(p, count, book.chapterCount);
+    const count = loaded(p.chapter)?.segments.length ?? 0;
+    const step = nextPiece(p, count, b.chapterCount);
     if (sleepsAfterThisPiece(sleepRef.current, p.seg, count)) {
+      const resume = sleepResumePoint('chapter', p, count, b.chapterCount);
+      // The last chapter's end is the end of the book, which puts it down.
+      if (resume === 'end') { theEnd(p); return; }
+      // Paused, not put down: the bar stays, and play wakes up to the next
+      // chapter's first words (the bookmark waits there too).
       halt();
       if (audioRef.current) audioRef.current.volume = 1;
       setSleep('off');
       loadedKey.current = null;
-      if (step.kind === 'piece') {
-        // Wake up to the next chapter's first words.
-        o.current.saveProgress(step.chapter, 0);
-        posRef.current = { chapter: step.chapter, seg: 0 };
-        setPos(posRef.current);
-      } else {
-        o.current.saveProgress(p.chapter, 1);
-      }
-      o.current.onMessage('Sleep timer: stopped at the end of the chapter.');
+      save(resume.chapter, 0);
+      posRef.current = resume;
+      setPos(resume);
+      setProgress(0);
+      message('Sleep timer: paused at the end of the chapter. Play picks up at the next one.');
       return;
     }
     if (step.kind === 'end') { theEnd(p); return; }
@@ -363,6 +433,8 @@ export function useAudiobook(opts: AudiobookOptions): Audiobook {
     if (!a || a.ended || switching.current) return;
     lastTick.current = 0;
     setPlaying(false);
+    // The book was put down (× or the end of the book): nothing to save.
+    if (!bookRef.current) return;
     setMediaState('paused');
     savePlace();
   }
@@ -371,8 +443,8 @@ export function useAudiobook(opts: AudiobookOptions): Audiobook {
     const a = audioRef.current;
     const p = posRef.current;
     if (!a || !p || a.paused) { lastTick.current = 0; return; }
-    const count = chapters.current.get(p.chapter)?.segments.length ?? 0;
-    // Coarse steps, so the page under the player isn't redrawn four times a second.
+    const count = loaded(p.chapter)?.segments.length ?? 0;
+    // Coarse steps, so the screens under the player aren't redrawn four times a second.
     setProgress(Math.round(chapterProgress(p.seg, count, a.currentTime, a.duration) * 200) / 200);
     const now = Date.now();
     const elapsed = lastTick.current ? now - lastTick.current : 0;
@@ -383,10 +455,13 @@ export function useAudiobook(opts: AudiobookOptions): Audiobook {
       setSleepLeftMs(Math.ceil(sleepLeft.current / 60_000) * 60_000);
       a.volume = fadeVolume(sleepLeft.current / 1000);
       if (sleepLeft.current <= 0) {
+        // Paused, not put down: the pause saves her place (onPause), the bar
+        // stays, and play resumes the piece it faded out on
+        // (sleepResumePoint('minutes') — the loaded piece, where it stopped).
         a.pause();
         a.volume = 1;
         setSleep('off');
-        o.current.onMessage('Sleep timer: paused. Your place is saved.');
+        message('Sleep timer: paused. Your place is saved.');
       }
     } else if (mode === 'chapter' && p.seg >= count - 1 && Number.isFinite(a.duration)) {
       a.volume = fadeVolume((a.duration - a.currentTime) / (a.playbackRate || 1));
@@ -404,10 +479,12 @@ export function useAudiobook(opts: AudiobookOptions): Audiobook {
 
   function toggle(startAt?: PiecePos) {
     const a = audioRef.current;
+    const b = bookRef.current;
+    if (!b) return;
     if (playing) { pause(); return; }
     const p = posRef.current;
     const voice = p ? voiceFor(pickRef.current, p.seg, pairRef.current) : '';
-    if (a && p && !a.ended && loadedKey.current === keyOf(p.chapter, p.seg, voice)) {
+    if (a && p && !a.ended && loadedKey.current === pieceKey(b.id, p.chapter, p.seg, voice)) {
       void a.play().catch(() => setPlaying(false));
       return;
     }
@@ -415,22 +492,22 @@ export function useAudiobook(opts: AudiobookOptions): Audiobook {
     void playAt(from.chapter, from.seg);
   }
 
+  function begin(next: AudiobookBook, at: PiecePos) {
+    load(next);
+    void playAt(at.chapter, at.seg);
+  }
+
   function stop(opts?: { save?: boolean }) {
     if (opts?.save && posRef.current) savePlace();
-    halt();
-    loadedKey.current = null;
-    audioRef.current?.removeAttribute('src');
-    place(null);
-    setSleep('off');
-    setMediaState('none');
+    unload();
   }
 
   function nextPieceNow() {
     const p = posRef.current;
-    const book = o.current.book;
-    if (!p || !book) return;
-    const count = chapters.current.get(p.chapter)?.segments.length ?? 0;
-    const step = nextPiece(p, count, book.chapterCount);
+    const b = bookRef.current;
+    if (!p || !b) return;
+    const count = loaded(p.chapter)?.segments.length ?? 0;
+    const step = nextPiece(p, count, b.chapterCount);
     if (step.kind === 'end') { theEnd(p); return; }
     void playAt(step.chapter, step.seg, 1);
   }
@@ -444,8 +521,8 @@ export function useAudiobook(opts: AudiobookOptions): Audiobook {
 
   function nextChapter() {
     const p = posRef.current;
-    const book = o.current.book;
-    if (!p || !book || p.chapter >= book.chapterCount - 1) return;
+    const b = bookRef.current;
+    if (!p || !b || p.chapter >= b.chapterCount - 1) return;
     void playAt(p.chapter + 1, 0, 1);
   }
 
@@ -509,11 +586,11 @@ export function useAudiobook(opts: AudiobookOptions): Audiobook {
     set('stop', () => actions.current.pause());
     return () => {
       for (const a of ['play', 'pause', 'previoustrack', 'nexttrack', 'seekbackward', 'seekforward', 'stop'] as MediaSessionAction[]) set(a, null);
-      try { ms.metadata = null; ms.playbackState = 'none'; } catch { /* fine */ }
+      clearMetadata();
     };
   }, []);
 
-  // Leaving the reader puts the book down.
+  // The phone's player only goes when the app does.
   useEffect(() => () => {
     token.current++;
     const a = audioRef.current;
@@ -523,9 +600,9 @@ export function useAudiobook(opts: AudiobookOptions): Audiobook {
   }, []);
 
   return {
-    pos, playing, rendering, progress, chapterTitle, segCount, pick, speed, sleep, sleepLeftMs,
+    book, pos, playing, rendering, progress, chapterTitle, segCount, pick, speed, sleep, sleepLeftMs,
     readBy: readByLine(pick, pair, opts.labelOf),
-    setPick, setSpeed, setSleep, toggle,
+    setPick, setSpeed, setSleep, begin, toggle,
     playAt: (c, s) => void playAt(c, s),
     pause, stop, nextPieceNow, prevPieceNow, nextChapter, prevChapter, seekBy, seed,
   };
