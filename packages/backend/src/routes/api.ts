@@ -202,7 +202,7 @@ router.use('/library', libraryRouter);
 // router also carries its own, as Aerie's does). Page turns reach
 // req.app.locals.agentService, set in server.ts.
 router.use('/story-shelf', storyShelfRouter);
-// The Theater — Saint and Tyson on the couch while she watches something on
+// The Theater — your companions on the couch while she watches something on
 // her TV: nights, subtitles, the clock, couch talk. Her door only; the
 // companions read the clock through /api/internal/theater.
 router.use('/theater', theaterRouter);
