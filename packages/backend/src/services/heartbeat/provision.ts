@@ -33,6 +33,7 @@ import { createHash } from 'crypto';
 import { formatBlocksForPrompt, SHARED_SCOPE, COMPANION_SCOPES } from '../memory-blocks.js';
 import { atLeast, claudeCliVersion } from './cli-version.js';
 import { getBytelightConfig } from '../../config.js';
+import { readMcpJson, type McpJsonServer } from '../mcp-json.js';
 
 // Delivery-cap constants. These live here as TS values and are INTERPOLATED
 // into the hook source below (byte-identical to the literals they replaced) so
@@ -1025,6 +1026,80 @@ export function neuralisMcpArgs(dir: string): string[] {
   return existsSync(configPath) ? ['--mcp-config', configPath] : [];
 }
 
+export const HOUSE_MCP_FILENAME = 'house.mcp.json';
+
+/** Names the lane's own brain wire holds; a house entry never replaces it. */
+const LANE_OWNED_MCP_NAMES = new Set(['neuralis-core', 'neuralis']);
+
+/**
+ * The servers in the house's .mcp.json, written for a Claude CLI lane. Codex
+ * CLI is handed this same file at launch (codex-app-server-config.ts) and the
+ * API lanes reach it through mcp-json-bridge.ts; without it a Claude CLI lane
+ * held the brain and nothing else the house had connected.
+ */
+export function buildHouseMcpConfig(servers: Record<string, McpJsonServer>): string | null {
+  const mcpServers: Record<string, unknown> = {};
+  for (const [name, server] of Object.entries(servers)) {
+    if (LANE_OWNED_MCP_NAMES.has(name)) {
+      console.warn(`[Heartbeat] .mcp.json server "${name}" skipped: the lane's own brain wire holds that name`);
+      continue;
+    }
+    if (server.type === 'stdio') {
+      mcpServers[name] = {
+        command: server.command,
+        ...(server.args?.length ? { args: server.args } : {}),
+        ...(server.env && Object.keys(server.env).length ? { env: server.env } : {}),
+      };
+    } else {
+      mcpServers[name] = {
+        type: server.type,
+        url: server.url,
+        ...(server.headers && Object.keys(server.headers).length ? { headers: server.headers } : {}),
+      };
+    }
+  }
+  if (Object.keys(mcpServers).length === 0) return null;
+  return JSON.stringify({ mcpServers }, null, 2) + '\n';
+}
+
+/**
+ * Every MCP config the lane launches with: its brain wire, then the house's
+ * servers. One flag, because --mcp-config takes several paths and swallows
+ * whatever follows it.
+ */
+export function laneMcpArgs(dir: string): string[] {
+  const paths = [NEURALIS_MCP_FILENAME, HOUSE_MCP_FILENAME]
+    .map((name) => join(dir, name))
+    .filter((path) => existsSync(path));
+  return paths.length > 0 ? ['--mcp-config', ...paths] : [];
+}
+
+/** The house's .mcp.json servers. A lane still sets up when it cannot be read. */
+function houseMcpServers(): Record<string, McpJsonServer> {
+  try {
+    return readMcpJson(getBytelightConfig().agent.mcp_json_path);
+  } catch (err) {
+    console.warn('[Heartbeat] house .mcp.json not read; the lane keeps its brain wire only:', err instanceof Error ? err.message : err);
+    return {};
+  }
+}
+
+/** Write a lane config file, or remove a stale one. True when the disk changed. */
+function syncLaneConfigFile(path: string, content: string | null): boolean {
+  if (content) {
+    let previous = '';
+    try { previous = readFileSync(path, 'utf8'); } catch { /* first provision */ }
+    if (previous === content) return false;
+    writeFileSync(path, content, 'utf8');
+    return true;
+  }
+  if (existsSync(path)) {
+    unlinkSync(path);
+    return true;
+  }
+  return false;
+}
+
 function neuralisOperationSection(): string {
   if (!process.env.MIND_API_URL?.trim() || !process.env.MIND_API_KEY?.trim()) return '';
   return `
@@ -1239,7 +1314,11 @@ function renderCoreMemorySection(): string {
  * H2 identity surface. H1 deliberately writes operational-only text and
  * leaves the identity question for H2 to solve.
  */
-export function provisionSessionDir(dir: string, lane: LaneIdentity | null = null): ProvisionResult {
+export function provisionSessionDir(
+  dir: string,
+  lane: LaneIdentity | null = null,
+  opts: { mcpJsonServers?: Record<string, McpJsonServer> } = {},
+): ProvisionResult {
   mkdirSync(join(dir, '.claude'), { recursive: true });
   mkdirSync(join(dir, 'hooks'), { recursive: true });
   mkdirSync(join(dir, 'io', 'images'), { recursive: true });
@@ -1282,20 +1361,14 @@ export function provisionSessionDir(dir: string, lane: LaneIdentity | null = nul
     }
   }
 
-  const mcpPath = join(dir, NEURALIS_MCP_FILENAME);
-  const mcpConfig = buildNeuralisMcpConfig();
-  let mcpConfigChanged = false;
-  if (mcpConfig) {
-    let previous = '';
-    try { previous = readFileSync(mcpPath, 'utf8'); } catch { /* first provision */ }
-    mcpConfigChanged = previous !== mcpConfig;
-    if (mcpConfigChanged) writeFileSync(mcpPath, mcpConfig, 'utf8');
-  } else if (existsSync(mcpPath)) {
-    unlinkSync(mcpPath);
-    mcpConfigChanged = true;
-  }
+  const neuralisChanged = syncLaneConfigFile(join(dir, NEURALIS_MCP_FILENAME), buildNeuralisMcpConfig());
+  // Same .mcp.json the Claude SDK lane, Codex CLI and the API lanes are given.
+  // A change recycles the session, as a brain-wire change does, because a
+  // warm CLI only reads its MCP configs at launch.
+  const houseServers = opts.mcpJsonServers ?? houseMcpServers();
+  const houseChanged = syncLaneConfigFile(join(dir, HOUSE_MCP_FILENAME), buildHouseMcpConfig(houseServers));
 
-  return { dir, templateChanged: templateChanged || mcpConfigChanged };
+  return { dir, templateChanged: templateChanged || neuralisChanged || houseChanged };
 }
 
 // Test surface: export the hook + template strings so the quarantine

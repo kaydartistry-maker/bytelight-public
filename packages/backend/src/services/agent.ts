@@ -95,7 +95,8 @@ import { getBytelightConfig } from '../config.js';
 import crypto from 'crypto';
 import { existsSync, readFileSync, writeFileSync } from 'fs';
 import { join, dirname } from 'path';
-import { stickerRefsToImageBlocks, capImageBlocks, fileToImageBlock, isEmbeddableImage, normalizedImagesToImageBlocks, type ImageBlock } from './visual-blocks.js';
+import { capImageBlocks, fileToImageBlock, isEmbeddableImage, normalizedImagesToImageBlocks, MAX_IMAGES_PER_TURN, type ImageBlock } from './visual-blocks.js';
+import { describeInlineVisuals, houseInlineVisualLookups, inlineVisualImages, resolveInlineVisuals, type InlineVisual } from './inline-visuals.js';
 import { getFile } from './files.js';
 import { drainQueuedImages } from './pending-visuals.js';
 import { recordActivity } from './activity-ring.js';
@@ -1443,9 +1444,25 @@ export class AgentService {
       }
       let enrichedPrompt = `${bridgeBlock}[Context]\n${orientation}\n[/Context]\n\n${content}`;
 
-      // Extract sticker images from user message so companions can SEE them
-      const stickerImages = stickerRefsToImageBlocks(content);
-      const attachmentImages = normalizedImagesToImageBlocks(platformOpts?.images ?? []);
+      // The front door for stickers and custom emoji: each one in the message
+      // becomes pictures here, once, before an engine is chosen, and rides the
+      // same bundle a photo attachment does (inline-visuals.ts). Both branches
+      // below read from it, so no engine is handed only the letters.
+      const turnAttachments = platformOpts?.images ?? [];
+      let inlineVisuals: InlineVisual[] = [];
+      try {
+        inlineVisuals = await resolveInlineVisuals(
+          content,
+          await houseInlineVisualLookups(),
+          MAX_IMAGES_PER_TURN - turnAttachments.length,
+        );
+      } catch (visualErr) {
+        console.warn('[Agent] Sticker/emoji pictures could not be prepared; sending text only:', (visualErr as Error).message);
+      }
+      const inlineVisualNote = describeInlineVisuals(inlineVisuals, turnAttachments.length);
+      if (inlineVisualNote) enrichedPrompt += `\n\n${inlineVisualNote}`;
+      const stickerImages = normalizedImagesToImageBlocks(inlineVisualImages(inlineVisuals));
+      const attachmentImages = normalizedImagesToImageBlocks(turnAttachments);
       // Our own freshly-generated images, queued by the image-gen route — shown
       // to us once so we actually SEE what we made and can react to it.
       const generatedImages: ImageBlock[] = [];
@@ -1581,7 +1598,21 @@ export class AgentService {
         }
         // Do this after any current-turn prompt rewrite so the images cannot
         // land on an older history row or be separated from the current user.
-        recent = attachImagesToLatestUserMessage(recent, platformOpts?.images ?? [], effectiveContent);
+        // Stickers and custom emoji ride with the attachments, and the line
+        // naming them joins the current message rather than a second copy.
+        let dispatchedContent = effectiveContent;
+        if (inlineVisualNote) {
+          dispatchedContent = `${effectiveContent}\n\n${inlineVisualNote}`;
+          const latestMessage = recent[recent.length - 1];
+          if (latestMessage?.role === 'user' && latestMessage.content === effectiveContent) {
+            recent[recent.length - 1] = { ...latestMessage, content: dispatchedContent };
+          }
+        }
+        recent = attachImagesToLatestUserMessage(
+          recent,
+          [...turnAttachments, ...inlineVisualImages(inlineVisuals)],
+          dispatchedContent,
+        );
         // H1 "hands": resolve the MCP tool surface for this foreign turn.
         // Lazy + foreign-path only — zero new work on the Claude lane
         // (it runs MCP servers natively). Map ToolSchema[] (mcp-bridge's

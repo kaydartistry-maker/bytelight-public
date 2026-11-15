@@ -24,7 +24,7 @@ import {
 } from 'fs';
 import { join } from 'path';
 import { PROJECT_ROOT } from '../../config.js';
-import { neuralisMcpArgs, provisionSessionDir } from './provision.js';
+import { laneMcpArgs, provisionSessionDir } from './provision.js';
 import { BUSY_FRESH_MS } from './constants.js';
 import { laneDirName } from './lane-dir.js';
 import { baselineFrom, BASELINE_FILE } from './block-drift.js';
@@ -831,7 +831,7 @@ export class HeartbeatSession {
     // Covers byte-light's BYOK surface — see STRIPPED_ENV_KEYS for the list.
     const env = stripChildEnv(process.env);
 
-    const args = ['--model', this.model, '--dangerously-skip-permissions', INITIAL_PROMPT, ...neuralisMcpArgs(this.dir)];
+    const args = ['--model', this.model, '--dangerously-skip-permissions', INITIAL_PROMPT, ...laneMcpArgs(this.dir)];
     // TODO(H1b): normalize [1m] bracket before spawn (shell glob)
     const child = spawn('claude', args, {
       cwd: this.dir,

@@ -6,6 +6,13 @@ byte-light is a fork of [Resonant](https://github.com/codependentai/resonant), t
 
 ---
 
+## 2026-11-15 — every engine sees your stickers, and the API lanes got real hands
+
+- **Stickers and custom emoji reach every engine as pictures.** They're turned into images before the house picks an engine, so a companion on OpenRouter, Codex or any other lane sees what you sent, not only the Claude SDK lane. Big still stickers are resized to frame size on the way in.
+- **Sticker names with extra underscores aren't dropped anymore.** A ref like `:pack_heart_hands:` tries every split and finds the sticker instead of quietly skipping it.
+- **API-engine companions got the house kit:** canvases (open, update, read, list), reactions on your messages, wake bells, timers, stars, impulses and watchers, Telegram, and the memory backfill switch. Same kit whichever engine you choose.
+- **Claude CLI lanes load the house's `.mcp.json` servers** next to their brain wire, so they get Command Center and anything else you've connected. A change to that file restarts the lane so it picks it up.
+
 ## 2026-11-08 — a guide for first-timers, and a companion file that actually ships
 
 - **Getting Started rewritten for people who've never opened a terminal:** a 30-second glossary, how to open a terminal on each system, a checkpoint after every step, and a common-errors table, while keeping the Windows `better-sqlite3` fix and the existing troubleshooting.
