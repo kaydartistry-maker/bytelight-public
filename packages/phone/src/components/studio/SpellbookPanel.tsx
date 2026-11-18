@@ -159,12 +159,16 @@ export function SpellbookPanel({ active, colors, themeMode, topSlot, openLooks }
 
   const pickFile = (f: File | undefined) => {
     if (!f) return;
-    setCastSpell(null); setFile(f); setPreview(URL.createObjectURL(f)); resetCast();
+    setCastSpell(null); setFile(f); setPreview(URL.createObjectURL(f)); resetCast(); setView('cast');
   };
 
+  // The picker belongs to the input on the screen that opened it. Flipping to
+  // the cast screen first unmounts that input, so the first picture was lost;
+  // with no file yet, the flip waits for pickFile.
   const startDrop = () => {
-    setCastSpell(null); setLook(defaultLookId); resetCast(); setView('cast');
-    if (!file) fileInput.current?.click();
+    setCastSpell(null); setLook(defaultLookId); resetCast();
+    if (!file) { fileInput.current?.click(); return; }
+    setView('cast');
   };
 
   const startRun = (s: Spell) => {
