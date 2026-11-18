@@ -24,6 +24,7 @@ import crypto from 'crypto';
 import { PROJECT_ROOT } from '../config.js';
 import { getConfig, setConfig, getConfigBool, getConfigNumber, getDb } from './db.js';
 import { errMessage } from '../util/errors.js';
+import { MAX_STYLE_REFS, styleReferenceBlock, styleReferencePathBlock } from './style-reference.js';
 
 /** Engine tag recorded on usage_events for image generations. */
 export const IMAGE_GEN_ENGINE = 'image-gen';
@@ -294,6 +295,28 @@ export interface GalleryMeta {
   folderId?: string;
   aspectRatio?: string;
   references?: string[];
+  /** Set when the picture was cast from the Spellbook. */
+  spell?: SpellLineage;
+  /** Studio Create: what she typed, and the look she picked (look id). */
+  sourcePrompt?: string;
+  styleId?: string;
+}
+
+/** Where a Spellbook picture came from: the dropped picture, the scene the
+ *  reader wrote (cast still as [Character N] tokens), who was cast, the look. */
+export interface SpellLineage {
+  id: string;
+  title: string;
+  scene: string;
+  cast: string[];
+  look: string;
+  tags: string[];
+  source?: string;
+  credit?: string;
+  link?: string;
+  /** True when the scene was fitted to this exact cast (parts and wardrobe),
+   *  so the same cast can reuse it without asking Codex again. */
+  fitted?: boolean;
 }
 
 /** Pixel size a requested picture size maps to. Shared by the Studio tab
@@ -378,6 +401,22 @@ export async function getGalleryMeta(filename: string): Promise<GalleryMeta | nu
   return idx[basename(filename)] ?? null;
 }
 
+/** Every Spellbook render in the gallery, grouped by the spell it was cast
+ *  from (GalleryMeta.spell.id), newest first. Reads the index only. */
+export async function spellRenders(): Promise<Map<string, Array<{ filename: string; createdAt: string; cast: string[]; prompt?: string; spell: SpellLineage }>>> {
+  const idx = await readGalleryIndex();
+  const out = new Map<string, Array<{ filename: string; createdAt: string; cast: string[]; prompt?: string; spell: SpellLineage }>>();
+  for (const [filename, meta] of Object.entries(idx)) {
+    const sp = meta.spell;
+    if (!sp?.id || !existsSync(join(GALLERY_DIR, filename))) continue;
+    const list = out.get(sp.id) ?? [];
+    list.push({ filename, createdAt: meta.createdAt ?? '', cast: sp.cast ?? [], prompt: meta.prompt, spell: sp });
+    out.set(sp.id, list);
+  }
+  for (const list of out.values()) list.sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
+  return out;
+}
+
 export async function recordGalleryMeta(filename: string, meta: GalleryMeta): Promise<void> {
   console.log(`[recordGalleryMeta] ${filename}: prompt=${meta.prompt?.slice(0, 50) || 'NONE'}`);
   await withGalleryIndexLock(async () => {
@@ -402,6 +441,9 @@ export interface GalleryItem {
   folderId?: string;
   aspectRatio?: string;
   references?: string[];
+  spell?: SpellLineage;
+  sourcePrompt?: string;
+  styleId?: string;
 }
 
 export async function listGallery(limit = 2000): Promise<GalleryItem[]> {
@@ -431,6 +473,9 @@ export async function listGallery(limit = 2000): Promise<GalleryItem[]> {
         folderId: meta.folderId,
         aspectRatio: meta.aspectRatio,
         references: meta.references,
+        spell: meta.spell,
+        sourcePrompt: meta.sourcePrompt,
+        styleId: meta.styleId,
       };
     }),
   );
@@ -459,6 +504,9 @@ export interface GenerateInput {
   customHeight?: number;
   extraRefs?: string[];
   oneOffRefs?: string[];
+  /** A look's style pictures (absolute paths). Attached after the likeness
+   *  pictures and labelled as style only (services/style-reference.ts). */
+  styleRefs?: string[];
   backend?: string;
   codexModel?: string;
   openaiModel?: string;
@@ -521,6 +569,11 @@ async function resolveAllRefs(input: GenerateInput, maxPerSubject = MAX_REFS_PER
   const extra = (input.extraRefs ?? []).filter((p) => p && existsSync(p));
   const staged = (input.oneOffRefs ?? []).slice(0, 4).map((name) => join(STUDIO_UPLOADS_DIR, basename(name))).filter(existsSync);
   return [...subjectRefs, ...extra, ...staged].slice(0, 8);
+}
+
+/** A look's style pictures that still exist on disk, capped. */
+export function resolveStyleRefs(input: GenerateInput): string[] {
+  return (input.styleRefs ?? []).filter((p) => p && existsSync(p)).slice(0, MAX_STYLE_REFS);
 }
 
 async function newGalleryName(ext = '.png', prefix = 'img'): Promise<string> {
@@ -602,6 +655,8 @@ async function generateViaCodex(input: GenerateInput): Promise<GenerateResult> {
   const quality = getImageGenSettings().quality;
   const qualityLine = quality !== 'auto' ? `Render at ${quality} quality and detail.` : '';
   const refs = await resolveAllRefs(input);
+  const styleRefs = resolveStyleRefs(input);
+  const styleBlock = styleReferenceBlock(refs.length, styleRefs.length);
 
   const hasExtraRefs = (input.extraRefs?.length ?? 0) > 0 || (input.oneOffRefs?.length ?? 0) > 0;
   const refLine = refs.length === 0
@@ -613,23 +668,25 @@ async function generateViaCodex(input: GenerateInput): Promise<GenerateResult> {
   const instruction =
     `Generate ONE image with your built-in image_gen tool.${sizeGuidance ? ' ' + sizeGuidance : ''}${qualityLine ? ' ' + qualityLine : ''}\n` +
     `${refLine}\n` +
+    (styleBlock ? `${styleBlock}\n\n` : '') +
     `Use ONLY the built-in image_gen tool. Do NOT use any CLI, API, or OPENAI_API_KEY path.\n\n` +
     `--- PROMPT ---\n${input.prompt}\n--- END PROMPT ---\n\n` +
     `After it is saved, output as the final line exactly: RESULT_PATH=<absolute path>`;
 
-  // Use requested model, then the operator's configured default, then gpt-5.5.
-  // NOT gpt-5.4: OpenAI retired it for ChatGPT-account Codex access, so every
-  // render 400'd on "model is not supported when using Codex with a ChatGPT
-  // account". gpt-5.5 is the newest id confirmed good on both the standalone
-  // CLI and the older npm build `image_gen.codex_bin` may still point at.
+  // Use requested model, then the operator's configured default, then gpt-6.1-sol.
+  // NOT gpt-5.4 or gpt-5.5: OpenAI retired both for ChatGPT-account Codex
+  // access, so renders 400'd on "model is not supported when using Codex with a
+  // ChatGPT account" (5.5 confirmed dead on this box 2026-11-17). gpt-6.1-sol is
+  // what Studio's live setting runs, verified with `codex exec -i` that day.
   // The config key exists so the next retirement is a settings edit, not a deploy.
-  const codexModel = input.codexModel || getConfig('image_gen.codex_model') || 'gpt-5.5';
+  const codexModel = input.codexModel || getConfig('image_gen.codex_model') || 'gpt-6.1-sol';
 
   const args = [
     'exec',
     '--skip-git-repo-check',
     '-c', `model="${codexModel}"`,
     ...refs.flatMap((r) => ['-i', r]),
+    ...styleRefs.flatMap((r) => ['-i', r]),
     '-',
   ];
 
@@ -742,7 +799,8 @@ async function generateViaAntigravity(input: GenerateInput): Promise<GenerateRes
     ? `Use these reference images to maintain character/subject consistency: ${refs.join(', ')}. `
     : '';
 
-  const instruction = `${refLine}generate an image of: ${input.prompt}${sizeGuidance}`;
+  const styleBlock = styleReferencePathBlock(refs, resolveStyleRefs(input));
+  const instruction = `${styleBlock}${refLine}generate an image of: ${input.prompt}${sizeGuidance}`;
 
   const bin = antigravityBin();
   if (!existsSync(bin)) {
@@ -1325,9 +1383,9 @@ export async function generateImage(input: GenerateInput): Promise<GenerateResul
     return await generateViaCodex(input);
   } catch (error) {
     if (!(error instanceof ImageGenError) || !error.message.startsWith('SAFETY_REFUSED:')) throw error;
-    if ((input.subjects?.length ?? 0) || (input.extraRefs?.length ?? 0) || (input.oneOffRefs?.length ?? 0)) {
+    if ((input.subjects?.length ?? 0) || (input.extraRefs?.length ?? 0) || (input.oneOffRefs?.length ?? 0) || (input.styleRefs?.length ?? 0)) {
       console.warn('[image-gen] safety-refused with refs — retrying once without reference images');
-      try { return await generateViaCodex({ ...input, subjects: undefined, extraRefs: undefined, oneOffRefs: undefined }); }
+      try { return await generateViaCodex({ ...input, subjects: undefined, extraRefs: undefined, oneOffRefs: undefined, styleRefs: undefined }); }
       catch (retryError) { throw stripSafetyPrefix(retryError); }
     }
     throw stripSafetyPrefix(error);

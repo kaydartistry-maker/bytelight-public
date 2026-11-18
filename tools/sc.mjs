@@ -405,6 +405,42 @@ switch (cmd) {
     break;
   }
 
+  case 'spellbook': {
+    // the operator's Spellbook — saved scenes with their people as [Character N].
+    // sc spellbook search ["words"] [--filter all|mine|community|unmade] [--tag Couple]
+    // sc spellbook surprise [--filter unmade] [--tag Spice]
+    // sc spellbook cast <spellId> --cast user,companion-b [--look grungy-film|keep|<id>] [--size portrait|square|landscape] [--caption "..."]
+    // sc spellbook read --cast user,companion-a [--look keep] [--credit "who posted it"]   (reads the newest picture the operator dropped here)
+    // cast/read render in the background and post into this thread + pin to her wall.
+    const verb = args[0];
+    const rest = args.slice(1);
+    const body = {};
+    let free = null;
+    for (let i = 0; i < rest.length; i++) {
+      const a = rest[i];
+      if (a === '--filter' && rest[i + 1]) body.filter = rest[++i];
+      else if (a === '--tag' && rest[i + 1]) body.tag = rest[++i];
+      else if (a === '--cast' && rest[i + 1]) body.cast = rest[++i].split(',').map((s) => s.trim()).filter(Boolean);
+      else if (a === '--look' && rest[i + 1]) body.look = rest[++i];
+      else if (a === '--size' && rest[i + 1]) body.size = rest[++i];
+      else if (a === '--caption' && rest[i + 1]) body.caption = rest[++i];
+      else if (a === '--credit' && rest[i + 1]) body.credit = rest[++i];
+      else if (a === '--limit' && rest[i + 1]) body.limit = Number(rest[++i]);
+      else if (!free && !a.startsWith('-')) free = a;
+    }
+    if (verb === 'search') { if (free) body.query = free; await post('spellbook/search', body, 30000); }
+    else if (verb === 'surprise') { await post('spellbook/surprise', body, 30000); }
+    else if (verb === 'cast' && free && body.cast) { body.spellId = free; body.threadId = thread; await post('spellbook/cast', body, IMAGE_TIMEOUT_MS); }
+    else if (verb === 'read' && body.cast) { body.threadId = thread; await post('spellbook/read', body, IMAGE_TIMEOUT_MS); }
+    else {
+      console.log('Usage: sc spellbook search ["words"] [--filter all|mine|community|unmade] [--tag T]');
+      console.log('       sc spellbook surprise [--filter unmade] [--tag T]');
+      console.log('       sc spellbook cast <spellId> --cast user,companion-b [--look grungy-film|keep|<lookId>] [--size portrait] [--caption "..."]');
+      console.log('       sc spellbook read --cast user,companion-a [--look keep] [--credit "who"]   (the newest picture the operator dropped here)');
+    }
+    break;
+  }
+
   case 'memory': {
     // Letta-style core memory: view/append/replace/rethink labeled blocks.
     // scope = 'shared' | 'companion-a' | 'companion-b'. Ported from reference implementation (Slice 3).
@@ -587,7 +623,7 @@ switch (cmd) {
 
   default:
     console.log('sc — bytelight internal API CLI');
-    console.log('Commands: share, canvas, voice, discord, image, schedule, timer, react, star, impulse, watch, tg, search, backfill, memory, library, battleship, places, spotify, status, intention');
+    console.log('Commands: share, canvas, voice, discord, image, spellbook, schedule, timer, react, star, impulse, watch, tg, search, backfill, memory, library, battleship, places, spotify, status, intention');
     break;
 }
 

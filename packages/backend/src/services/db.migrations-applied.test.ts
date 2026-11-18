@@ -49,7 +49,8 @@ test('migration numbers are unique and contiguous', () => {
   // 028 was never committed on this house; the ports were numbered from 029.
   // 030-031, 033-034 and 040-041 belong to features this edition leaves out;
   // the numbers stay reserved so the ledger lines up with the full house.
-  const KNOWN_GAPS = new Set([29, 32, 35, 42]);
+  // 049 (intention follow-ups) has not come over yet, so 050 follows a gap.
+  const KNOWN_GAPS = new Set([29, 32, 35, 42, 50]);
   const gaps = numbers.filter((n, i) => i > 0 && n !== numbers[i - 1] + 1 && !KNOWN_GAPS.has(n));
   assert.deepEqual(
     gaps,

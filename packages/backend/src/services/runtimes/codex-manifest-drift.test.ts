@@ -28,7 +28,7 @@ import assert from 'node:assert/strict';
 // pi-ai 0.80.6 moved the static catalog read `getModels` off the top-level
 // barrel into the `/compat` entrypoint.
 import { getModels } from '@earendil-works/pi-ai/compat';
-import { MODELS as SHARED_MODELS } from '@bytelight/shared';
+import { MODELS as SHARED_MODELS, RETIRED_CODEX_IDS } from '@bytelight/shared';
 
 const piAiCodexModels = getModels('openai-codex');
 const sharedCodexEntries = SHARED_MODELS.filter((m) => m.provider === 'openai-codex');
@@ -45,7 +45,8 @@ describe('codex manifest drift — pi-ai openai-codex registry vs shared MODELS'
   test('every pi-ai openai-codex model has a matching shared MODELS entry', () => {
     const missing: string[] = [];
     for (const piModel of piAiCodexModels) {
-      if (!sharedCodexIds.has(piModel.id)) {
+      // Retired for ChatGPT-account access: pi-ai still lists them, we do not.
+      if (!sharedCodexIds.has(piModel.id) && !RETIRED_CODEX_IDS.includes(piModel.id)) {
         missing.push(piModel.id);
       }
     }
@@ -66,9 +67,10 @@ describe('codex manifest drift — pi-ai openai-codex registry vs shared MODELS'
       'Either pi-ai dropped them (remove from MODELS) or they were never valid (mistake).');
   });
 
-  test('shared catalog count matches pi-ai openai-codex count exactly', () => {
-    assert.equal(sharedCodexEntries.length, piAiCodexModels.length,
-      `Codex catalog size drift: shared=${sharedCodexEntries.length}, pi-ai=${piAiCodexModels.length}`);
+  test('shared catalog count matches pi-ai openai-codex count, minus retired ids', () => {
+    const liveInPiAi = piAiCodexModels.filter((m) => !RETIRED_CODEX_IDS.includes(m.id));
+    assert.equal(sharedCodexEntries.length, liveInPiAi.length,
+      `Codex catalog size drift: shared=${sharedCodexEntries.length}, pi-ai live=${liveInPiAi.length}`);
   });
 
   test('vision flag on each shared entry matches pi-ai input.includes("image")', () => {

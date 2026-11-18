@@ -20,7 +20,7 @@ import { codexActiveBeltThread, codexActiveTurnAudience } from '../services/runt
 import { getMcpBeltToken, validMcpBeltBearer } from '../services/mcp-belt-auth.js';
 import { errMessage } from '../util/errors.js';
 
-const THREAD_BOUND_TOOLS = new Set(['send_voice_note', 'generate_image']);
+const THREAD_BOUND_TOOLS = new Set(['send_voice_note', 'generate_image', 'spellbook_cast', 'spellbook_read']);
 
 interface BeltDependencies {
   getTools: typeof getRouterTools;

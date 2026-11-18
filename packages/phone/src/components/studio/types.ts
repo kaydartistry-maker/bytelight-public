@@ -5,7 +5,7 @@ import type { OneOffRef } from './one-off-refs';
 
 export type ThemeMode = 'light' | 'dark';
 export type ViewMode = 'generate' | 'edit' | 'draw' | 'refs' | 'settings';
-export type StudioSection = 'create' | 'gif' | 'cutout' | 'gallery';
+export type StudioSection = 'create' | 'spellbook' | 'gif' | 'cutout' | 'gallery';
 export type Backend = 'codex' | 'antigravity' | 'openart';
 export type DrawTool = 'brush' | 'eraser';
 export type AspectRatioValue =
@@ -95,8 +95,11 @@ export interface GenerationControlsProps extends StudioPanelProps {
   setShowSubjects: (v: boolean) => void;
   prompt: string;
   setPrompt: (p: string) => void;
+  /** The picked Spellbook look's id ('' for none). */
   selectedStyle: string;
   setSelectedStyle: (s: string) => void;
+  /** Open the Spellbook's Looks editor on a new look. */
+  onNewLook?: () => void;
   showStylePicker: boolean;
   setShowStylePicker: (v: boolean) => void;
   generating: boolean;
@@ -209,6 +212,5 @@ export interface UseStudioStateParams {
   codexModels: Array<{ id: string }>;
   antigravityModels: Array<{ id: string }>;
   openartModels: Array<{ key: string; id: string; media: 'image' | 'video' }>;
-  promptStyles: Array<{ name: string; style: string }>;
   sizePresets: Array<{ value: AspectRatioValue; dims?: string }>;
 }

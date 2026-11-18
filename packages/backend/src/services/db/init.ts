@@ -432,6 +432,31 @@ export function initDb(dbPath: string): Database.Database {
     }
   }
 
+  // 050: the Spellbook — spells (scenes with [Character N] tokens, mine or
+  // community, with times cast) and looks (style boards). CREATE IF NOT EXISTS.
+  runMigration(db, 'migrations/050_spellbook.sql', { required: true });
+
+  // 051: looks get favorite + starter columns. Same one-statement-at-a-time
+  // shape as 048; "duplicate column" means it already ran.
+  const looksFavoritesSQL = migrationSql('migrations/051_looks_favorites.sql');
+  if (looksFavoritesSQL !== null) {
+    const statements = looksFavoritesSQL
+      .split('\n')
+      .filter((line) => !line.trim().startsWith('--'))
+      .join('\n')
+      .split(';')
+      .map((stmt) => stmt.trim())
+      .filter(Boolean);
+    for (const stmt of statements) {
+      try {
+        db.exec(stmt);
+      } catch (err: unknown) {
+        const msg = errMessage(err);
+        if (!msg.includes('duplicate column')) console.warn('Migration warning (051):', msg);
+      }
+    }
+  }
+
   // 001 wrote push_subscriptions with a type list of web_push and apns, which
   // predates Android push, so an FCM device token from the app would be
   // refused by the CHECK constraint. SQLite cannot alter a constraint in

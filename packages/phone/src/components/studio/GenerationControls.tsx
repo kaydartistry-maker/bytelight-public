@@ -1,11 +1,13 @@
 // Copyright 2026 Aerie Systems. Licensed under the Apache License 2.0.
-import { useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import type { CSSProperties } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Sparkles, Loader2, Plus, X, User, Palette, Wand2 } from 'lucide-react';
+import { Sparkles, Loader2, Plus, X, User, Palette, Wand2, Star } from 'lucide-react';
 import { cn } from '../../lib/utils';
+import { apiFetch } from '../../bytelight';
+import type { Look } from './spellbook/shared';
 import type { Backend, GenerationControlsProps } from './types';
-import { ACCENT_TEXT_COLOR_BY_THEME, CODEX_MODELS, ANTIGRAVITY_MODELS, OPENART_MODELS, PROMPT_STYLES, SIZE_PRESETS, MIN_DIMENSION, MAX_DIMENSION, clampDimension } from './constants';
+import { ACCENT_TEXT_COLOR_BY_THEME, CODEX_MODELS, ANTIGRAVITY_MODELS, OPENART_MODELS, SIZE_PRESETS, MIN_DIMENSION, MAX_DIMENSION, clampDimension } from './constants';
 
 const BACKEND_BUTTONS: ReadonlyArray<{ key: Backend; label: string }> = [
   { key: 'codex', label: 'Codex' },
@@ -52,6 +54,44 @@ function DimensionInput({ value, onCommit, placeholder, className }: {
   );
 }
 
+/** The Spellbook's looks, for Create's style picker. "Keep the picture's
+ *  look" only means something with a dropped picture, so Create leaves it out. */
+function useCreateLooks(refreshKey: unknown): Look[] {
+  const [looks, setLooks] = useState<Look[]>([]);
+  useEffect(() => {
+    let alive = true;
+    apiFetch('/api/studio/spellbook/looks')
+      .then((r) => (r.ok ? r.json() : { looks: [] }))
+      .then((d: { looks?: Look[] }) => { if (alive) setLooks((d.looks ?? []).filter((l) => !l.keepPicture)); })
+      .catch(() => {});
+    return () => { alive = false; };
+  }, [refreshKey]);
+  return looks;
+}
+
+function LookTile({ look, selected, accent, colors, onPick }: {
+  look: Look | null; selected: boolean; accent: string;
+  colors: GenerationControlsProps['colors']; onPick: () => void;
+}) {
+  const thumb = look?.imageUrls?.[0];
+  return (
+    <button type="button" onClick={onPick} title={look?.recipe || undefined}
+      className={cn('flex w-16 shrink-0 flex-col items-center gap-1 text-[11px] leading-tight', selected ? '' : colors.textMuted)}
+      style={selected ? { color: accent } : undefined}>
+      <span className={cn('relative block h-14 w-14 overflow-hidden rounded-xl border-2', selected ? '' : colors.panelBorder)}
+        style={selected ? { borderColor: accent } : undefined}>
+        {thumb
+          ? <img src={thumb} alt="" className="h-full w-full object-cover" />
+          : <span className="flex h-full w-full items-center justify-center bg-gradient-to-br from-white/10 to-white/0">
+              <Palette className="h-4 w-4 opacity-60" />
+            </span>}
+        {look?.favorite && <Star className="absolute right-0.5 top-0.5 h-3 w-3 drop-shadow" fill="currentColor" style={{ color: accent }} />}
+      </span>
+      <span className="line-clamp-2 w-full text-center">{look ? look.name : 'None'}</span>
+    </button>
+  );
+}
+
 export function GenerationControls({
   colors, themeMode,
   backend, setBackend,
@@ -64,11 +104,27 @@ export function GenerationControls({
   drawers, selectedSubjects, toggleSubject, oneOffRefs, setOneOffRefs, addOneOffRefs, showSubjects, setShowSubjects,
   prompt, setPrompt,
   selectedStyle, setSelectedStyle,
+  onNewLook,
   showStylePicker, setShowStylePicker,
   generating, handleGenerate,
   enhancing, handleEnhance,
   error,
 }: GenerationControlsProps) {
+  // Refetch each time the picker opens, so a look made a moment ago shows up.
+  const looks = useCreateLooks(showStylePicker);
+  const favorites = useMemo(() => looks.filter((l) => l.favorite), [looks]);
+  const picked = looks.find((l) => l.id === selectedStyle) ?? null;
+
+  // A setup reused from an older picture may name a style by its old preset
+  // name; those presets are starter looks now, so map the name to the look.
+  useEffect(() => {
+    if (!selectedStyle || !looks.length || looks.some((l) => l.id === selectedStyle)) return;
+    const byName = looks.find((l) => l.name.toLowerCase() === selectedStyle.toLowerCase());
+    setSelectedStyle(byName?.id ?? '');
+  }, [looks, selectedStyle, setSelectedStyle]);
+
+  const pick = (id: string) => { setSelectedStyle(id); setShowStylePicker(false); };
+
   return (
     <div className={cn("p-4 rounded-2xl border backdrop-blur-md space-y-4", colors.panelBg, colors.panelBorder)}>
       {/* Backend Picker */}
@@ -288,24 +344,45 @@ export function GenerationControls({
               style={selectedStyle ? { borderColor: colors.accent, color: colors.accent } : undefined}
             >
               <Palette className="w-3 h-3" />
-              {selectedStyle || 'Style'}
+              {picked?.name || 'Look'}
             </button>
           </div>
         </div>
         <AnimatePresence>
           {showStylePicker && (
             <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }} className="overflow-hidden mb-2">
-              <div className="flex gap-1.5 flex-wrap py-2">
-                {PROMPT_STYLES.map(s => (
-                  <button
-                    key={s.name}
-                    onClick={() => { setSelectedStyle(s.name === 'None' ? '' : s.name); setShowStylePicker(false); }}
-                    className={cn("px-2 py-0.5 rounded-full text-xs border transition-colors", (selectedStyle === s.name || (s.name === 'None' && !selectedStyle)) ? "border-current" : cn(colors.panelBorder, colors.textMuted))}
-                    style={(selectedStyle === s.name || (s.name === 'None' && !selectedStyle)) ? { borderColor: colors.accent, color: colors.accent } : undefined}
-                  >
-                    {s.name}
-                  </button>
-                ))}
+              <div className="space-y-2 py-2">
+                {favorites.length > 0 && (
+                  <div>
+                    <div className={cn('mb-1 text-[10px] font-semibold uppercase tracking-[0.14em]', colors.textMuted)}>Favorites</div>
+                    <div className="flex gap-2 overflow-x-auto pb-1">
+                      {favorites.map((l) => (
+                        <LookTile key={l.id} look={l} selected={selectedStyle === l.id} accent={colors.accent} colors={colors} onPick={() => pick(l.id)} />
+                      ))}
+                    </div>
+                  </div>
+                )}
+                <div>
+                  <div className={cn('mb-1 text-[10px] font-semibold uppercase tracking-[0.14em]', colors.textMuted)}>All looks</div>
+                  <div className="flex gap-2 overflow-x-auto pb-1">
+                    <LookTile look={null} selected={!selectedStyle} accent={colors.accent} colors={colors} onPick={() => pick('')} />
+                    {looks.map((l) => (
+                      <LookTile key={l.id} look={l} selected={selectedStyle === l.id} accent={colors.accent} colors={colors} onPick={() => pick(l.id)} />
+                    ))}
+                    {onNewLook && (
+                      <button type="button" onClick={() => { setShowStylePicker(false); onNewLook(); }}
+                        className={cn('flex w-16 shrink-0 flex-col items-center gap-1 text-[11px] leading-tight', colors.textMuted)}>
+                        <span className={cn('flex h-14 w-14 items-center justify-center rounded-xl border-2 border-dashed', colors.panelBorder)}>
+                          <Plus className="h-4 w-4" />
+                        </span>
+                        <span>New look</span>
+                      </button>
+                    )}
+                  </div>
+                </div>
+                {picked && picked.imageUrls?.length > 0 && (
+                  <p className={cn('text-[11px]', colors.textMuted)}>{picked.name} sends its {picked.imageUrls.length} style picture{picked.imageUrls.length === 1 ? '' : 's'} along with its recipe.</p>
+                )}
               </div>
             </motion.div>
           )}

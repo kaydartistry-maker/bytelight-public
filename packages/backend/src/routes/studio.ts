@@ -33,6 +33,8 @@ import {
   REFS_DIR,
   GALLERY_DIR,
 } from '../services/image-gen.js';
+import { resolveCreateLook } from '../services/spellbook-store.js';
+import { lookLine } from '../services/spellbook.js';
 
 const router = Router();
 
@@ -287,6 +289,7 @@ router.get('/studio/gallery', async (_req, res) => {
         folderId: g.folderId ?? null,
         aspectRatio: g.aspectRatio ?? null,
         references: g.references ?? null,
+        spell: g.spell ? { ...g.spell, sourceUrl: g.spell.source ? `/api/studio/spellbook/sources/${encodeURIComponent(g.spell.source)}` : null } : null,
       };
     });
     res.json({ items: out });
@@ -359,8 +362,11 @@ router.get('/studio/gallery/:filename', (req, res) => {
 
 router.post('/studio/generate', async (req, res) => {
   try {
-    const { prompt, subjects, oneOffRefs, size, customWidth, customHeight, threadId, messageId, async: useAsync, backend: reqBackend, codexModel, openaiModel, cloudflareModel, agyModel, openartModel, openartMedia } = req.body as {
+    const { prompt: typedPrompt, lookId, subjects, oneOffRefs, size, customWidth, customHeight, threadId, messageId, async: useAsync, backend: reqBackend, codexModel, openaiModel, cloudflareModel, agyModel, openartModel, openartMedia } = req.body as {
       prompt?: string;
+      /** A Spellbook look picked in Create: its recipe goes on the end of the
+       *  prompt, its style pictures ride along as style references. */
+      lookId?: string;
       subjects?: string[];
       oneOffRefs?: string[];
       size?: string;
@@ -378,10 +384,14 @@ router.post('/studio/generate', async (req, res) => {
       openartMedia?: 'image' | 'video';
     };
 
-    if (!prompt) {
+    if (!typedPrompt) {
       res.status(400).json({ error: 'prompt is required' });
       return;
     }
+    const look = resolveCreateLook(lookId);
+    const prompt = look ? `${typedPrompt.trim()}${lookLine(look)}` : typedPrompt;
+    const styleRefs = look?.styleImages?.length ? look.styleImages : undefined;
+    const lookMeta = look ? { sourcePrompt: typedPrompt.trim(), styleId: look.id } : {};
     if (size === 'custom' && (!Number.isFinite(customWidth) || !Number.isFinite(customHeight) || customWidth! < 256 || customWidth! > 2048 || customHeight! < 256 || customHeight! > 2048)) {
       res.status(400).json({ error: 'custom dimensions must be between 256 and 2048 pixels' });
       return;
@@ -391,7 +401,7 @@ router.post('/studio/generate', async (req, res) => {
     if (useAsync !== false) {
       const metadata = { threadId, messageId, prompt, size, customWidth, customHeight, subjects };
       const jobId = startGenerateJob(
-        { prompt, subjects, oneOffRefs, size, customWidth, customHeight, backend: reqBackend, codexModel, openaiModel, cloudflareModel, agyModel, openartModel, openartMedia },
+        { prompt, subjects, oneOffRefs, styleRefs, size, customWidth, customHeight, backend: reqBackend, codexModel, openaiModel, cloudflareModel, agyModel, openartModel, openartMedia },
         async (result) => {
           const { width, height } = galleryDimensions(metadata.size, metadata.customWidth, metadata.customHeight);
           await recordGalleryMeta(result.filename, {
@@ -405,6 +415,7 @@ router.post('/studio/generate', async (req, res) => {
             height,
             aspectRatio: metadata.size || 'square',
             references: metadata.subjects?.length ? metadata.subjects : undefined,
+            ...lookMeta,
           });
         },
       );
@@ -413,7 +424,7 @@ router.post('/studio/generate', async (req, res) => {
     }
 
     // Sync mode (legacy, for local/LAN use where timeout isn't an issue)
-    const result = await generateImage({ prompt, subjects, oneOffRefs, size, customWidth, customHeight, backend: reqBackend, codexModel, openaiModel, cloudflareModel, agyModel, openartModel, openartMedia });
+    const result = await generateImage({ prompt, subjects, oneOffRefs, styleRefs, size, customWidth, customHeight, backend: reqBackend, codexModel, openaiModel, cloudflareModel, agyModel, openartModel, openartMedia });
     const { width, height } = galleryDimensions(size, customWidth, customHeight);
 
     // Always record gallery meta with prompt
@@ -428,6 +439,7 @@ router.post('/studio/generate', async (req, res) => {
       height,
       aspectRatio: size || 'square',
       references: subjects?.length ? subjects : undefined,
+      ...lookMeta,
     });
 
     res.json({
@@ -566,7 +578,7 @@ router.post('/studio/enhance', async (req, res) => {
       return;
     }
 
-    const model = codexModel || getDbConfig('image_gen.enhance_model') || 'gpt-5.4-mini';
+    const model = codexModel || getDbConfig('image_gen.enhance_model') || 'gpt-6-luna';
     const enhanced = await codexEnhance(prompt.trim(), model);
     res.json({ enhanced });
   } catch (error) {

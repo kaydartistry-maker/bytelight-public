@@ -12,7 +12,6 @@ export function useStudioState({
   codexModels,
   antigravityModels,
   openartModels,
-  promptStyles,
   sizePresets,
 }: UseStudioStateParams) {
   const [drawers, setDrawers] = useState<RefDrawer[]>([]);
@@ -26,7 +25,8 @@ export function useStudioState({
 
   // Codex (GPT) model state — persist selection across sessions
   const [codexModel, setCodexModel] = useState(() => {
-    try { return localStorage.getItem('bytelight-studio-codex-model') || codexModels[1]?.id || 'gpt-image-2'; } catch { return codexModels[1]?.id || 'gpt-image-2'; }
+    // A saved pick of a retired model falls back to the first live one instead of 400ing every render.
+    try { const saved = localStorage.getItem('bytelight-studio-codex-model'); return (saved && codexModels.some((m) => m.id === saved)) ? saved : codexModels[0]?.id || 'gpt-6.1-sol'; } catch { return codexModels[0]?.id || 'gpt-6.1-sol'; }
   });
   // Antigravity (Gemini) model state
   const [agyModel, setAgyModel] = useState(() => {
@@ -435,16 +435,9 @@ export function useStudioState({
     e.target.value = '';
   };
 
-  const buildFullPrompt = () => {
-    let fullPrompt = prompt.trim();
-    if (selectedStyle) {
-      const style = promptStyles.find(s => s.name === selectedStyle);
-      if (style && style.style) {
-        fullPrompt = `${fullPrompt}, ${style.style}`;
-      }
-    }
-    return fullPrompt;
-  };
+  // The picked look (selectedStyle is its id) is laid on by the house, which
+  // adds its recipe and, when it has pictures, its style references.
+  const buildFullPrompt = () => prompt.trim();
 
   const getImageDimensions = (): { width: number; height: number } => {
     // Clamped here as well as in the field: the field holds what she typed
@@ -508,6 +501,7 @@ export function useStudioState({
           prompt: buildFullPrompt(),
           sourcePrompt: prompt.trim(),
           styleId: selectedStyle || undefined,
+          lookId: selectedStyle || undefined,
           subjects: selectedSubjects.length > 0 ? selectedSubjects : undefined,
           oneOffRefs: oneOffRefs.map((reference) => reference.token),
           size,

@@ -191,7 +191,7 @@ const CODEX_OAUTH_CAPABILITIES_TEXT_ONLY: ModelCapabilities = {
 const CODEX_OAUTH_AUTH: ModelAuth = { type: 'codex-oauth' };
 
 /** Build a Codex (ChatGPT OAuth) entry. Defaults to vision-capable; pass
- *  `{ vision: false }` for text-only models (e.g. gpt-5.3-codex-spark). */
+ *  `{ vision: false }` for text-only models. */
 function codexEntry(
   id: string,
   label: string,
@@ -290,11 +290,8 @@ export const MODELS: readonly ModelEntry[] = [
   claudeEntry('sonnet', 'Sonnet (latest, auto-updates)', ['interactive', 'autonomous', 'memory']),
   claudeEntry('haiku', 'Haiku (latest, auto-updates)', ['interactive', 'autonomous', 'pulse', 'memory']),
   // Codex (ChatGPT OAuth) — mirrors pi-ai 0.80.6 `openai-codex` provider
-  // registry. Drift-tested in codex-manifest-drift.test.ts.
-  codexEntry('gpt-5.3-codex-spark', 'GPT-5.3 Codex Spark', ['interactive', 'autonomous'], { vision: false }),
-  codexEntry('gpt-5.4', 'GPT-5.4', ['interactive', 'autonomous']),
-  codexEntry('gpt-5.4-mini', 'GPT-5.4 Mini', ['interactive', 'autonomous']),
-  codexEntry('gpt-5.5', 'GPT-5.5', ['interactive', 'autonomous']),
+  // registry, minus RETIRED_CODEX_IDS (below). Drift-tested in
+  // codex-manifest-drift.test.ts.
   codexEntry('gpt-5.6-sol', 'GPT-5.6 Sol', ['interactive', 'autonomous']),
   codexEntry('gpt-5.6-terra', 'GPT-5.6 Terra', ['interactive', 'autonomous']),
   codexEntry('gpt-5.6-luna', 'GPT-5.6 Luna', ['interactive', 'autonomous']),
@@ -309,10 +306,6 @@ export const MODELS: readonly ModelEntry[] = [
   // above) by convention. No drift test governs these rows — when the
   // openai-codex list changes to match a pi-ai upgrade, mirror the same
   // add/remove here by hand.
-  codexCliEntry('gpt-5.3-codex-spark', 'GPT-5.3 Codex Spark (CLI)', ['interactive', 'autonomous'], { vision: false }),
-  codexCliEntry('gpt-5.4', 'GPT-5.4 (Codex CLI)', ['interactive', 'autonomous']),
-  codexCliEntry('gpt-5.4-mini', 'GPT-5.4 Mini (Codex CLI)', ['interactive', 'autonomous']),
-  codexCliEntry('gpt-5.5', 'GPT-5.5 (Codex CLI)', ['interactive', 'autonomous']),
   codexCliEntry('gpt-5.6-sol', 'GPT-5.6 Sol (Codex CLI)', ['interactive', 'autonomous']),
   codexCliEntry('gpt-5.6-terra', 'GPT-5.6 Terra (Codex CLI)', ['interactive', 'autonomous']),
   codexCliEntry('gpt-5.6-luna', 'GPT-5.6 Luna (Codex CLI)', ['interactive', 'autonomous']),
@@ -323,6 +316,20 @@ export const MODELS: readonly ModelEntry[] = [
   codexCliEntry('gpt-6-sol', 'GPT-6 Sol (Codex CLI)', ['interactive', 'autonomous']),
   codexCliEntry('gpt-6-luna', 'GPT-6 Luna (Codex CLI)', ['interactive', 'autonomous']),
 ] as const;
+
+/**
+ * Codex ids OpenAI retired for ChatGPT-account access: every call 400s with
+ * "model is not supported when using Codex with a ChatGPT account" (probed
+ * one by one on the VM, 2026-11-17). pi-ai still registers them, so they are
+ * left out of MODELS on purpose and the drift test skips them. When pi-ai
+ * drops one, delete it here too.
+ */
+export const RETIRED_CODEX_IDS: readonly string[] = [
+  'gpt-5.3-codex-spark',
+  'gpt-5.4',
+  'gpt-5.4-mini',
+  'gpt-5.5',
+];
 
 /**
  * Map of model id → minimum Claude Code version. Derived from `MODELS`.

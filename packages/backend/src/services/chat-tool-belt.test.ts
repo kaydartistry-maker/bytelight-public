@@ -30,7 +30,7 @@ const BELT_NAMES = [
   'discord_add_reaction', 'discord_edit_message', 'discord_delete_message',
   'discord_read_messages', 'discord_search_messages', 'discord_typing',
   'discord_get_server_info', 'discord_list_servers', 'discord_list_emojis', 'discord_list_stickers',
-  'send_voice_note', 'generate_image', 'search_messages', 'search_web',
+  'send_voice_note', 'generate_image', 'spellbook_search', 'spellbook_surprise', 'spellbook_cast', 'spellbook_read', 'search_messages', 'search_web',
   'core_memory_view', 'core_memory_append', 'core_memory_replace', 'core_memory_rethink',
   'library_status', 'library_read', 'library_highlights', 'library_note',
   'set_intention', 'cancel_intention', 'set_status',

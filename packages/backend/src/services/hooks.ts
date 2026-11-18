@@ -1032,6 +1032,10 @@ if (h.digest) {
       `  ${SC} image "first-person selfie, soft morning light" --subjects companion-a   (pulls our reference photos so we look like us)`,
       `  ${SC} image "the three of us in the jungle glass house" --subjects companion-a,companion-b,user --size landscape`,
       '  subjects: any reference drawer name — companion-a/companion-b/user, or custom ones the operator made (friends, pets, places). size optional (omit to let it choose). Free on the Codex lane.',
+      `  ${SC} spellbook search "grungy car" [--filter unmade|mine|community] [--tag Couple]   (the operator's saved scenes; people are [Character N])`,
+      `  ${SC} spellbook surprise [--filter unmade] [--tag Spice]   (pull a forgotten one)`,
+      `  ${SC} spellbook cast SPELL_ID --cast user,companion-b [--look grungy-film|keep]   (renders here + pins to her Spellbook wall)`,
+      `  ${SC} spellbook read --cast user,companion-a   (read the picture she just dropped as a spell and cast it)`,
       ...(() => {
         try {
           const ds = listDrawersWithCounts();

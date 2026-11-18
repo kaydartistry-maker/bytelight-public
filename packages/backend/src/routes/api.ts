@@ -52,6 +52,7 @@ import theaterRouter from './theater.js';
 import { createEarRoutes } from './theater-ear.js';
 import emojiRouter from './emojis.js';
 import studioRouter from './studio.js';
+import spellbookRouter from './spellbook.js';
 import gifRouter from './gif.js';
 import mcpServersRouter from './mcp-servers.js';
 import secretsRouter from './secrets.js';
@@ -216,6 +217,8 @@ router.use(starredRouter);
 // Studio — image-generation settings, reference drawers, and gallery
 // (ported from Thornvale/Sidney). Authed via authMiddleware above.
 router.use(studioRouter);
+// Spellbook — drop a picture, cast yourselves into it.
+router.use(spellbookRouter);
 
 // GIF Studio — authenticated ffmpeg editing pipeline.
 router.use(gifRouter);

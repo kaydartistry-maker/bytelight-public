@@ -492,6 +492,126 @@ export const CHAT_TOOL_BELT: BeltTool[] = [
     },
   },
 
+  // 2b. The Spellbook's hands → /internal/spellbook/*. the operator's saved scenes
+  // (her own and the community vault): find one, pull a forgotten one, cast
+  // it with whoever, or read a picture she just dropped. Renders post into
+  // this chat AND pin to her Spellbook wall.
+  {
+    schema: {
+      name: 'spellbook_search',
+      description:
+        "Search the operator's Spellbook: her saved image scenes (her own, plus credited community prompts). Each spell has its people written as [Character 1], [Character 2], so any cast fits. Use to find a scene before spellbook_cast. filter 'unmade' = never rendered yet. Read-only.",
+      input_schema: {
+        type: 'object',
+        properties: {
+          query: { type: 'string', description: 'Words to look for in title, scene, tags or credit, e.g. "grungy car", "bathtub".' },
+          filter: { type: 'string', enum: ['all', 'mine', 'community', 'unmade'], description: 'Whose spells, or only the never-made ones.' },
+          tag: { type: 'string', description: 'One tag, e.g. "Spice", "Couple", "Wreck him".' },
+          limit: { type: 'number', description: 'Max results (default 10, cap 25).' },
+        },
+      },
+    },
+    handler: async (args) => {
+      const body: Record<string, unknown> = {};
+      for (const k of ['query', 'filter', 'tag', 'limit']) if (args[k] !== undefined) body[k] = args[k];
+      try {
+        const r = await postInternal('spellbook/search', body, 30000);
+        if (!r.ok) return { ok: false, result: JSON.stringify({ ok: false, error: errorFrom(r) }) };
+        return { ok: true, result: JSON.stringify({ ok: true, ...(r.json as object) }) };
+      } catch (e) {
+        return { ok: false, result: JSON.stringify({ ok: false, error: errMessage(e) }) };
+      }
+    },
+  },
+  {
+    schema: {
+      name: 'spellbook_surprise',
+      description:
+        "Pull one forgotten spell from the operator's Spellbook: a never-made one if any match, else the one cast longest ago. Optional filter/tag. Follow with spellbook_cast to make it.",
+      input_schema: {
+        type: 'object',
+        properties: {
+          filter: { type: 'string', enum: ['all', 'mine', 'community', 'unmade'] },
+          tag: { type: 'string', description: 'One tag, e.g. "Couple".' },
+        },
+      },
+    },
+    handler: async (args) => {
+      const body: Record<string, unknown> = {};
+      if (typeof args.filter === 'string') body.filter = args.filter;
+      if (typeof args.tag === 'string') body.tag = args.tag;
+      try {
+        const r = await postInternal('spellbook/surprise', body, 30000);
+        if (!r.ok) return { ok: false, result: JSON.stringify({ ok: false, error: errorFrom(r) }) };
+        return { ok: true, result: JSON.stringify({ ok: true, ...(r.json as object) }) };
+      } catch (e) {
+        return { ok: false, result: JSON.stringify({ ok: false, error: errMessage(e) }) };
+      }
+    },
+  },
+  {
+    schema: {
+      name: 'spellbook_cast',
+      description:
+        "Cast a Spellbook spell with whoever you choose and drop the picture into this chat (it also pins to the operator's wall). The cast fills [Character 1], [Character 2]… in order; a different number of people than the scene was written for is fine, the words are rewritten to fit. Renders in the background and posts itself in a few minutes; this returns at once, so say it is on the way, do NOT claim it is showing.",
+      input_schema: {
+        type: 'object',
+        properties: {
+          spellId: { type: 'string', description: 'The spell id from spellbook_search or spellbook_surprise.' },
+          cast: { type: 'array', items: { type: 'string' }, description: "Reference-drawer names in order, e.g. ['user'], ['user','companion-b']. Up to 4." },
+          look: { type: 'string', description: "A look id (e.g. 'grungy-film', 'keep'). Omit for the operator's default look." },
+          size: { type: 'string', enum: ['portrait', 'square', 'landscape'] },
+          caption: { type: 'string', description: 'Optional caption posted with the picture.' },
+        },
+        required: ['spellId', 'cast'],
+      },
+    },
+    handler: async (args) => {
+      if (typeof args.spellId !== 'string' || !Array.isArray(args.cast)) {
+        return { ok: false, result: JSON.stringify({ ok: false, error: 'spellId and cast are required' }) };
+      }
+      const body: Record<string, unknown> = { spellId: args.spellId, cast: args.cast, threadId: ctxThreadId() };
+      for (const k of ['look', 'size', 'caption']) if (typeof args[k] === 'string') body[k] = args[k];
+      try {
+        const r = await postInternal('spellbook/cast', body, 30000);
+        if (!r.ok) return { ok: false, result: JSON.stringify({ ok: false, error: errorFrom(r) }) };
+        return { ok: true, result: JSON.stringify({ ok: true, status: 'casting', ...(r.json as object), note: 'The spell is rendering and will post itself shortly.' }) };
+      } catch (e) {
+        return { ok: false, result: JSON.stringify({ ok: false, error: errMessage(e) }) };
+      }
+    },
+  },
+  {
+    schema: {
+      name: 'spellbook_read',
+      description:
+        "Read the newest picture the operator dropped in this chat as a Spellbook spell: the scene is kept, the stranger in it is left out, and the cast you choose is put in. Saves the spell to her wall and posts the render here in a few minutes; returns at once. The dropped picture is never sent to the image engine.",
+      input_schema: {
+        type: 'object',
+        properties: {
+          cast: { type: 'array', items: { type: 'string' }, description: "Who goes in it, in order, e.g. ['user','companion-a']." },
+          look: { type: 'string', description: "A look id, or 'keep' for the picture's own style. Omit for the operator's default look." },
+          size: { type: 'string', enum: ['portrait', 'square', 'landscape'] },
+          caption: { type: 'string' },
+          credit: { type: 'string', description: 'Who posted the original, if the operator said.' },
+        },
+        required: ['cast'],
+      },
+    },
+    handler: async (args) => {
+      if (!Array.isArray(args.cast)) return { ok: false, result: JSON.stringify({ ok: false, error: 'cast is required' }) };
+      const body: Record<string, unknown> = { cast: args.cast, threadId: ctxThreadId() };
+      for (const k of ['look', 'size', 'caption', 'credit']) if (typeof args[k] === 'string') body[k] = args[k];
+      try {
+        const r = await postInternal('spellbook/read', body, 30000);
+        if (!r.ok) return { ok: false, result: JSON.stringify({ ok: false, error: errorFrom(r) }) };
+        return { ok: true, result: JSON.stringify({ ok: true, status: 'reading', note: 'Reading the picture, then the render posts itself.' }) };
+      } catch (e) {
+        return { ok: false, result: JSON.stringify({ ok: false, error: errMessage(e) }) };
+      }
+    },
+  },
+
   // 3. search_messages → POST /internal/search-semantic
   {
     schema: {

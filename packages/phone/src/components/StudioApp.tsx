@@ -6,6 +6,7 @@ import {
   Settings, Users, X,
 } from 'lucide-react';
 import { cn } from '../lib/utils';
+import { SpellbookPanel } from './studio/SpellbookPanel';
 import { SegmentedControl } from '../ui';
 import { GifApp } from './GifApp';
 import { CutoutApp } from './CutoutApp';
@@ -18,7 +19,6 @@ import {
   EditPanel,
   GenerationControls,
   GenerationResults,
-  PROMPT_STYLES,
   RefsPanel,
   SIZE_PRESETS,
   useStudioState,
@@ -34,6 +34,8 @@ import { ZoomableImage } from './ZoomableImage';
 export function StudioApp({ onClose, onJumpToMessage, themeConfig, themeMode }: StudioAppProps) {
   const colors = themeConfig[themeMode];
   const [section, setSection] = useState<StudioSection>('create');
+  // Create's "New look" tile opens the Spellbook straight into the Looks editor.
+  const [spellbookStart, setSpellbookStart] = useState<'new' | null>(null);
 
   const {
     backend, setBackend,
@@ -101,7 +103,6 @@ export function StudioApp({ onClose, onJumpToMessage, themeConfig, themeMode }: 
     codexModels: CODEX_MODELS,
     antigravityModels: ANTIGRAVITY_MODELS,
     openartModels: OPENART_MODELS,
-    promptStyles: PROMPT_STYLES,
     sizePresets: SIZE_PRESETS,
   });
 
@@ -121,8 +122,15 @@ export function StudioApp({ onClose, onJumpToMessage, themeConfig, themeMode }: 
   }, [selectFromHistory, setPrompt, setSelectedStyle, setViewMode]);
 
   const changeSection = (next: StudioSection) => {
+    setSpellbookStart(null);
     setViewMode('generate');
     setSection(next);
+  };
+
+  const openNewLook = () => {
+    setSpellbookStart('new');
+    setViewMode('generate');
+    setSection('spellbook');
   };
 
   const sectionTabs = (
@@ -130,6 +138,7 @@ export function StudioApp({ onClose, onJumpToMessage, themeConfig, themeMode }: 
       <SegmentedControl
         options={[
           { value: 'create', label: 'Create' },
+          { value: 'spellbook', label: 'Spellbook' },
           { value: 'gif', label: 'GIF Lab' },
           { value: 'cutout', label: 'Cutout' },
           { value: 'gallery', label: 'Gallery' },
@@ -137,7 +146,7 @@ export function StudioApp({ onClose, onJumpToMessage, themeConfig, themeMode }: 
         value={section}
         onChange={changeSection}
         colors={colors}
-        className="justify-center"
+        className="scrollbar-hide flex-nowrap overflow-x-auto"
       />
     </div>
   );
@@ -332,6 +341,7 @@ export function StudioApp({ onClose, onJumpToMessage, themeConfig, themeMode }: 
             setPrompt={setPrompt}
             selectedStyle={selectedStyle}
             setSelectedStyle={setSelectedStyle}
+            onNewLook={openNewLook}
             showStylePicker={showStylePicker}
             setShowStylePicker={setShowStylePicker}
             generating={generating}
@@ -399,6 +409,10 @@ export function StudioApp({ onClose, onJumpToMessage, themeConfig, themeMode }: 
             <CutoutApp active={section === 'cutout'} themeConfig={themeConfig} themeMode={themeMode} />
           </div>
         </>
+      )}
+
+      {viewMode === 'generate' && section === 'spellbook' && (
+        <SpellbookPanel active={section === 'spellbook'} colors={colors} themeMode={themeMode} topSlot={sectionTabs} openLooks={spellbookStart} />
       )}
 
       {viewMode === 'generate' && section === 'gallery' && (

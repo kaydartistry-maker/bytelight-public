@@ -16,6 +16,7 @@ import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   MODELS,
+  RETIRED_CODEX_IDS,
   OPENAI_FEATURED_MODELS,
   providerToRuntime,
   parseModelRef,
@@ -29,10 +30,6 @@ import {
 // Drift vs. the installed pi-ai package is enforced by the backend
 // drift test, not this file.
 const EXPECTED_CODEX_IDS = [
-  'gpt-5.3-codex-spark',
-  'gpt-5.4',
-  'gpt-5.4-mini',
-  'gpt-5.5',
   'gpt-5.6-sol',
   'gpt-5.6-terra',
   'gpt-5.6-luna',
@@ -83,15 +80,14 @@ describe('model-manifest — Codex (ChatGPT OAuth) catalog presence', () => {
     }
   });
 
-  test('gpt-5.3-codex-spark is text-only (vision: false)', () => {
-    const spark = codexModels.find((m) => m.id === 'gpt-5.3-codex-spark');
-    assert.ok(spark, 'gpt-5.3-codex-spark not registered');
-    assert.equal(spark.capabilities.vision, false,
-      'gpt-5.3-codex-spark must be text-only — pi-ai registers it with input: ["text"] only');
+  test('retired ChatGPT-account ids are not on the shelf', () => {
+    for (const dead of RETIRED_CODEX_IDS) {
+      assert.equal(MODELS.find((m) => m.id === dead), undefined, `${dead} is retired and must not be offered`);
+    }
   });
 
   test('all other Codex entries are vision-capable', () => {
-    const visionExpected = codexModels.filter((m) => m.id !== 'gpt-5.3-codex-spark');
+    const visionExpected = codexModels;
     for (const m of visionExpected) {
       assert.equal(m.capabilities.vision, true,
         `Codex entry "${m.id}" should be vision-capable per pi-ai registry`);

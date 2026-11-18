@@ -6,6 +6,15 @@ byte-light is a fork of [Resonant](https://github.com/codependentai/resonant), t
 
 ---
 
+## 2026-11-18 — the Spellbook: drop a picture, cast yourselves into it
+
+- **The Spellbook lives in the Studio.** Drop any picture and the house reads it as a *spell*: the scene, the pose, the light, the wardrobe, with the people written as `[Character 1]`, `[Character 2]` so anyone can step in. Pick a cast from your reference drawers (up to four) and it renders with your faces in it. Every cast is fitted to the people actually in it, one reference picture each, so parts and wardrobe land on the right person, and a recast with more or fewer people rewrites the scene for all of them.
+- **A wall of spells.** Search, filters (All, Mine, Community, Not made) with counts, a tag strip, a queue so you can line up a few renders and walk away, *Surprise me* for a forgotten one, and share cards for a finished render.
+- **Looks.** Style boards that ride on any render: a recipe in words, up to six style pictures (sent to the engine as style only, never as people), favorites with a star, and a default look. The old Create presets are now starter looks you can edit or delete, and Studio Create picks from the same looks.
+- **Vaults.** Bring an old prompt collection in as spells: a community prompt archive in markdown (each prompt credited to its author) or your own Notion image-prompt database (set the `notion.token` and `notion.spellbook_db` secrets). You see a dry run first (new, duplicates, couldn't parse), nothing lands until you confirm, and importing twice never doubles anything. Afterwards the house rewrites named people into `[Character N]` in the background and keeps the original words on every spell. Your vault files stay in your house's `data/` folder.
+- **Companions can use it too.** Chat tools and `sc spellbook search | surprise | cast | read`: find a scene, pull a forgotten one, cast it with whoever, or read the picture you just dropped and cast it. Renders post into the chat and pin to the wall.
+- **Retired Codex models leave every picker**, and the render and spell-reader fallbacks point at a model that still answers.
+
 ## 2026-11-15 — the Theater: your companions on the couch for movie night
 
 - **The Theater.** Start a night from the phone, run the clock, and your companions sit on the couch with you while you watch. They react on their own at beats (the Mouth), answer when you talk to them, and the couch draws the chat's own bubbles. "Next one" or the Next episode button starts the next episode; "Let them react" is set on the start form. Tap the slate to fold the clock and give the couch more room.
