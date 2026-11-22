@@ -168,6 +168,7 @@ function providerIdToRouterProvider(providerId: ProviderId): string {
     case 'claude':       return 'anthropic'; // routing='api' Claude direct
     case 'claude-cli':   return 'anthropic'; // exhaustiveness only — CLI lane dispatches via InteractiveCliRuntime, never the api-router (no [1m] handling touched)
     case 'codex-cli':    return 'codex';     // exhaustiveness only — codex-cli lane dispatches via InteractiveCodexRuntime (warm daemon), never the api-router (H2)
+    case 'antigravity':  return 'gemini';    // exhaustiveness only — Antigravity has its own CLI runtime
     case 'openai-codex': return 'codex';     // throws in resolveProvider (Step 6B)
   }
 }

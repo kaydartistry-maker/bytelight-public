@@ -163,6 +163,7 @@ export function getEffortOptionsForProvider(
     case 'claude-cli':   return CLAUDE_EFFORT_OPTIONS; // CLI lane runs Claude models — same effort vocabulary
     case 'openai-codex': return CODEX_EFFORT_OPTIONS;
     case 'codex-cli':    return CODEX_EFFORT_OPTIONS; // warm-daemon CLI lane runs Codex models — same effort vocabulary
+    case 'antigravity':  return GENERIC_EFFORT_OPTIONS;
     case 'openai':
     case 'openrouter':
     case 'groq':

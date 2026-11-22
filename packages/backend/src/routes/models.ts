@@ -136,6 +136,21 @@ export function buildCodexCliCatalogEntries(): ModelInfo[] {
   return out;
 }
 
+export function buildAntigravityCatalogEntries(): ModelInfo[] {
+  return SHARED_MODELS.filter((m) => m.provider === 'antigravity').map((entry) => ({
+    id: entry.id,
+    name: entry.label,
+    provider: 'antigravity',
+    runtime: 'antigravity-cli',
+    tier: 'included',
+    supports_tools: entry.capabilities.tools,
+    ref: entry.ref,
+    featured: entry.id === 'gemini-4-neon-xhigh',
+    sortPriority: entry.id.endsWith('xhigh') ? 1 : entry.id.endsWith('high') ? 2 : entry.id.endsWith('medium') ? 3 : 4,
+    badge: entry.id.endsWith('xhigh') ? 'flagship' : undefined,
+  }));
+}
+
 // Claude models — always available via SDK (matches model-manifest entries).
 const CLAUDE_MODELS: ModelInfo[] = [
   { id: 'claude-fable-5-1', name: 'Claude Fable 5.1', provider: 'claude', runtime: 'claude-sdk', tier: 'included', context_length: 1000000, supports_tools: true, ref: 'claude/claude-fable-5-1' },
@@ -402,6 +417,10 @@ router.get('/models', async (req: Request, res: Response) => {
   // itself (codex-cli is always selectable, like claude-cli).
   if (!providerFilter || providerFilter === 'codex-cli') {
     models.push(...buildCodexCliCatalogEntries());
+  }
+
+  if (!providerFilter || providerFilter === 'antigravity') {
+    models.push(...buildAntigravityCatalogEntries());
   }
 
   if ((!providerFilter || providerFilter === 'huggingface') && providers.huggingface?.api_key && cfg.agent.routing !== 'sdk') {

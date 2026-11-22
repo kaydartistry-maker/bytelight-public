@@ -51,6 +51,7 @@ export type ProviderId =
   | 'xai'            // xAI / Grok OpenAI-compatible API (wired through openai-compat runtime)
   | 'claude-cli'     // Claude via warm interactive `claude` CLI session (subscription/OAuth — heartbeat runtime)
   | 'codex-cli'      // OpenAI/ChatGPT via warm Codex app-server daemon (subscription/CLI-login — codex-daemon runtime, H2)
+  | 'antigravity'    // Google AI subscription via Antigravity CLI
   | 'ollama';        // Local / Ollama Cloud (wired through ollama-native runtime)
 
 /** Runtime implementation that handles turns for a provider. */
@@ -58,6 +59,7 @@ export type RuntimeId =
   | 'claude-sdk'        // wraps @anthropic-ai/claude-agent-sdk
   | 'claude-cli'        // wraps a warm interactive `claude` CLI session (heartbeat runtime, subscription-billed)
   | 'codex-cli'         // wraps the warm Codex app-server daemon (subscription-billed, ~/.codex/auth.json CLI-login door, H2)
+  | 'antigravity-cli'   // wraps Antigravity CLI print/JSON sessions (Google subscription OAuth)
   | 'codex'             // TYPE ONLY — wraps pi-ai openai-codex-responses (Step 6B, not wired)
   | 'openai-compat'     // generic OpenAI-compatible HTTP — wired (OpenAI direct + OpenRouter)
   | 'ollama-native';    // Ollama /api/chat NDJSON — wired (Ollama Cloud deployed 2026-06-04)
@@ -68,6 +70,7 @@ export function providerToRuntime(provider: ProviderId): RuntimeId {
     case 'claude':       return 'claude-sdk';
     case 'claude-cli':   return 'claude-cli';
     case 'codex-cli':    return 'codex-cli';
+    case 'antigravity':  return 'antigravity-cli';
     case 'openai':       return 'openai-compat';
     case 'openai-codex': return 'codex';
     case 'openrouter':   return 'openai-compat';
@@ -258,6 +261,21 @@ function codexCliEntry(
   };
 }
 
+const ANTIGRAVITY_CAPABILITIES: ModelCapabilities = {
+  tools: false, vision: false, reasoning: true, mcp: false,
+  sessionResume: true, fileCheckpointing: false,
+};
+
+function antigravityEntry(id: string, label: string): ModelEntry {
+  return {
+    id, label, provider: 'antigravity', runtime: 'antigravity-cli',
+    ref: `antigravity/${id}`,
+    tierHints: ['interactive', 'autonomous'],
+    capabilities: ANTIGRAVITY_CAPABILITIES,
+    auth: { type: 'none' },
+  };
+}
+
 // ---------------------------------------------------------------------------
 // The manifest — Claude (SDK) + Codex (ChatGPT OAuth)
 // ---------------------------------------------------------------------------
@@ -315,6 +333,10 @@ export const MODELS: readonly ModelEntry[] = [
   codexCliEntry('gpt-6-astra', 'GPT-6 Astra (Codex CLI)', ['interactive', 'autonomous']),
   codexCliEntry('gpt-6-sol', 'GPT-6 Sol (Codex CLI)', ['interactive', 'autonomous']),
   codexCliEntry('gpt-6-luna', 'GPT-6 Luna (Codex CLI)', ['interactive', 'autonomous']),
+  antigravityEntry('gemini-4-neon-low', 'Gemini 4 Neon (Low)'),
+  antigravityEntry('gemini-4-neon-medium', 'Gemini 4 Neon (Medium)'),
+  antigravityEntry('gemini-4-neon-high', 'Gemini 4 Neon (High)'),
+  antigravityEntry('gemini-4-neon-xhigh', 'Gemini 4 Neon (XHigh)'),
 ] as const;
 
 /**
@@ -402,6 +424,7 @@ const KNOWN_PROVIDERS: ReadonlySet<ProviderId> = new Set<ProviderId>([
   'xai',
   'claude-cli',
   'codex-cli',
+  'antigravity',
   'ollama',
 ]);
 

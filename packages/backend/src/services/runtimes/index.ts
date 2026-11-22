@@ -45,6 +45,7 @@ import {
   InteractiveCodexRuntime,
   CODEX_CLI_CAPABILITIES,
 } from './codex-daemon.js';
+import { AntigravityCliRuntime, ANTIGRAVITY_CLI_CAPABILITIES } from './antigravity-cli.js';
 import { executeForeignLaneTool, getRouterTools } from '../mcp-bridge.js';  // SLICE-3a ADAPTATION: tag's tools-bridge.ts == main's mcp-bridge.ts (same exports)
 import type { AgentRuntime } from './types.js';
 import type { AgentModelTier } from './types.js';  // SLICE-3a ADAPTATION: declared in types.ts until agent.ts exports it (Slice 3b)
@@ -123,6 +124,7 @@ export function getClaudeCliLaneRuntime(companionSlug: string): InteractiveCliRu
  * factory map (mirroring `apiRouterRuntimes`) can replace this.
  */
 const codexCliRuntime = new InteractiveCodexRuntime();
+const antigravityCliRuntime = new AntigravityCliRuntime();
 
 /**
  * A companion's own Codex CLI lane — one runtime (its own daemon connection
@@ -228,7 +230,8 @@ export interface RuntimeDispatchPacket {
     | typeof API_ROUTER_CAPABILITIES
     | typeof CODEX_CAPABILITIES
     | typeof CLAUDE_CLI_CAPABILITIES
-    | typeof CODEX_CLI_CAPABILITIES;
+    | typeof CODEX_CLI_CAPABILITIES
+    | typeof ANTIGRAVITY_CLI_CAPABILITIES;
 }
 
 /**
@@ -368,6 +371,12 @@ export function resolveRuntimeForRef(modelRef: ModelRef): RuntimeDispatchPacket 
         modelRef,
         capabilities: CODEX_CLI_CAPABILITIES,
       };
+    case 'antigravity-cli':
+      return {
+        runtime: antigravityCliRuntime,
+        modelRef,
+        capabilities: ANTIGRAVITY_CLI_CAPABILITIES,
+      };
     default: {
       const _exhaustive: never = modelRef.runtime;
       throw new Error(`Unhandled runtime: ${_exhaustive as string}`);
@@ -402,6 +411,7 @@ export { codexRuntime };
 // instance (constructed above). Exported for parity with the claude/codex/claude-cli
 // singletons and for the server.ts graceful-shutdown hook.
 export { codexCliRuntime };
+export { antigravityCliRuntime, AntigravityCliRuntime, ANTIGRAVITY_CLI_CAPABILITIES };
 export { InteractiveCodexRuntime, CODEX_CLI_CAPABILITIES } from './codex-daemon.js';
 export { codexSupervisor } from './codex-supervisor.js';
 export { ClaudeAgentRuntime, CLAUDE_CAPABILITIES } from './claude-sdk.js';
