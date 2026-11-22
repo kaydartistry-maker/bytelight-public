@@ -48,6 +48,7 @@ export const PROVIDER_ROWS: ProviderRow[] = [
   { id: 'claude', label: 'Claude' },
   { id: 'claude-cli', label: 'Claude CLI' },
   { id: 'codex-cli', label: 'Codex CLI' },
+  { id: 'antigravity', label: 'Neon' },
   { id: 'openai-codex', label: 'Codex' },
   { id: 'openai', label: 'OpenAI' },
   { id: 'openrouter', label: 'OpenRouter' },
@@ -76,7 +77,7 @@ export interface ModelOption {
 // offered; the BYOK/local lanes need a key or a running server, and the
 // api-router lanes are refused while routing is SDK-only.
 export function providerEnabled(id: ProviderId, status: ProviderStatus | null): { enabled: boolean; hint?: string } {
-  if (id === 'claude' || id === 'claude-cli' || id === 'codex-cli') return { enabled: true };
+  if (id === 'claude' || id === 'claude-cli' || id === 'codex-cli' || id === 'antigravity') return { enabled: true };
   if (!status) return { enabled: false, hint: 'checking…' };
   const sdkOnly = status.routing === 'sdk';
   if (id === 'openai-codex') {

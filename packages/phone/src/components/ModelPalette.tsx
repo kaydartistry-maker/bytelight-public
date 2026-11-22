@@ -38,6 +38,7 @@ const PROVIDER_LABEL: Record<string, string> = {
   'claude-cli': 'Claude — CLI lane',
   anthropic: 'Claude — API',
   'codex-cli': 'Codex — CLI lane',
+  antigravity: 'Gemini Neon — Antigravity CLI',
   codex: 'Codex — API',
   ollama: 'Ollama — local',
   openrouter: 'OpenRouter',

@@ -22,10 +22,10 @@ import {
 const opus: TierEngine = { provider: 'claude-cli', model: 'claude-opus-4-7', effort: 'high' };
 const codex: TierEngine = { provider: 'codex-cli', model: 'gpt-6-sol', effort: 'medium' };
 
-test('all nine lanes are offered', () => {
+test('all ten lanes are offered', () => {
   assert.deepEqual(
     PROVIDER_ROWS.map((r) => r.id),
-    ['claude', 'claude-cli', 'codex-cli', 'openai-codex', 'openai', 'openrouter', 'groq', 'xai', 'ollama'],
+    ['claude', 'claude-cli', 'codex-cli', 'antigravity', 'openai-codex', 'openai', 'openrouter', 'groq', 'xai', 'ollama'],
   );
 });
 
@@ -64,6 +64,7 @@ test('normalizeCatalog fills missing names and skips junk', () => {
 test('availability gate matches the classic panel', () => {
   assert.equal(providerEnabled('claude-cli', null).enabled, true);
   assert.equal(providerEnabled('codex-cli', null).enabled, true);
+  assert.equal(providerEnabled('antigravity', null).enabled, true);
   assert.equal(providerEnabled('groq', null).enabled, false);
   assert.equal(providerEnabled('groq', { routing: 'sdk', groq: { configured: true } }).enabled, false);
   assert.equal(providerEnabled('groq', { routing: 'hybrid', groq: { configured: true } }).enabled, true);
