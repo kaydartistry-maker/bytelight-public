@@ -87,6 +87,7 @@
     // H2: OpenAI/Codex via the warm Codex app-server daemon (subscription/CLI-login).
     // Always selectable like claude-cli; catalog from /api/models?provider=codex-cli.
     { id: 'codex-cli',    label: 'Codex (CLI · subscription)' },
+    { id: 'antigravity',  label: 'Gemini Neon (Antigravity)' },
   ];
 
   // Provider availability from /api/models/status (mirrors ModelSelector).
@@ -109,6 +110,7 @@
   // H2: Codex-CLI (warm daemon) catalog — same lazy-fetch shape as codexModels,
   // sourced from /api/models?provider=codex-cli.
   let codexCliModels = $state<Array<{ id: string; name: string }>>([]);
+  let antigravityModels = $state<Array<{ id: string; name: string }>>([]);
   type CompatProviderId = 'openrouter' | 'groq' | 'xai';
   const COMPAT_PROVIDERS: readonly CompatProviderId[] = ['openrouter', 'groq', 'xai'];
   function isCompatProvider(p: string): p is CompatProviderId {
@@ -126,6 +128,7 @@
     // H2: Codex-CLI is always selectable — subscription/CLI-login, no BYOK key
     // and no availability status object gates it (mirrors ModelSelector).
     if (id === 'codex-cli') return true;
+    if (id === 'antigravity') return true;
     if (!providerStatus) return false;
     if (id === 'openai-codex') return providerStatus['openai-codex']?.available === true;
     if (routingIsSdk) return false;
@@ -148,6 +151,7 @@
     if (p === 'openai') return openaiModels.map((m) => ({ id: m.id, label: m.name }));
     if (p === 'openai-codex') return codexModels.map((m) => ({ id: m.id, label: m.name }));
     if (p === 'codex-cli') return codexCliModels.map((m) => ({ id: m.id, label: m.name }));
+    if (p === 'antigravity') return antigravityModels.map((m) => ({ id: m.id, label: m.name }));
     if (isCompatProvider(p)) return compatModels[p].map((m) => ({ id: m.id, label: m.name }));
     return [];
   }
@@ -219,6 +223,17 @@
       if (res.ok) {
         const data = await res.json();
         codexCliModels = Array.isArray(data)
+          ? data.map((m: { id: string; name?: string }) => ({ id: m.id, name: m.name ?? m.id }))
+          : [];
+      }
+    } catch { /* empty catalog */ }
+  }
+  async function fetchAntigravityModels(): Promise<void> {
+    try {
+      const res = await apiFetch('/api/models?provider=antigravity');
+      if (res.ok) {
+        const data = await res.json();
+        antigravityModels = Array.isArray(data)
           ? data.map((m: { id: string; name?: string }) => ({ id: m.id, name: m.name ?? m.id }))
           : [];
       }
@@ -557,6 +572,7 @@
       fetchOpenaiModels(),
       fetchCodexModels(),
       fetchCodexCliModels(),
+      fetchAntigravityModels(),
       ...COMPAT_PROVIDERS.map((p) => fetchCompatModels(p)),
     ]);
     await loadCompanionDefaults();

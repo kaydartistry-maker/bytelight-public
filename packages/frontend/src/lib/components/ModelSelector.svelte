@@ -76,6 +76,7 @@
     // — no BYOK key). Catalog fetched from /api/models?provider=codex-cli; always
     // selectable like claude-cli (no availability status object gates it).
     { id: 'codex-cli',    label: 'Codex (CLI · subscription)', placeholder: false },
+    { id: 'antigravity',  label: 'Gemini Neon (Antigravity)', placeholder: false },
     { id: 'huggingface',  label: 'HuggingFace', placeholder: true },
   ];
 
@@ -159,6 +160,11 @@
   let codexCliLoaded = $state(false);
   let codexCliLoading = $state(false);
   let codexCliFetchError = $state<string | null>(null);
+
+  let antigravityModels = $state<Array<{ id: string; name: string }>>([]);
+  let antigravityLoaded = $state(false);
+  let antigravityLoading = $state(false);
+  let antigravityFetchError = $state<string | null>(null);
 
   // H3b-1: generic OpenAI-compat discovery catalogs (OpenRouter / Groq / xAI).
   // Same lazy-fetch pattern as Ollama, keyed by provider id. These providers
@@ -252,6 +258,9 @@
     if (provider === 'codex-cli') {
       return codexCliModels.find((m) => m.id === modelId)?.name ?? modelId;
     }
+    if (provider === 'antigravity') {
+      return antigravityModels.find((m) => m.id === modelId)?.name ?? modelId;
+    }
     if (isCompatProvider(provider)) {
       return compatModels[provider].find((m) => m.id === modelId)?.name ?? modelId;
     }
@@ -274,6 +283,7 @@
     openai: '',
     'openai-codex': 'CX ',
     'codex-cli': 'CX-CLI ',
+    antigravity: 'N ',
     ollama: 'OL ',
     openrouter: 'OR ',
     groq: 'GQ ',
@@ -338,6 +348,7 @@
     // server-side, the runtime surfaces a clear in-thread error on send rather
     // than the pick being blocked here.
     if (row.id === 'codex-cli') return true;
+    if (row.id === 'antigravity') return true;
     if (row.id === 'ollama') {
       if (!providerStatus) return false;
       if (routingIsSdk) return false;
@@ -554,6 +565,30 @@
     }
   }
 
+  async function fetchAntigravityModels(opts: { force?: boolean } = {}): Promise<void> {
+    if ((!opts.force && antigravityLoaded) || antigravityLoading) return;
+    antigravityLoading = true;
+    antigravityFetchError = null;
+    try {
+      const res = await apiFetch('/api/models?provider=antigravity');
+      if (res.ok) {
+        const data = await res.json();
+        antigravityModels = Array.isArray(data)
+          ? data.map((m: { id: string; name?: string }) => ({ id: m.id, name: m.name ?? m.id }))
+          : [];
+      } else {
+        antigravityFetchError = `Couldn't load Gemini Neon models (${res.status})`;
+      }
+    } catch (err) {
+      antigravityFetchError = err instanceof Error
+        ? `Couldn't load Gemini Neon models — ${err.message}`
+        : "Couldn't load Gemini Neon models — network error";
+    } finally {
+      antigravityLoading = false;
+      antigravityLoaded = true;
+    }
+  }
+
   // H3b-1: lazy-fetch an OpenAI-compat provider's catalog (OpenRouter/Groq/xAI).
   // Fires on provider selection / open when that provider is the active draft,
   // mirroring the Ollama lazy-fetch. Empty result → "no models" row; the
@@ -590,6 +625,7 @@
       void fetchOpenaiModels();
       void fetchCodexModels();
       void fetchCodexCliModels();
+      void fetchAntigravityModels();
       if (isCompatProvider(draftProvider)) void fetchCompatModels(draftProvider);
       lastError = null;
     }
@@ -628,6 +664,9 @@
       // model list populates on selection.
       draftModel = codexCliModels[0]?.id ?? '';
       void fetchCodexCliModels();
+    } else if (p === 'antigravity') {
+      draftModel = antigravityModels[0]?.id ?? '';
+      void fetchAntigravityModels();
     } else if (isCompatProvider(p)) {
       // H3b-1: OpenAI-compat discovery provider. Seed from cache if present,
       // then lazy-fetch the catalog so the model list populates on selection.
@@ -900,6 +939,23 @@
                 class:active={draftModel === m.id}
                 onclick={() => selectModel(m.id)}
               >
+                {m.name}
+              </button>
+            {/each}
+          {/if}
+        {:else if draftProvider === 'antigravity'}
+          {#if antigravityLoading}
+            <div class="row disabled">Loading…</div>
+          {:else if antigravityFetchError}
+            <div class="row catalog-error">
+              <span>{antigravityFetchError}</span>
+              <button type="button" class="retry-btn" onclick={() => void fetchAntigravityModels({ force: true })}>Retry</button>
+            </div>
+          {:else if antigravityModels.length === 0}
+            <div class="row disabled">No Gemini Neon models found</div>
+          {:else}
+            {#each antigravityModels as m}
+              <button class="row" class:active={draftModel === m.id} onclick={() => selectModel(m.id)}>
                 {m.name}
               </button>
             {/each}
