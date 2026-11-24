@@ -7,7 +7,7 @@ const execFileAsync = promisify(execFile);
 const AGY = process.env.ANTIGRAVITY_CLI_PATH || `${process.env.HOME}/.local/bin/agy`;
 
 export const ANTIGRAVITY_CLI_CAPABILITIES = {
-  tools: false,
+  tools: true,
   vision: false,
   reasoning: true,
   mcp: false,
@@ -46,7 +46,7 @@ export class AntigravityCliRuntime implements AgentRuntime {
     yield { type: 'start', runtimeId: this.id, modelRef: input.modelRef };
     const args = [
       '--model', input.modelRef.model,
-      '--mode', 'plan',
+      '--dangerously-skip-permissions',
       '--output-format', 'json',
       `--print=${promptFor(input)}`,
       '--print-timeout', '10m',

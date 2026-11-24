@@ -262,7 +262,7 @@ function codexCliEntry(
 }
 
 const ANTIGRAVITY_CAPABILITIES: ModelCapabilities = {
-  tools: false, vision: false, reasoning: true, mcp: false,
+  tools: true, vision: false, reasoning: true, mcp: false,
   sessionResume: true, fileCheckpointing: false,
 };
 
