@@ -39,6 +39,20 @@ const codexModels = MODELS.filter((m): m is ModelEntry =>
   m.provider === 'openai-codex',
 );
 
+describe('model-manifest — Antigravity Argon catalog', () => {
+  test('registers every available Argon reasoning level through Antigravity CLI', () => {
+    const argonIds = MODELS
+      .filter((m) => m.provider === 'antigravity' && m.id.startsWith('gemini-4-argon-'))
+      .map((m) => m.id)
+      .sort();
+    assert.deepEqual(argonIds, [
+      'gemini-4-argon-high',
+      'gemini-4-argon-low',
+      'gemini-4-argon-medium',
+    ]);
+  });
+});
+
 describe('model-manifest — Codex (ChatGPT OAuth) catalog presence', () => {
   test('all expected Codex model ids are registered', () => {
     const registered = new Set(codexModels.map((m) => m.id));
