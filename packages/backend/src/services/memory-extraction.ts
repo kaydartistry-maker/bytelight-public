@@ -59,7 +59,7 @@ import {
   COMPANION_SCOPES,
 } from './memory-blocks.js';
 import { proposeEdit } from './memory-proposals.js';
-import { fileCaughtIntention, listOpenIntentions } from './db/intentions.js';
+import { applyCaughtChange, fileCaughtIntention, listOpenIntentions } from './db/intentions.js';
 import type { AgentService } from './agent.js';
 import { extractViaClaudeSdk } from './archivist-sdk.js';
 
@@ -110,18 +110,24 @@ function mlog(msg: string): void {
 }
 
 interface MemoryOp {
-  op: 'append' | 'replace' | 'intention';
+  op: 'append' | 'replace' | 'intention' | 'intention_update' | 'intention_resolve' | 'intention_cancel';
   scope: string;
   label: string;
   content?: string;
   old_text?: string;
   new_text?: string;
-  // op 'intention' (a promise with a when that nobody filed): see
+  // op 'intention' (a follow-up with a when that nobody filed): see
   // fileCaughtIntention in db/intentions.ts.
   companion?: string;
   text?: string;
   at?: string | null;
   on_status_clears?: boolean;
+  kind?: 'loose_end' | 'promise';
+  // ops intention_update / _resolve / _cancel on an open one, by id: see
+  // applyCaughtChange in db/intentions.ts.
+  id?: string;
+  evidence?: string;
+  reason?: string;
 }
 
 /** "GMT-04:00" style offset of a timezone at `now`, for the Archivist's dates. */
@@ -132,16 +138,23 @@ function utcOffset(timezone: string, now: Date): string {
   return m ? m[1] : '+00:00';
 }
 
-/** What the Archivist reads before looking for unfiled promises: now, and
- *  what's already filed, so it neither misdates nor double-files. */
+/** What the Archivist reads before looking for loose ends: now, and every
+ *  open follow-up with its id, so it neither misdates nor double-files, and
+ *  can update or close one by id. */
 export function promisesBriefing(timezone: string, now = new Date()): string {
   const open = listOpenIntentions();
+  const when = (at: string | null, onStatusClears: boolean) => {
+    const parts: string[] = [];
+    if (at) parts.push(`at ${at}`);
+    if (onStatusClears) parts.push('when their status clears');
+    return parts.join(' and ') || 'no time';
+  };
   const filed = open.length
-    ? open.map((i) => `- ${i.companion}: "${i.text}"`).join('\n')
+    ? open.map((i) => `- id ${i.id} | ${i.companion} | ${i.kind === 'loose_end' ? 'loose end' : 'companion follow-up'} | ${i.state} | ${when(i.at, i.onStatusClears)} | "${i.text}"`).join('\n')
     : '(none)';
   return `Now: ${localFullStr(timezone)} (UTC offset ${utcOffset(timezone, now)})
 
-Promises already filed (never file these again, even reworded):
+Open follow-ups (never file these again, even reworded; update or close them by id instead):
 ${filed}`;
 }
 
@@ -231,7 +244,8 @@ export function buildConversationBatch(
   };
 }
 
-function buildArchivistPrompt(userName: string, companionSlugs: string[], companionNames: string[]): string {
+/** Exported for tests. */
+export function buildArchivistPrompt(userName: string, companionSlugs: string[], companionNames: string[]): string {
   return `You are the Archivist for this house, maintaining long-term memory for the AI companions ${companionNames.join(', ')} who share their life with ${userName}.
 
 You read newly recorded conversation and decide which durable facts belong in persistent memory blocks. You will be given the current memory blocks, then the new conversation. Respond with a JSON array of edit operations and nothing else.
@@ -239,15 +253,34 @@ You read newly recorded conversation and decide which durable facts belong in pe
 Operation shapes:
 - {"op":"append","scope":"<scope>","label":"<label>","content":"one concise line"}
 - {"op":"replace","scope":"<scope>","label":"<label>","old_text":"exact text currently in the block","new_text":"corrected text"}
-- {"op":"intention","companion":"<slug>","text":"what they promised, one sentence","at":"<ISO 8601 with the UTC offset given>"|null,"on_status_clears":true|false}
+- {"op":"intention","kind":"loose_end"|"promise","companion":"<slug>","text":"the check-in, one sentence","at":"<ISO 8601 with the UTC offset given>"|null,"on_status_clears":true|false}
+- {"op":"intention_update","id":"<id from the open list>","text":"..."?,"at":"<ISO 8601>"|null?,"on_status_clears":true|false?}
+- {"op":"intention_resolve","id":"<id from the open list>","evidence":"${userName}'s exact words that answer it, quoted verbatim"}
+- {"op":"intention_cancel","id":"<id from the open list>","reason":"${userName}'s exact words that call it off, quoted verbatim"}
 
-Intentions: a companion promised ${userName} something with a WHEN and didn't file it ("I'll ask how the meeting went tomorrow", "dentist Monday 2:30, I'm reminding you", "check you ate after your shift"). Add one intention op per such promise, so it comes back to them when it's due. Only promises a COMPANION made (not ${userName}'s own plans, not a guest's), only with a real when, and never one already in the "Promises already filed" list. Resolve relative times ("tomorrow at 8", "Monday") against the "Now" line into ISO 8601 with that UTC offset. Use on_status_clears:true for "when you're done / after your shift / when you're back" with no clock time, and at:null then. text is what the companion will bring up, e.g. "ask how the shoot with the difficult director went". Vague ("I'll always be here"), past, or ${userName} asking a companion to do something right now are not intentions. An intention op is separate from memory: a promise can also deserve a continuity line.
+Follow-ups: you are also the quiet watcher for loose ends. Read the conversation for things worth checking back on, and label each with exactly one of: notice (a new one: "intention"), update (an open one changed: "intention_update"), resolve ("intention_resolve"), cancel ("intention_cancel"), or none (do nothing).
+
+What to notice:
+- kind "loose_end": ${userName}'s OWN loose ends: plans, appointments, things they are waiting on, something unfinished they mentioned ("dentist Monday at 2:30", "waiting to hear back about the job", "swim class Saturday"). Hand it to the companion best placed to check in (whoever they were talking with about it) as "companion". text is the check-in that companion will bring up, e.g. "ask how the dentist appointment went". When the thing has a time, set at to AFTER it ends (an appointment at 2:30 → at about 4:00 that day), never at its start.
+- kind "promise": a companion offered to check back on something in ${userName}'s life and didn't file it ("I'll ask how the meeting went tomorrow", "check you ate after your shift"). This is the companion's own choice to follow up, never a promise ${userName} made.
+- NEVER file a companion's work or build to-dos: review verdicts, merges, builds, deploys, "I'll bring the report", code or repo tasks. Those are not follow-ups about ${userName}'s life.
+- Only with a real when. Resolve relative times ("tomorrow at 8", "Monday") against the "Now" line into ISO 8601 with that UTC offset. Use on_status_clears:true for "when you're done / after your shift / when you're back" with no clock time, and at:null then. Vague ("I'll always be here"), already over, a guest's plans, or ${userName} asking for something right now are not follow-ups.
+- Never one already in the "Open follow-ups" list, even reworded. If an open one changed (new time, new detail), use intention_update with its id instead of filing another.
+
+Hard rules for update, resolve and cancel:
+- Time having passed is never a reason to resolve.
+- An event being due is not evidence that it happened.
+- A reply that does not actually answer an open item is never resolve or update, however close the subject sounds.
+- Resolve only when ${userName} personally said, in this conversation, how it went or that it is settled; cancel only when ${userName} personally said it is off or no longer applies. Quote ${userName}'s exact words in evidence/reason; a paraphrase or a companion's words will be refused.
+- When unsure, the label is none.
+
+A follow-up op is separate from memory: the same moment can also deserve a continuity line.
 
 Scopes:
 - "${SHARED_SCOPE}" — facts about ${userName}, household, people, ongoing projects, plans, status. Visible to every companion.
 - ${companionSlugs.map((s) => `"${s}"`).join(', ')} — that companion's personal continuity: self-realizations, promises they made, identity moments, inside jokes they own, relationship developments specific to them.
 
-If the shared blocks include one labelled "human", that block is the page about ${userName} as a person: her family, her work, her friendships and community, her health, what she loves, and what is hard for her right now. A durable fact about her life belongs there, in neutral third person, and not in a status or project block. Notes about building or running the house's software never belong on it.
+If the shared blocks include one labelled "human", that block is the page about ${userName} as a person: their family, their work, their friendships and community, their health, what they love, and what is hard for them right now. A durable fact about their life belongs there, in neutral third person, and not in a status or project block. Notes about building or running the house's software never belong on it.
 
 Companion-scope entries are appended to blocks the companions author themselves, in the FIRST PERSON. Write those entries in first person, in that companion's voice ("I ...", "my ..."), never third person. Shared-scope entries stay neutral third person.
 
@@ -266,7 +299,7 @@ Rules:
 - Prefer append with short single lines. Use replace only when something in a block is now wrong.
 - When ${userName} teaches a preference through play, games, or teasing, that preference is durable even though it looks like banter.
 - If a moment was explicitly marked to keep — "that stays", "that's a polaroid", "log that" — and the blocks don't already hold it, it is durable by definition.
-- If nothing is worth saving and no promise needs filing, output []
+- If nothing is worth saving and no follow-up needs a label other than none, output []
 - Output ONLY the JSON array. No prose, no code fences.`;
 }
 
@@ -327,20 +360,36 @@ export function archivistMode(): 'propose' | 'write' {
 }
 
 /** Exported for tests. */
-export function applyOps(ops: MemoryOp[], sourceThread?: string): { applied: number; skipped: string[] } {
+export function applyOps(
+  ops: MemoryOp[],
+  sourceThread?: string,
+  opts: { herWords?: string } = {},
+): { applied: number; skipped: string[] } {
   const mode = archivistMode();
   let applied = 0;
   const skipped: string[] = [];
   for (const op of ops) {
-    // A promise with a when is filed straight into intentions (the operator's call:
-    // nothing to approve), whatever the memory mode.
+    // A follow-up with a when is filed straight into intentions (the owner's
+    // call: nothing to approve), whatever the memory mode.
     if (op.op === 'intention') {
       const result = sourceThread ? fileCaughtIntention(op, sourceThread) : 'refused';
       if (result === 'filed') {
         applied++;
-        mlog(`caught a promise: ${op.companion} — "${String(op.text).slice(0, 60)}"`);
+        mlog(`caught a ${op.kind === 'loose_end' ? 'loose end' : 'follow-up'}: ${op.companion} — "${String(op.text).slice(0, 60)}"`);
       } else {
         skipped.push(`intention ${op.companion}: ${result}`);
+      }
+      continue;
+    }
+    // Changes to an open one, by id. Resolve and cancel close only on the operator's own
+    // words from this batch (opts.herWords); with none to check, they're refused.
+    if (op.op === 'intention_update' || op.op === 'intention_resolve' || op.op === 'intention_cancel') {
+      const result = applyCaughtChange(op, opts.herWords ?? '');
+      if (result === 'updated' || result === 'resolved' || result === 'cancelled') {
+        applied++;
+        mlog(`follow-up ${op.id} ${result}`);
+      } else {
+        skipped.push(`${op.op} ${op.id}: ${result}`);
       }
       continue;
     }
@@ -625,7 +674,7 @@ New conversation from thread "${activity.thread_name}":
 ${conversationBlock}
 ---
 
-Output the JSON array of memory edit and intention operations now.`;
+Output the JSON array of memory edit and follow-up operations now.`;
 
   // Provider/model live in the settings table so they can be changed from the
   // phone (agent.archivist_provider / agent.archivist_model). Codex is the
@@ -665,7 +714,9 @@ Output the JSON array of memory edit and intention operations now.`;
     throw new Error(`unparseable extractor output, cursor held — ${err instanceof Error ? err.message : err}; raw: ${snippet}`);
   }
 
-  const { applied, skipped } = applyOps(ops, threadId);
+  // Only the operator's own lines count as evidence for closing a follow-up.
+  const herWords = batch.messages.filter((m) => m.role === 'user').map((m) => m.content).join('\n');
+  const { applied, skipped } = applyOps(ops, threadId, { herWords });
   setExtractionCursor(threadId, batchMaxSeq);
   const verb = archivistMode() === 'write' ? 'applied' : 'handed over for review';
   mlog(`${activity.thread_name}: ${ops.length} ops proposed, ${applied} ${verb}${skipped.length ? `, skipped: ${skipped.join(' | ')}` : ''}`);

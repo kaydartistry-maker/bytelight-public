@@ -432,6 +432,28 @@ export function initDb(dbPath: string): Database.Database {
     }
   }
 
+  // 049: intentions get a kind (a companion's own follow-up, or a loose end
+  // the owner mentioned) and a note saying why one closed. Same
+  // one-statement-at-a-time shape as 048; "duplicate column" means done.
+  const intentionFollowupsSQL = migrationSql('migrations/049_intentions_followups.sql');
+  if (intentionFollowupsSQL !== null) {
+    const statements = intentionFollowupsSQL
+      .split('\n')
+      .filter((line) => !line.trim().startsWith('--'))
+      .join('\n')
+      .split(';')
+      .map((stmt) => stmt.trim())
+      .filter(Boolean);
+    for (const stmt of statements) {
+      try {
+        db.exec(stmt);
+      } catch (err: unknown) {
+        const msg = errMessage(err);
+        if (!msg.includes('duplicate column')) console.warn('Migration warning (049):', msg);
+      }
+    }
+  }
+
   // 050: the Spellbook — spells (scenes with [Character N] tokens, mine or
   // community, with times cast) and looks (style boards). CREATE IF NOT EXISTS.
   runMigration(db, 'migrations/050_spellbook.sql', { required: true });

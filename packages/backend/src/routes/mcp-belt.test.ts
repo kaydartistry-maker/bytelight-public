@@ -135,3 +135,113 @@ describe('official MCP belt transport', () => {
     await client.close();
   });
 });
+
+describe('a Claude CLI lane on the house kit', () => {
+  async function connectAsLane(url: URL, laneKey: string) {
+    const transport = new StreamableHTTPClientTransport(url, {
+      requestInit: { headers: { Authorization: `Bearer ${TOKEN}`, 'X-Bytelight-Lane': laneKey } },
+    });
+    const client = new Client({ name: 'bytelight-lane-test', version: '1.0.0' });
+    await client.connect(transport);
+    return { client, transport };
+  }
+
+  const kit = [
+    { name: 'send_voice_note', description: 'voice', input_schema: { type: 'object' } },
+    { name: 'react_to_message', description: 'react', input_schema: { type: 'object' } },
+  ];
+  const everything = [...kit, { name: 'mind_orient', description: 'brain', input_schema: { type: 'object' } }];
+
+  it('is offered the house kit alone, while a session with no lane still gets everything', async () => {
+    const { url } = await startBelt({
+      getTools: async () => everything,
+      getKitTools: () => kit,
+      isKitTool: (name) => kit.some((t) => t.name === name),
+      laneTurn: () => null,
+    });
+    const lane = await connectAsLane(url, 'primary');
+    const codex = await connect(url);
+    assert.deepEqual((await lane.client.listTools()).tools.map((t) => t.name), ['send_voice_note', 'react_to_message']);
+    assert.deepEqual((await codex.client.listTools()).tools.map((t) => t.name), ['send_voice_note', 'react_to_message', 'mind_orient']);
+    await Promise.all([lane.transport.terminateSession(), codex.transport.terminateSession()]);
+    await Promise.all([lane.client.close(), codex.client.close()]);
+  });
+
+  it("a tool call lands in that lane's own chat, not the one Codex is in, and two lanes stay apart", async () => {
+    const seen: Array<{ name: string; threadId?: string }> = [];
+    const { getBeltContext } = await import('../services/chat-tool-belt.js');
+    const { url } = await startBelt({
+      getTools: async () => everything,
+      getKitTools: () => kit,
+      isKitTool: (name) => kit.some((t) => t.name === name),
+      executeTool: async (name) => { seen.push({ name, threadId: getBeltContext()?.threadId }); return { ok: true, result: 'ok' }; },
+      activeThread: () => 'codex-thread',
+      laneTurn: (key) => (key === 'companion-a' ? { threadId: 'companion-a-thread', audience: null }
+        : key === 'companion-b' ? { threadId: 'companion-b-thread', audience: null } : null),
+    });
+    const laneA = await connectAsLane(url, 'companion-a');
+    const laneB = await connectAsLane(url, 'companion-b');
+    const codex = await connect(url);
+    await laneA.client.callTool({ name: 'send_voice_note', arguments: {} });
+    await laneB.client.callTool({ name: 'react_to_message', arguments: {} });
+    await codex.client.callTool({ name: 'send_voice_note', arguments: {} });
+    assert.deepEqual(seen, [
+      { name: 'send_voice_note', threadId: 'companion-a-thread' },
+      { name: 'react_to_message', threadId: 'companion-b-thread' },
+      { name: 'send_voice_note', threadId: 'codex-thread' },
+    ]);
+    await Promise.all([laneA, laneB, codex].map((c) => c.transport.terminateSession()));
+    await Promise.all([laneA, laneB, codex].map((c) => c.client.close()));
+  });
+
+  it('with no turn running in the lane, a voice note is refused instead of borrowing the Codex chat', async () => {
+    let executed = false;
+    const { url } = await startBelt({
+      getKitTools: () => kit,
+      isKitTool: () => true,
+      executeTool: async () => { executed = true; return { ok: true, result: 'sent' }; },
+      activeThread: () => 'codex-thread',
+      laneTurn: () => null,
+    });
+    const lane = await connectAsLane(url, 'primary');
+    const refused = await lane.client.callTool({ name: 'send_voice_note', arguments: {} });
+    assert.equal(refused.isError, true);
+    assert.match((refused.content as Array<{ text: string }>)[0].text, /requires an active byte-light turn in this lane/);
+    assert.equal(executed, false);
+    await lane.transport.terminateSession();
+    await lane.client.close();
+  });
+
+  it('a lane cannot call a tool outside the kit through this door', async () => {
+    let executed = false;
+    const { url } = await startBelt({
+      getKitTools: () => kit,
+      isKitTool: (name) => kit.some((t) => t.name === name),
+      executeTool: async () => { executed = true; return { ok: true, result: 'ok' }; },
+      laneTurn: () => ({ threadId: 't', audience: null }),
+    });
+    const lane = await connectAsLane(url, 'primary');
+    const refused = await lane.client.callTool({ name: 'mind_orient', arguments: {} });
+    assert.equal(refused.isError, true);
+    assert.equal(executed, false);
+    await lane.transport.terminateSession();
+    await lane.client.close();
+  });
+
+  it("a guest's turn in the lane reaches the kit as a guest", async () => {
+    const audiences: unknown[] = [];
+    const { getBeltContext } = await import('../services/chat-tool-belt.js');
+    const guest = { kind: 'guest', trust: 'limited' } as never;
+    const { url } = await startBelt({
+      getKitTools: () => kit,
+      isKitTool: () => true,
+      executeTool: async () => { audiences.push(getBeltContext()?.audience); return { ok: false, result: 'refused' }; },
+      laneTurn: () => ({ threadId: 't', audience: guest }),
+    });
+    const lane = await connectAsLane(url, 'primary');
+    await lane.client.callTool({ name: 'react_to_message', arguments: {} });
+    assert.deepEqual(audiences, [guest]);
+    await lane.transport.terminateSession();
+    await lane.client.close();
+  });
+});

@@ -33,7 +33,7 @@ const BELT_NAMES = [
   'send_voice_note', 'generate_image', 'spellbook_search', 'spellbook_surprise', 'spellbook_cast', 'spellbook_read', 'search_messages', 'search_web',
   'core_memory_view', 'core_memory_append', 'core_memory_replace', 'core_memory_rethink',
   'library_status', 'library_read', 'library_highlights', 'library_note',
-  'set_intention', 'cancel_intention', 'set_status',
+  'set_intention', 'cancel_intention', 'list_intentions', 'defer_intention', 'resolve_intention', 'set_status',
   'battleship_fire',
   'canvas_create', 'canvas_update', 'canvas_read', 'canvas_list', 'react_to_message',
   'schedule_wakes', 'timer', 'star_message', 'impulse', 'watcher', 'telegram_send', 'search_backfill',
@@ -502,6 +502,42 @@ describe('schedule, timers, stars, impulses, watchers, Telegram and backfill', (
       { action: 'stop' },
     ]);
     assert.equal((await executeBeltTool('search_backfill', { action: 'run' }))?.ok, false);
+  });
+});
+
+describe('follow-ups (intentions)', () => {
+  beforeEach(() => installFetchMock());
+  afterEach(() => restoreFetch());
+
+  it('list, defer, resolve and cancel each post the right action to the intention route', async () => {
+    const cases = [
+      ['list_intentions', {}, { action: 'list', openOnly: true }],
+      ['defer_intention', { id: 'i1', at: '2026-11-20T15:00:00-05:00' }, { action: 'defer', id: 'i1', at: '2026-11-20T15:00:00-05:00' }],
+      ['resolve_intention', { id: 'i1', reason: 'she said it went fine' }, { action: 'resolve', id: 'i1', reason: 'she said it went fine' }],
+      ['cancel_intention', { id: 'i1', reason: 'called off' }, { action: 'cancel', id: 'i1', reason: 'called off' }],
+      ['cancel_intention', { id: 'i1' }, { action: 'cancel', id: 'i1' }],
+    ] as const;
+    for (const [name, args, body] of cases) {
+      fetchCalls = [];
+      const res = await executeBeltTool(name, args);
+      assert.equal(res?.ok, true, name);
+      assert.match(fetchCalls[0].url, /\/api\/internal\/intention$/);
+      assert.deepEqual(fetchCalls[0].body, body);
+    }
+  });
+
+  it('defer and resolve refuse missing arguments without calling out', async () => {
+    for (const [name, args] of [['defer_intention', { id: 'i1' }], ['resolve_intention', { id: 'i1' }]] as const) {
+      fetchCalls = [];
+      const res = await executeBeltTool(name, args);
+      assert.equal(res?.ok, false);
+      assert.equal(fetchCalls.length, 0);
+    }
+  });
+
+  it('set_intention is described as the companion\'s own choice, never the operator\'s promise', () => {
+    const set = getBeltToolSchemas().find((s) => s.name === 'set_intention')!;
+    assert.match(set.description, /your decision to check in, not a promise the operator made/);
   });
 });
 

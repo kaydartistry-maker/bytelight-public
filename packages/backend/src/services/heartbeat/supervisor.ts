@@ -29,6 +29,8 @@ import { PROJECT_ROOT } from '../../config.js';
 import { getConfig } from '../db/config.js';
 import { atomicWrite } from './atomic-write.js';
 import { laneMcpArgs, provisionSessionDir } from './provision.js';
+import { getMcpBeltToken, MCP_BELT_TOKEN_ENV } from '../mcp-belt-auth.js';
+import type { TurnAudience } from '../turn-audience.js';
 import { BUSY_FRESH_MS } from './constants.js';
 import { laneDirName } from './lane-dir.js';
 import { baselineFrom, BASELINE_FILE } from './block-drift.js';
@@ -1187,6 +1189,10 @@ export class HeartbeatSession {
    *  from any other thread is refused (Aerie's beginTurn(threadId)). */
   turnThreadId: string | null = null;
 
+  /** Who the in-flight turn came from; null when idle or the owner's. The
+   *  house kit reads it so a guest's turn is refused tools (routes/mcp-belt.ts). */
+  turnAudience: TurnAudience | null = null;
+
   /**
    * Epoch ms when the in-flight turn began; 0 when idle. The watchdog measures
    * a live turn from HERE rather than from the last file write, because the
@@ -1251,6 +1257,7 @@ export class HeartbeatSession {
   ensure(model: string, effort = 'adaptive'): boolean {
     const { templateChanged } = provisionSessionDir(this.dir, laneIdentityFor(this.key), {
       keepClaudeMd: Date.now() < this.holdInstructionsUntil,
+      laneKey: this.key,
     });
 
     let orphanWait: Promise<void> | null = null;
@@ -1613,7 +1620,7 @@ export class HeartbeatSession {
     // the "at session recycle" half of the blocks-ride-CLAUDE.md model; the
     // per-turn `ensure()` call covers the provision half. Relaunch paths
     // (natural exit, watchdog, sleep wake) reach here without ensure().
-    try { provisionSessionDir(this.dir, laneIdentityFor(this.key)); } catch (err) {
+    try { provisionSessionDir(this.dir, laneIdentityFor(this.key), { laneKey: this.key }); } catch (err) {
       console.warn(`[Heartbeat:${this.key}] provision refresh at launch failed:`, err);
     }
     try { unlinkSync(this.ioPath('.restart')); } catch { /* ignore */ }
@@ -1777,6 +1784,13 @@ export class HeartbeatSession {
     // Subscription lane: child must NOT see byte-light's API credentials.
     // Covers byte-light's BYOK surface — see STRIPPED_ENV_KEYS for the list.
     const env = stripChildEnv(process.env);
+    // The house kit's own credential, referenced by name in the lane's MCP
+    // config (provision.ts) the way the brain key is; never an API key.
+    try {
+      env[MCP_BELT_TOKEN_ENV] = getMcpBeltToken();
+    } catch (err) {
+      console.warn(`[Heartbeat:${this.key}] house kit credential unavailable; the lane launches without the kit:`, err);
+    }
 
     let autocompactRaw: string | null = null;
     try { autocompactRaw = getConfig('heartbeat.autocompact_tokens'); } catch { /* unset */ }
@@ -2139,6 +2153,16 @@ const sessions = new Map<string, HeartbeatSession>();
 export function isHeartbeatLaneWarm(key: string): boolean {
   const existing = sessions.get(key);
   return existing?.status === 'running';
+}
+
+/**
+ * The turn a lane is in right now, without creating a session for a key that
+ * has none. Null when the lane has no turn in flight.
+ */
+export function heartbeatLaneTurn(key: string): { threadId: string | null; audience: TurnAudience | null } | null {
+  const session = sessions.get(key);
+  if (!session?.turnActive) return null;
+  return { threadId: session.turnThreadId, audience: session.turnAudience };
 }
 
 export function getHeartbeatSession(key: string): HeartbeatSession {

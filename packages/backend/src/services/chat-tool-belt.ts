@@ -360,6 +360,17 @@ async function libraryCall(body: Record<string, unknown>): Promise<{ ok: boolean
   }
 }
 
+/** One call to the intentions route, wrapped in the belt's result envelope. */
+async function intentionCall(body: Record<string, unknown>): Promise<{ ok: boolean; result: string }> {
+  try {
+    const r = await postInternal('intention', body);
+    if (!r.ok) return { ok: false, result: JSON.stringify({ ok: false, error: errorFrom(r) }) };
+    return { ok: true, result: r.text };
+  } catch (e) {
+    return { ok: false, result: JSON.stringify({ ok: false, error: errMessage(e) }) };
+  }
+}
+
 export const CHAT_TOOL_BELT: BeltTool[] = [
   discordTool('send', 'Send a Discord message, optionally as a reply. An explicit channel ID can target another channel.', {
     channelId: discordChannelId,
@@ -947,14 +958,14 @@ export const CHAT_TOOL_BELT: BeltTool[] = [
     schema: {
       name: 'set_intention',
       description:
-        "File a promise you just made the operator that has a when: \"I'll ask how the meeting went\", \"dentist Monday 2:30\", \"check you ate after your shift\". When it's due it comes back to you, and you bring it up in your own voice; her answer closes it, and if she doesn't answer it's asked once more a day later, then rests. Never between 3 and 9 AM. Give `at`, `on_status_clears`, or both.",
+        "File your own choice to follow up with the operator later, with a when: \"I'll ask how the meeting went\", \"see how the dentist Monday 2:30 went\", \"check you ate after your shift\". This is your decision to check in, not a promise the operator made. When it's due it comes back to you as a note (not evidence anything happened): read the room, and either check in once in your own voice or close it with resolve_intention if they've already answered. Their answer closes it; if they don't answer it's asked once more a day later, then rests. Never between 3 and 9 AM. Give `at`, `on_status_clears`, or both. If you've already filed the same thing, you get the existing one back.",
       input_schema: {
         type: 'object',
         properties: {
           companion: { type: 'string', description: "Your companion slug, e.g. 'companion-a' or 'companion-b'." },
-          text: { type: 'string', description: "What you promised, in a sentence, e.g. 'ask how the shoot with the difficult director went'." },
-          at: { type: 'string', description: 'When it comes due, ISO 8601 with offset (e.g. 2026-10-27T14:30:00-04:00). Omit if it waits on her status instead.' },
-          on_status_clears: { type: 'boolean', description: 'True to bring it up when her Busy or Away status ends: "when you\'re done", rather than at a clock time.' },
+          text: { type: 'string', description: "The check-in you'll bring up, in a sentence, e.g. 'ask how the meeting with the difficult client went'." },
+          at: { type: 'string', description: "When it comes due, ISO 8601 with offset (e.g. 2026-10-27T14:30:00-04:00). Omit if it waits on the operator's status instead." },
+          on_status_clears: { type: 'boolean', description: "True to bring it up when the operator's Busy or Away status ends: \"when you're done\", rather than at a clock time." },
         },
         required: ['companion', 'text'],
       },
@@ -980,22 +991,78 @@ export const CHAT_TOOL_BELT: BeltTool[] = [
   {
     schema: {
       name: 'cancel_intention',
-      description: 'Take back a promise you filed with set_intention (it no longer applies, or she already told you). Ids are in `sc intention list`.',
+      description: 'Drop a follow-up you no longer want to keep (it no longer applies). If the operator already answered it, use resolve_intention instead. Ids are in list_intentions.',
       input_schema: {
         type: 'object',
-        properties: { id: { type: 'string', description: 'The intention id.' } },
+        properties: {
+          id: { type: 'string', description: 'The intention id.' },
+          reason: { type: 'string', description: 'Optional: why it no longer applies.' },
+        },
         required: ['id'],
       },
     },
     handler: async (args) => {
       if (typeof args.id !== 'string') return { ok: false, result: JSON.stringify({ ok: false, error: 'id is required' }) };
-      try {
-        const r = await postInternal('intention', { action: 'cancel', id: args.id });
-        if (!r.ok) return { ok: false, result: JSON.stringify({ ok: false, error: errorFrom(r) }) };
-        return { ok: true, result: r.text };
-      } catch (e) {
-        return { ok: false, result: JSON.stringify({ ok: false, error: errMessage(e) }) };
+      const body: Record<string, unknown> = { action: 'cancel', id: args.id };
+      if (typeof args.reason === 'string') body.reason = args.reason;
+      return intentionCall(body);
+    },
+  },
+
+  // 13a. list_intentions → POST /internal/intention {action:'list', openOnly}
+  {
+    schema: {
+      name: 'list_intentions',
+      description:
+        "The follow-ups being held for the operator right now, each with its id, who keeps it, its kind ('promise' is a companion's own choice to follow up; 'loose_end' is something the operator mentioned that one of you checks in on), when it comes due, and its state (pending, asked, nudged).",
+      input_schema: { type: 'object', properties: {}, required: [] },
+    },
+    handler: async () => intentionCall({ action: 'list', openOnly: true }),
+  },
+
+  // 13b. defer_intention → POST /internal/intention {action:'defer'}
+  {
+    schema: {
+      name: 'defer_intention',
+      description:
+        "Move an open follow-up later (the operator said \"ask me Friday\", or now isn't the moment). It waits until the new time and comes back to its keeper then, even if it was already asked once.",
+      input_schema: {
+        type: 'object',
+        properties: {
+          id: { type: 'string', description: 'The intention id, from list_intentions.' },
+          at: { type: 'string', description: 'The new time, ISO 8601 with offset, in the future.' },
+        },
+        required: ['id', 'at'],
+      },
+    },
+    handler: async (args) => {
+      if (typeof args.id !== 'string' || typeof args.at !== 'string') {
+        return { ok: false, result: JSON.stringify({ ok: false, error: 'id and at are required' }) };
       }
+      return intentionCall({ action: 'defer', id: args.id, at: args.at });
+    },
+  },
+
+  // 13c. resolve_intention → POST /internal/intention {action:'resolve'}
+  {
+    schema: {
+      name: 'resolve_intention',
+      description:
+        "Close an open follow-up because it's settled: the operator already told you how it went, or bringing it up would be out of place. Say why, ideally in their own words. Time passing alone is never a reason to resolve one.",
+      input_schema: {
+        type: 'object',
+        properties: {
+          id: { type: 'string', description: 'The intention id, from list_intentions or the due note.' },
+          reason: { type: 'string', description: 'What settles it, e.g. what the operator said.' },
+        },
+        required: ['id', 'reason'],
+      },
+    },
+    handler: async (args) => {
+      if (typeof args.id !== 'string' || typeof args.reason !== 'string') {
+        return { ok: false, result: JSON.stringify({ ok: false, error: 'id and reason are required' }) };
+      }
+      return intentionCall({ action: 'resolve', id: args.id, reason: args.reason });
     },
   },
 

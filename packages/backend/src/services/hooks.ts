@@ -859,8 +859,8 @@ if (h.digest) {
     parts.push({ label: 'Status', content: statusContext(getStatusSnapshot(now), userName, now, config.identity.timezone) });
   } catch {}
 
-  // Intentions — the promises they're holding for her, and how to file one
-  // (services/db/intentions.ts).
+  // Intentions — kept short: how many follow-ups are held for the operator, the ones
+  // waiting on their answer, and how to file one (services/db/intentions.ts).
   try {
     parts.push({ label: 'Promises', content: intentionsContext(userName, config.identity.timezone) });
   } catch {}

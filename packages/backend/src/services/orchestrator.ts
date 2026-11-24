@@ -39,10 +39,14 @@ import { getOwnerStatus } from './db/statuses.js';
 import {
   companionMessageSince,
   followUps,
+  getIntention,
   getIntentionForTrigger,
   inQuietWindow,
   intentionPrompt,
   intentionSettings,
+  statusFallbackDue,
+  statusFallbackGapOpen,
+  noteStatusFallbackUsed,
   markAsked,
   markNudged,
   markPendingAgain,
@@ -1884,6 +1888,28 @@ export class Orchestrator {
           continue;
         }
 
+        // A follow-up waiting on the operator's status that never got armed (they were
+        // never Busy or Away) may still come due: once they're here, the house
+        // is free, and it has waited long enough. Any `after` time still has
+        // to hold. Only one comes due this way per gap window (oldest first:
+        // triggers are walked in the order they were made), so a backlog of
+        // them drains one at a time rather than as a flood of check-ins.
+        let conditionsToCheck = conditions;
+        let viaStatusFallback = false;
+        if (conditions.some(c => c.type === 'status_clears' && !c.armed)) {
+          const waitingIntention = getIntentionForTrigger(trigger.id);
+          if (waitingIntention && statusFallbackDue(waitingIntention, {
+            presence: presenceNow,
+            ownerAway,
+            agentFree,
+            nowMs: now.getTime(),
+            afterHours: intentionSettings().statusFallbackHours,
+          })) {
+            conditionsToCheck = conditions.map(c => (c.type === 'status_clears' ? { ...c, armed: true } : c));
+            viaStatusFallback = true;
+          }
+        }
+
         // Watchers: check cooldown
         if (trigger.kind === 'watcher' && trigger.last_fired_at) {
           const lastFired = new Date(trigger.last_fired_at).getTime();
@@ -1891,7 +1917,14 @@ export class Orchestrator {
           if (now.getTime() - lastFired < cooldownMs) continue;
         }
 
-        if (evaluateConditions(conditions, ctx)) {
+        if (evaluateConditions(conditionsToCheck, ctx)) {
+          if (viaStatusFallback) {
+            if (!statusFallbackGapOpen(now.getTime(), intentionSettings().statusFallbackGapHours)) continue;
+            // Written before firing, so the gap holds even if the turn fails
+            // or the house restarts mid-turn.
+            noteStatusFallbackUsed(now);
+            olog(`INTENTION VIA STATUS FALLBACK: "${trigger.label}"`);
+          }
           if (agentFree) {
             await this.fireTrigger(trigger, now);
           } else {
@@ -1941,6 +1974,13 @@ export class Orchestrator {
     try {
       const userName = getBytelightConfig().identity.user_name;
       const response = await this.agent.processAutonomous(threadId, intentionPrompt(intention, userName, now), intention.companion);
+      // The companion may have read the room and closed it instead of asking
+      // (resolve_intention): then it's done, and nothing goes back in line.
+      const after = getIntention(intention.id);
+      if (after && after.state !== 'pending') {
+        olog(`INTENTION CLOSED INSTEAD OF SAID: "${intention.text.slice(0, 60)}" — ${after.state}`);
+        return;
+      }
       const said = companionMessageSince(threadId, startedAt);
       if (!said || !response || response === QUEUE_TIMEOUT_MESSAGE) {
         // Nothing reached her: back in line for the next tick.
@@ -1967,16 +2007,27 @@ export class Orchestrator {
     try {
       const settings = intentionSettings();
       const now = new Date();
-      const items = followUps(now, { quiet: this.intentionQuietNow(), nudgeAfterMinutes: settings.nudgeAfterMinutes, restAfterMinutes: settings.restAfterMinutes });
+      const items = followUps(now, {
+        quiet: this.intentionQuietNow(),
+        nudgeAfterMinutes: settings.nudgeAfterMinutes,
+        restAfterMinutes: settings.restAfterMinutes,
+        expireAfterDays: settings.expireAfterDays,
+      });
       for (const item of items) {
         if (item.kind === 'answered') olog(`INTENTION ANSWERED: "${item.intention.text.slice(0, 60)}"`);
         if (item.kind === 'rest') olog(`INTENTION RESTING: "${item.intention.text.slice(0, 60)}"`);
+        if (item.kind === 'expired') olog(`INTENTION EXPIRED, RESTING: "${item.intention.text.slice(0, 60)}"`);
         if (item.kind !== 'nudge' || this.agent.isProcessing()) continue;
         const i = item.intention;
         const threadId = this.intentionThread(i, null);
         const startedAt = now.toISOString();
         const userName = getBytelightConfig().identity.user_name;
         const response = await this.agent.processAutonomous(threadId, nudgePrompt(i, userName, now), i.companion);
+        // Closed instead of asked again (resolve_intention): leave it closed.
+        if (getIntention(i.id)?.state !== 'asked') {
+          olog(`INTENTION CLOSED INSTEAD OF NUDGED: "${i.text.slice(0, 60)}"`);
+          continue;
+        }
         const said = companionMessageSince(threadId, startedAt);
         if (said && response && response !== QUEUE_TIMEOUT_MESSAGE) {
           markNudged(i.id, said);

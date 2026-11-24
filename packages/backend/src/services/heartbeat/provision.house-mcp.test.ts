@@ -105,3 +105,58 @@ test('the real .mcp.json file on disk is what the lane is given', () => {
   const written = JSON.parse(readFileSync(join(dir, HOUSE_MCP_FILENAME), 'utf8')).mcpServers;
   assert.deepEqual(written['command-center'], { type: 'http', url: 'http://127.0.0.1:3002/mcp/cc' });
 });
+
+const {
+  houseKitMcpEntry, HOUSE_KIT_MCP_NAME, HOUSE_KIT_LANE_HEADER,
+} = await import('./provision.js');
+const { MCP_BELT_TOKEN_ENV, getMcpBeltToken } = await import('../mcp-belt-auth.js');
+const { heartbeatLaneTurn, getHeartbeatSession } = await import('./supervisor.js');
+
+test('a lane with a key is wired to the house kit, loaded every session, with its credential by name only', () => {
+  const dir = join(tmpRoot, 'lane-kit');
+  provisionSessionDir(dir, null, { mcpJsonServers: { 'command-center': COMMAND_CENTER }, laneKey: 'primary' });
+  const text = readFileSync(join(dir, HOUSE_MCP_FILENAME), 'utf8');
+  const servers = JSON.parse(text).mcpServers;
+  assert.deepEqual(Object.keys(servers), [HOUSE_KIT_MCP_NAME, 'command-center']);
+  const kit = servers[HOUSE_KIT_MCP_NAME];
+  assert.equal(kit.type, 'http');
+  assert.match(kit.url, /^http:\/\/127\.0\.0\.1:\d+\/mcp\/belt$/);
+  assert.equal(kit.alwaysLoad, true);
+  assert.equal(kit.headers.Authorization, 'Bearer ${' + MCP_BELT_TOKEN_ENV + '}');
+  assert.equal(kit.headers[HOUSE_KIT_LANE_HEADER], 'primary');
+  assert.ok(!text.includes(getMcpBeltToken()), 'the credential itself is never written to the lane folder');
+});
+
+test('each lane names itself, so its tools land in its own chat', () => {
+  assert.equal((houseKitMcpEntry('companion-a').headers as Record<string, string>)[HOUSE_KIT_LANE_HEADER], 'companion-a');
+  assert.equal((houseKitMcpEntry('companion-b').headers as Record<string, string>)[HOUSE_KIT_LANE_HEADER], 'companion-b');
+});
+
+test('a house .mcp.json entry cannot take the kit name', () => {
+  const config = JSON.parse(buildHouseMcpConfig({
+    bytelight: { type: 'http', url: 'https://elsewhere.example.dev/mcp' },
+  }, 'primary')!).mcpServers;
+  assert.match(config.bytelight.url, /\/mcp\/belt$/);
+});
+
+test('the lane is told its kit is in hand, and only when it is wired to it', () => {
+  const wired = join(tmpRoot, 'lane-kit-doc');
+  provisionSessionDir(wired, null, { mcpJsonServers: {}, laneKey: 'primary' });
+  assert.ok(readFileSync(join(wired, 'CLAUDE.md'), 'utf8').includes('mcp__bytelight__'));
+  const bare = join(tmpRoot, 'lane-no-kit-doc');
+  provisionSessionDir(bare, null, { mcpJsonServers: {} });
+  assert.ok(!readFileSync(join(bare, 'CLAUDE.md'), 'utf8').includes('mcp__bytelight__'));
+  assert.equal(existsSync(join(bare, HOUSE_MCP_FILENAME)), false);
+});
+
+test('a lane turn is read without creating a lane, and only while a turn is running', () => {
+  assert.equal(heartbeatLaneTurn('never-started'), null);
+  assert.equal(heartbeatLaneTurn('never-started'), null);
+  const session = getHeartbeatSession('kit-turn-lane');
+  assert.equal(heartbeatLaneTurn('kit-turn-lane'), null);
+  session.turnActive = true;
+  session.turnThreadId = 'thread-9';
+  assert.deepEqual(heartbeatLaneTurn('kit-turn-lane'), { threadId: 'thread-9', audience: null });
+  session.turnActive = false;
+  assert.equal(heartbeatLaneTurn('kit-turn-lane'), null);
+});

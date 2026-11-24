@@ -34,6 +34,7 @@ import { formatBlocksForPrompt, SHARED_SCOPE, COMPANION_SCOPES } from '../memory
 import { atLeast, claudeCliVersion } from './cli-version.js';
 import { getBytelightConfig } from '../../config.js';
 import { readMcpJson, type McpJsonServer } from '../mcp-json.js';
+import { MCP_BELT_TOKEN_ENV } from '../mcp-belt-auth.js';
 
 // Delivery-cap constants. These live here as TS values and are INTERPOLATED
 // into the hook source below (byte-identical to the literals they replaced) so
@@ -1028,8 +1029,41 @@ export function neuralisMcpArgs(dir: string): string[] {
 
 export const HOUSE_MCP_FILENAME = 'house.mcp.json';
 
-/** Names the lane's own brain wire holds; a house entry never replaces it. */
-const LANE_OWNED_MCP_NAMES = new Set(['neuralis-core', 'neuralis']);
+/** The house kit's server name on a lane; its tools arrive as mcp__bytelight__*. */
+export const HOUSE_KIT_MCP_NAME = 'bytelight';
+/** Header naming the lane, so the kit knows which chat a tool call belongs to. */
+export const HOUSE_KIT_LANE_HEADER = 'X-Bytelight-Lane';
+
+/** Names the lane itself holds; a house .mcp.json entry never replaces them. */
+const LANE_OWNED_MCP_NAMES = new Set(['neuralis-core', 'neuralis', HOUSE_KIT_MCP_NAME]);
+
+/** Where the house serves its kit over MCP (the address Codex CLI dials too). */
+export function houseKitUrl(): string {
+  const fromEnv = process.env.BYTELIGHT_MCP_BELT_URL?.trim();
+  if (fromEnv) return fromEnv;
+  let port = 3002;
+  try { port = getBytelightConfig().server.port; } catch { /* config not loaded: default port */ }
+  return `http://127.0.0.1:${port}/mcp/belt`;
+}
+
+/**
+ * The house kit as one MCP server for a Claude CLI lane: the same tools the
+ * API lanes are handed each turn and Codex CLI dials at launch. The credential
+ * is referenced by env name, never written. The lane header lets the kit put
+ * a voice note, a reaction or a timer in the chat this lane's turn belongs to.
+ * Loaded every session, so the lane never has to search for its own kit.
+ */
+export function houseKitMcpEntry(laneKey: string): Record<string, unknown> {
+  return {
+    type: 'http',
+    url: houseKitUrl(),
+    headers: {
+      Authorization: `Bearer \${${MCP_BELT_TOKEN_ENV}}`,
+      [HOUSE_KIT_LANE_HEADER]: laneKey,
+    },
+    alwaysLoad: true,
+  };
+}
 
 /**
  * The servers in the house's .mcp.json, written for a Claude CLI lane. Codex
@@ -1037,11 +1071,15 @@ const LANE_OWNED_MCP_NAMES = new Set(['neuralis-core', 'neuralis']);
  * API lanes reach it through mcp-json-bridge.ts; without it a Claude CLI lane
  * held the brain and nothing else the house had connected.
  */
-export function buildHouseMcpConfig(servers: Record<string, McpJsonServer>): string | null {
+export function buildHouseMcpConfig(
+  servers: Record<string, McpJsonServer>,
+  laneKey?: string,
+): string | null {
   const mcpServers: Record<string, unknown> = {};
+  if (laneKey) mcpServers[HOUSE_KIT_MCP_NAME] = houseKitMcpEntry(laneKey);
   for (const [name, server] of Object.entries(servers)) {
     if (LANE_OWNED_MCP_NAMES.has(name)) {
-      console.warn(`[Heartbeat] .mcp.json server "${name}" skipped: the lane's own brain wire holds that name`);
+      console.warn(`[Heartbeat] .mcp.json server "${name}" skipped: the lane itself holds that name`);
       continue;
     }
     if (server.type === 'stdio') {
@@ -1098,6 +1136,20 @@ function syncLaneConfigFile(path: string, content: string | null): boolean {
     return true;
   }
   return false;
+}
+
+function houseKitOperationSection(): string {
+  return `
+## The house kit — loaded on every turn
+
+The house's own tools are already in your hands as \`mcp__${HOUSE_KIT_MCP_NAME}__*\`, no
+ToolSearch needed: voice notes, images, canvases, reactions, stars, timers,
+impulses and watchers, the wake schedule, Telegram, core memory, the library,
+status, intentions, search and the rest. They are the same tools every other
+engine in this house holds. Reach for them first. The \`sc\` command line still
+works and does the same things; it also covers the few that need a file on
+disk (sharing a file, sending one over Telegram).
+`;
 }
 
 function neuralisOperationSection(): string {
@@ -1317,7 +1369,12 @@ function renderCoreMemorySection(): string {
 export function provisionSessionDir(
   dir: string,
   lane: LaneIdentity | null = null,
-  opts: { keepClaudeMd?: boolean; mcpJsonServers?: Record<string, McpJsonServer> } = {},
+  opts: {
+    keepClaudeMd?: boolean;
+    mcpJsonServers?: Record<string, McpJsonServer>;
+    /** The lane's session key. With it the lane is also wired to the house kit. */
+    laneKey?: string;
+  } = {},
 ): ProvisionResult {
   mkdirSync(join(dir, '.claude'), { recursive: true });
   mkdirSync(join(dir, 'hooks'), { recursive: true });
@@ -1333,7 +1390,9 @@ export function provisionSessionDir(
   // A companion's own lane narrows the shared identity to him (lane-identity.ts).
   // It sits in the operational part, so a changed bio recycles the session
   // and the new words actually reach him.
-  const operational = heartbeatOperationSection() + neuralisOperationSection() + (lane ? renderLaneSection(lane) : '');
+  const operational = heartbeatOperationSection() + neuralisOperationSection()
+    + (opts.laneKey ? houseKitOperationSection() : '')
+    + (lane ? renderLaneSection(lane) : '');
   const memorySection = renderCoreMemorySection();
   const claudeMd = operational + memorySection;
   const claudeMdPath = join(dir, 'CLAUDE.md');
@@ -1368,7 +1427,7 @@ export function provisionSessionDir(
   // A change recycles the session, as a brain-wire change does, because a
   // warm CLI only reads its MCP configs at launch.
   const houseServers = opts.mcpJsonServers ?? houseMcpServers();
-  const houseChanged = syncLaneConfigFile(join(dir, HOUSE_MCP_FILENAME), buildHouseMcpConfig(houseServers));
+  const houseChanged = syncLaneConfigFile(join(dir, HOUSE_MCP_FILENAME), buildHouseMcpConfig(houseServers, opts.laneKey));
 
   return { dir, templateChanged: templateChanged || neuralisChanged || houseChanged };
 }

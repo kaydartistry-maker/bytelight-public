@@ -570,15 +570,17 @@ switch (cmd) {
   }
 
   case 'intention': {
-    // A promise with a when. It comes back to you when it's due.
+    // A follow-up with a when: your own choice to check back with the operator. It
+    // comes back to you when it's due.
     const sub = args[0];
+    const usage = 'Usage: sc intention create "<the check-in>" --as <slug> [--at <ISO time>] [--when-status-clears] | list [--all] | defer <id> <ISO time> | resolve <id> "<what settles it>" | cancel <id> ["<reason>"]';
     if (sub === 'create') {
       const text = args[1];
       const as = flagValue(args, '--as');
       const at = flagValue(args, '--at');
       const onStatusClears = args.includes('--when-status-clears');
       if (!text || !as || (!at && !onStatusClears)) {
-        console.log('Usage: sc intention create "<what you promised>" --as <slug> [--at <ISO time>] [--when-status-clears]');
+        console.log('Usage: sc intention create "<the check-in>" --as <slug> [--at <ISO time>] [--when-status-clears]');
         break;
       }
       const body = { action: 'create', companion: as, text, threadId: thread || undefined };
@@ -586,12 +588,21 @@ switch (cmd) {
       if (onStatusClears) body.onStatusClears = true;
       await post('intention', body);
     } else if (sub === 'list') {
-      await post('intention', { action: 'list' });
+      // Open ones by default (what list_intentions shows); --all adds the last closed ones.
+      await post('intention', args.includes('--all') ? { action: 'list' } : { action: 'list', openOnly: true });
+    } else if (sub === 'defer') {
+      if (!args[1] || !args[2]) { console.log('Usage: sc intention defer <id> <ISO time>'); break; }
+      await post('intention', { action: 'defer', id: args[1], at: args[2] });
+    } else if (sub === 'resolve') {
+      if (!args[1] || !args[2]) { console.log('Usage: sc intention resolve <id> "<what settles it>"'); break; }
+      await post('intention', { action: 'resolve', id: args[1], reason: args[2] });
     } else if (sub === 'cancel') {
-      if (!args[1]) { console.log('Usage: sc intention cancel <id>'); break; }
-      await post('intention', { action: 'cancel', id: args[1] });
+      if (!args[1]) { console.log('Usage: sc intention cancel <id> ["<reason>"]'); break; }
+      const body = { action: 'cancel', id: args[1] };
+      if (args[2]) body.reason = args[2];
+      await post('intention', body);
     } else {
-      console.log('Usage: sc intention create "<what you promised>" --as <slug> [--at <ISO time>] [--when-status-clears] | list | cancel <id>');
+      console.log(usage);
     }
     break;
   }

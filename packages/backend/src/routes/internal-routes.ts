@@ -68,7 +68,15 @@ import { listCompanions } from '../services/db/rooms.js';
 import { sealLetter, listLetters, openLetter, unopenedLettersFor, LetterError } from '../services/db/letters.js';
 import { addFieldNote, listFieldNotes, fieldNotesLimit, FieldNoteError } from '../services/db/field-notes.js';
 import { getStatusSnapshot, setCompanionStatus, StatusError } from '../services/db/statuses.js';
-import { cancelIntention, createIntention, IntentionError, listIntentions } from '../services/db/intentions.js';
+import {
+  cancelIntention,
+  createIntention,
+  deferIntention,
+  IntentionError,
+  listIntentions,
+  openIntentionsSummary,
+  resolveIntention,
+} from '../services/db/intentions.js';
 import { postToTreehouse, getTreehouseInfo, getTreehouseMessages, treehouseMembers } from '../services/treehouse.js';
 
 // A self-knowledge entry is owned by a companion or by 'shared'. 'shared' is a
@@ -1503,8 +1511,10 @@ export function createInternalRoutes(): Router {
     res.json(getStatusSnapshot());
   });
 
-  // ── Intentions (agent-facing) ── a promise with a when, filed so it comes
-  // back to its promiser when it's due (services/db/intentions.ts).
+  // ── Intentions (agent-facing) ── a follow-up with a when, filed so it
+  // comes back to the companion who keeps it when it's due
+  // (services/db/intentions.ts). A companion filing one is choosing to
+  // follow up; it is never recorded as a promise the operator made.
   router.post('/internal/intention', requireLocalhost, (req, res) => {
     const { action } = req.body ?? {};
     try {
@@ -1513,13 +1523,27 @@ export function createInternalRoutes(): Router {
         const { intention, existing } = createIntention({ companion, text, at, onStatusClears, threadId });
         res.json({ ok: true, existing, intention });
       } else if (action === 'list') {
-        res.json({ intentions: listIntentions() });
+        if (req.body.openOnly === true) {
+          const { user_name, timezone } = getBytelightConfig().identity;
+          res.json({ intentions: openIntentionsSummary(user_name, timezone) });
+        } else {
+          res.json({ intentions: listIntentions() });
+        }
       } else if (action === 'cancel') {
-        const ok = cancelIntention(String(req.body.id ?? ''));
+        const reason = typeof req.body.reason === 'string' ? req.body.reason : undefined;
+        const ok = cancelIntention(String(req.body.id ?? ''), new Date(), reason);
         if (!ok) { res.status(404).json({ error: 'No open intention with that id.' }); return; }
         res.json({ ok: true });
+      } else if (action === 'resolve') {
+        const ok = resolveIntention(String(req.body.id ?? ''), req.body.reason);
+        if (!ok) { res.status(404).json({ error: 'No open intention with that id.' }); return; }
+        res.json({ ok: true });
+      } else if (action === 'defer') {
+        const intention = deferIntention(String(req.body.id ?? ''), req.body.at);
+        if (!intention) { res.status(404).json({ error: 'No open intention with that id.' }); return; }
+        res.json({ ok: true, intention });
       } else {
-        res.status(400).json({ error: "action must be 'create', 'list' or 'cancel'" });
+        res.status(400).json({ error: "action must be 'create', 'list', 'cancel', 'resolve' or 'defer'" });
       }
     } catch (error) {
       if (error instanceof IntentionError) {

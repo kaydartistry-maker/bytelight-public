@@ -15,18 +15,29 @@ import {
   isInitializeRequest,
 } from '@modelcontextprotocol/sdk/types.js';
 import { getRouterTools, executeRouterTool } from '../services/mcp-bridge.js';
-import { runWithBeltContext } from '../services/chat-tool-belt.js';
+import { runWithBeltContext, getBeltToolSchemas, isBeltTool } from '../services/chat-tool-belt.js';
 import { codexActiveBeltThread, codexActiveTurnAudience } from '../services/runtimes/codex-daemon.js';
+import { heartbeatLaneTurn } from '../services/heartbeat/supervisor.js';
+import type { TurnAudience } from '../services/turn-audience.js';
 import { getMcpBeltToken, validMcpBeltBearer } from '../services/mcp-belt-auth.js';
 import { errMessage } from '../util/errors.js';
 
 const THREAD_BOUND_TOOLS = new Set(['send_voice_note', 'generate_image', 'spellbook_cast', 'spellbook_read']);
+
+/** Sent by a Claude CLI lane (heartbeat/provision.ts HOUSE_KIT_LANE_HEADER). */
+const LANE_HEADER = 'x-bytelight-lane';
 
 interface BeltDependencies {
   getTools: typeof getRouterTools;
   executeTool: typeof executeRouterTool;
   activeThread: typeof codexActiveBeltThread;
   activeAudience?: typeof codexActiveTurnAudience;
+  /** The house kit alone, for a Claude CLI lane (it has its own wire to the
+   *  brain and to the house's .mcp.json servers). */
+  getKitTools: typeof getBeltToolSchemas;
+  isKitTool: typeof isBeltTool;
+  /** The turn a Claude CLI lane is in right now, or null when it has none. */
+  laneTurn: (laneKey: string) => { threadId: string | null; audience: TurnAudience | null } | null;
   expectedToken: () => string;
   sessionIdleMs: number;
   sweepIntervalMs: number;
@@ -49,6 +60,9 @@ const defaultDependencies: BeltDependencies = {
   executeTool: executeRouterTool,
   activeThread: codexActiveBeltThread,
   activeAudience: codexActiveTurnAudience,
+  getKitTools: getBeltToolSchemas,
+  isKitTool: isBeltTool,
+  laneTurn: heartbeatLaneTurn,
   expectedToken: getMcpBeltToken,
   sessionIdleMs: 6 * 60 * 60 * 1000,
   sweepIntervalMs: 60 * 1000,
@@ -85,14 +99,18 @@ export function createBeltMcpRouter(overrides: Partial<BeltDependencies> = {}): 
     next();
   });
 
-  const createServer = (): Server => {
+  // A session opened by a Claude CLI lane names the lane. Its tool calls are
+  // then tied to that lane's own turn, never to whatever Codex is doing, and
+  // it is offered the house kit alone. A session with no lane is the Codex
+  // app-server, unchanged.
+  const createServer = (laneKey?: string): Server => {
     const server = new Server(
       { name: 'bytelight-belt', version: '2.0.0' },
       { capabilities: { tools: { listChanged: false } } },
     );
 
     server.setRequestHandler(ListToolsRequestSchema, async () => {
-      const tools = await deps.getTools();
+      const tools = laneKey ? deps.getKitTools() : await deps.getTools();
       return {
         tools: tools.map((tool) => ({
           name: tool.name,
@@ -105,19 +123,27 @@ export function createBeltMcpRouter(overrides: Partial<BeltDependencies> = {}): 
     server.setRequestHandler(CallToolRequestSchema, async (request) => {
       const name = request.params.name;
       const args = (request.params.arguments || {}) as Record<string, unknown>;
-      const threadId = deps.activeThread() ?? undefined;
+      const laneTurn = laneKey ? deps.laneTurn(laneKey) : null;
+      const threadId = (laneKey ? laneTurn?.threadId : deps.activeThread()) ?? undefined;
+
+      if (laneKey && !deps.isKitTool(name)) {
+        return {
+          content: [{ type: 'text', text: `Error: ${name} is not a house kit tool.` }],
+          isError: true,
+        };
+      }
 
       if (THREAD_BOUND_TOOLS.has(name) && !threadId) {
         return {
-          content: [{ type: 'text', text: `Error: ${name} requires an active byte-light Codex turn.` }],
+          content: [{ type: 'text', text: `Error: ${name} requires an active byte-light ${laneKey ? 'turn in this lane' : 'Codex turn'}.` }],
           isError: true,
         };
       }
 
       try {
-        // The live Codex turn's audience rides along, so a guest's turn is
-        // refused belt tools by executeRouterTool (turn-audience.ts).
-        const audience = deps.activeAudience?.() ?? undefined;
+        // The live turn's audience rides along, so a guest's turn is refused
+        // belt tools by executeRouterTool (turn-audience.ts).
+        const audience = (laneKey ? laneTurn?.audience : deps.activeAudience?.()) ?? undefined;
         const { result, ok } = await runWithBeltContext({ threadId, ...(audience ? { audience } : {}) }, () =>
           deps.executeTool(name, args));
         return {
@@ -170,7 +196,8 @@ export function createBeltMcpRouter(overrides: Partial<BeltDependencies> = {}): 
     }
 
     let transport!: StreamableHTTPServerTransport;
-    const server = createServer();
+    const laneKey = oneHeader(req.headers[LANE_HEADER])?.trim() || undefined;
+    const server = createServer(laneKey);
     transport = new StreamableHTTPServerTransport({
       sessionIdGenerator: randomUUID,
       onsessioninitialized: (sessionId) => {

@@ -916,6 +916,7 @@ export class InteractiveCliRuntime implements AgentRuntime {
     session.turnActive = true;
     session.turnStartedAt = Date.now();
     session.turnThreadId = input.thread.id;
+    session.turnAudience = input.audience ?? null;
     try {
       if (state.idleDelivery) {
         try { await state.idleDelivery; } catch { /* watcher logs its own failures */ }
@@ -955,6 +956,7 @@ export class InteractiveCliRuntime implements AgentRuntime {
       session.turnActive = false;
       session.turnStartedAt = 0;
       session.turnThreadId = null;
+      session.turnAudience = null;
       // Mark where this lane's sight ends. Written to disk as well, because the
       // map it lives in is empty after every restart and a reopened room has
       // no other way to date itself. The room that wrote it goes beside it.
