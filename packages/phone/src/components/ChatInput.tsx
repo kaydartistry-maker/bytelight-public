@@ -849,7 +849,7 @@ export function ChatInput({ onSend, onError, giphyApiKey, disabled, themeConfig,
   return (
     <div
       className={cn(
-        "bytelight-composer-wrap px-4 py-2 sm:px-6 sm:py-3 border-t relative z-10 transition-all duration-500",
+        "bytelight-composer-wrap px-3 pt-2 sm:px-6 sm:pt-3 border-t relative z-10 transition-all duration-500",
         // BL's composer contract: 'expanded' when something is going on —
         // pending text, attachments, or an open picker. Focus expands via
         // CSS :focus-within. The toolbar row reads both (index.css).
@@ -860,7 +860,7 @@ export function ChatInput({ onSend, onError, giphyApiKey, disabled, themeConfig,
         themeMode === 'light' ? 'bg-white' : colors.pageBg,
         colors.panelBorder
       )}
-      style={{ paddingBottom: 'max(0.75rem, env(safe-area-inset-bottom, 0px), var(--sab, 0px))' }}
+      style={{ paddingBottom: 'max(0.5rem, min(var(--sab, 0px), 2.25rem))' }}
       onDragEnter={handleDragOver}
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}

@@ -293,6 +293,7 @@ export function ThreadSwitcher({ isOpen, onClose, themeConfig, themeMode, compan
               <span className={cn('truncate text-sm font-medium', colors.textMain)}>{thread.name}</span>
               {thread.unread_count > 0 && (
                 <span
+                  data-unread="true"
                   className="ml-auto shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-bold"
                   style={{ background: accentHex, color: contrastTextColor(accentHex) }}
                 >

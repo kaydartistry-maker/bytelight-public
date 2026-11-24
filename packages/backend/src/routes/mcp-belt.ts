@@ -16,11 +16,13 @@ import {
 } from '@modelcontextprotocol/sdk/types.js';
 import { getRouterTools, executeRouterTool } from '../services/mcp-bridge.js';
 import { runWithBeltContext } from '../services/chat-tool-belt.js';
+import type { BeltContext } from '../services/chat-tool-belt.js';
+import { isTurnAudience } from '../services/turn-audience.js';
 import { codexActiveBeltThread, codexActiveTurnAudience } from '../services/runtimes/codex-daemon.js';
 import { getMcpBeltToken, validMcpBeltBearer } from '../services/mcp-belt-auth.js';
 import { errMessage } from '../util/errors.js';
 
-const THREAD_BOUND_TOOLS = new Set(['send_voice_note', 'generate_image']);
+const THREAD_BOUND_TOOLS = new Set(['send_voice_note', 'generate_image', 'spellbook_cast', 'spellbook_read']);
 
 interface BeltDependencies {
   getTools: typeof getRouterTools;
@@ -30,12 +32,14 @@ interface BeltDependencies {
   expectedToken: () => string;
   sessionIdleMs: number;
   sweepIntervalMs: number;
+  now: () => number;
 }
 
 interface BeltSession {
   server: Server;
   transport: StreamableHTTPServerTransport;
   lastSeenAt: number;
+  context?: BeltContext;
 }
 
 export interface BeltMcpRouter {
@@ -52,6 +56,7 @@ const defaultDependencies: BeltDependencies = {
   expectedToken: getMcpBeltToken,
   sessionIdleMs: 6 * 60 * 60 * 1000,
   sweepIntervalMs: 60 * 1000,
+  now: Date.now,
 };
 
 function jsonRpcError(res: Response, status: number, code: number, message: string): void {
@@ -62,12 +67,43 @@ function oneHeader(value: string | string[] | undefined): string | undefined {
   return Array.isArray(value) ? value[0] : value;
 }
 
+function decodeHeader(value: string | undefined, maxBytes = 8000): string | undefined {
+  if (!value) return undefined;
+  try {
+    const decoded = Buffer.from(value, 'base64url').toString('utf8');
+    return Buffer.byteLength(decoded, 'utf8') <= maxBytes ? decoded : undefined;
+  } catch { return undefined; }
+}
+
+/** A bearer-authenticated foreign CLI binds its MCP session to the current
+ * Virelle turn. The model cannot author these headers: the owned runtime and
+ * secret-bearing stdio proxy supply them out of band. */
+function contextFromHeaders(req: Request): BeltContext | undefined {
+  const threadId = oneHeader(req.headers['x-bytelight-thread-id']);
+  const rawOwnerMessageText = decodeHeader(oneHeader(req.headers['x-bytelight-owner-message']));
+  const audienceRaw = decodeHeader(oneHeader(req.headers['x-bytelight-audience']), 1000);
+  let audience: BeltContext['audience'];
+  if (audienceRaw) {
+    try {
+      const parsed = JSON.parse(audienceRaw);
+      if (isTurnAudience(parsed)) audience = parsed;
+    } catch { /* malformed context is ignored, never promoted */ }
+  }
+  if (!threadId && !rawOwnerMessageText && !audience) return undefined;
+  return {
+    ...(threadId ? { threadId: threadId.slice(0, 200) } : {}),
+    ...(rawOwnerMessageText ? { rawOwnerMessageText } : {}),
+    isAutonomous: oneHeader(req.headers['x-bytelight-is-autonomous']) === '1',
+    ...(audience ? { audience } : {}),
+  };
+}
+
 export function createBeltMcpRouter(overrides: Partial<BeltDependencies> = {}): BeltMcpRouter {
   const deps = { ...defaultDependencies, ...overrides };
   const router = Router();
   const sessions = new Map<string, BeltSession>();
   const sweepTimer = setInterval(() => {
-    const cutoff = Date.now() - deps.sessionIdleMs;
+    const cutoff = deps.now() - deps.sessionIdleMs;
     for (const [sessionId, session] of sessions) {
       if (session.lastSeenAt >= cutoff) continue;
       sessions.delete(sessionId);
@@ -85,7 +121,7 @@ export function createBeltMcpRouter(overrides: Partial<BeltDependencies> = {}): 
     next();
   });
 
-  const createServer = (): Server => {
+  const createServer = (boundContext?: BeltContext): Server => {
     const server = new Server(
       { name: 'bytelight-belt', version: '2.0.0' },
       { capabilities: { tools: { listChanged: false } } },
@@ -105,7 +141,7 @@ export function createBeltMcpRouter(overrides: Partial<BeltDependencies> = {}): 
     server.setRequestHandler(CallToolRequestSchema, async (request) => {
       const name = request.params.name;
       const args = (request.params.arguments || {}) as Record<string, unknown>;
-      const threadId = deps.activeThread() ?? undefined;
+      const threadId = boundContext?.threadId ?? deps.activeThread() ?? undefined;
 
       if (THREAD_BOUND_TOOLS.has(name) && !threadId) {
         return {
@@ -117,8 +153,9 @@ export function createBeltMcpRouter(overrides: Partial<BeltDependencies> = {}): 
       try {
         // The live Codex turn's audience rides along, so a guest's turn is
         // refused belt tools by executeRouterTool (turn-audience.ts).
-        const audience = deps.activeAudience?.() ?? undefined;
-        const { result, ok } = await runWithBeltContext({ threadId, ...(audience ? { audience } : {}) }, () =>
+        const audience = boundContext?.audience ?? deps.activeAudience?.() ?? undefined;
+        const context: BeltContext = { ...(boundContext ?? {}), threadId, ...(audience ? { audience } : {}) };
+        const { result, ok } = await runWithBeltContext(context, () =>
           deps.executeTool(name, args));
         return {
           content: [{ type: 'text', text: result }],
@@ -141,7 +178,7 @@ export function createBeltMcpRouter(overrides: Partial<BeltDependencies> = {}): 
   const existingSession = (req: Request): BeltSession | undefined => {
     const sessionId = oneHeader(req.headers['mcp-session-id']);
     const session = sessionId ? sessions.get(sessionId) : undefined;
-    if (session) session.lastSeenAt = Date.now();
+    if (session) session.lastSeenAt = deps.now();
     return session;
   };
 
@@ -170,11 +207,12 @@ export function createBeltMcpRouter(overrides: Partial<BeltDependencies> = {}): 
     }
 
     let transport!: StreamableHTTPServerTransport;
-    const server = createServer();
+    const boundContext = contextFromHeaders(req);
+    const server = createServer(boundContext);
     transport = new StreamableHTTPServerTransport({
       sessionIdGenerator: randomUUID,
       onsessioninitialized: (sessionId) => {
-        sessions.set(sessionId, { server, transport, lastSeenAt: Date.now() });
+        sessions.set(sessionId, { server, transport, lastSeenAt: deps.now(), context: boundContext });
       },
     });
     transport.onclose = () => {

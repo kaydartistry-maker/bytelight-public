@@ -70,6 +70,7 @@ export function SoundtrackWidget({ onOpen, editing = false }: { onOpen: () => vo
   return (
     <div className="flex h-full w-full items-center">
     <div
+      data-appearance-card=""
       className="flex h-11 w-full items-center gap-2 rounded-full pl-1.5 pr-1 transition-opacity duration-300"
       style={{
         background: 'var(--bytelight-surface)',

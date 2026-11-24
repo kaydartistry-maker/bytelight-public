@@ -102,3 +102,27 @@ test('adjacent custom emojis resolve without consuming an unresolved sticker ref
     '![sticker:Operator_giggles](/sticker.png)',
   );
 });
+
+test('a sticker is sized by where it sits in its line, not by the whole bubble', async () => {
+  const { prepareChatText, isInlineSticker, stickerSizeClass } = await import('./chat-text');
+  const resolveSticker = (ref: string) => ref === 'Companion_A_hi' ? '/stickers/hi.png' : null;
+  const srcs = (text: string) => [...prepareChatText({ text, resolveSticker }).markdown.matchAll(/!\[sticker:[^\]]*\]\(([^)]*)\)/g)].map((m) => m[1]);
+
+  // Alone on its own line, even with words elsewhere in the bubble: sticker size.
+  assert.deepEqual(srcs('**Companion A —** hey\n\n::Companion_A_hi::').map(isInlineSticker), [false]);
+  // At the end of a sentence: sticker size.
+  assert.deepEqual(srcs('you did it ::Companion_A_hi::').map(isInlineSticker), [false]);
+  // Mid-sentence: emoji-small.
+  assert.deepEqual(srcs('you ::Companion_A_hi:: did it').map(isInlineSticker), [true]);
+  // Two in one line: the first has words after it, the last ends the line.
+  assert.deepEqual(srcs('a ::Companion_A_hi:: b ::Companion_A_hi::').map(isInlineSticker), [true, false]);
+  // Stickers side by side with nothing else after them all end the line.
+  assert.deepEqual(srcs('::Companion_A_hi:: ::Companion_A_hi::').map(isInlineSticker), [false, false]);
+
+  assert.match(stickerSizeClass('/stickers/hi.png#bl-inline'), /1\.75em/);
+  assert.match(stickerSizeClass('/stickers/hi.png'), /max-h-32/);
+  for (const text of ['you ::Companion_A_hi:: did it', 'done ::Companion_A_hi::']) {
+    const first = prepareChatText({ text, resolveSticker });
+    assert.deepEqual(prepareChatText({ text: first.markdown, resolveSticker }), first);
+  }
+});

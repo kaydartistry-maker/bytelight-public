@@ -37,7 +37,7 @@ export function LockSpotifyCardView({ view, press, onOpen, look = 'dark' }: { vi
     </>
   );
   return (
-    <div className={`rounded-2xl border px-3 py-2.5 ${ink.card}`}>
+    <div data-appearance-card="" className={`rounded-2xl border px-3 py-2.5 ${ink.card}`}>
       <div className="flex items-center gap-2">
         {onOpen ? (
           <button

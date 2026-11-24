@@ -108,7 +108,7 @@ export function Cover({
 
 function Section({ title, count, colors, children }: { title: string; count?: number; colors: ThemeColors; children: ReactNode }) {
   return (
-    <section className={cn('mb-4 rounded-2xl border p-4', colors.panelBg, colors.panelBorder)}>
+    <section data-appearance-card="" className={cn('mb-4 rounded-2xl border p-4', colors.panelBg, colors.panelBorder)}>
       <header className="mb-3 flex items-baseline justify-between gap-3">
         <h3 className={cn('text-[10px] font-bold uppercase tracking-[0.14em]', colors.textMuted)}>{title}</h3>
         {typeof count === 'number' && count > 0 && <span className={cn('text-[10px] font-semibold tabular-nums', colors.textMuted)}>{count}</span>}
@@ -532,12 +532,12 @@ export function SpotifyHomeView({
   onNewPlaylist?: (() => void) | null;
 }) {
   if (!home) {
-    return <div className={cn('rounded-2xl border px-4 py-6 text-center text-xs', colors.panelBg, colors.panelBorder, colors.textMuted)}>Loading…</div>;
+    return <div data-appearance-card="" className={cn('rounded-2xl border px-4 py-6 text-center text-xs', colors.panelBg, colors.panelBorder, colors.textMuted)}>Loading…</div>;
   }
   const whole = wholeAppTrouble(home);
   if (whole) {
     return (
-      <div className={cn('rounded-2xl border px-4 py-4', colors.panelBg, colors.panelBorder)}>
+      <div data-appearance-card="" className={cn('rounded-2xl border px-4 py-4', colors.panelBg, colors.panelBorder)}>
         <TroubleWords trouble={whole} colors={colors} onOpenLink={onOpenLink} />
       </div>
     );
@@ -662,7 +662,7 @@ export function PlaylistView({
   const ink = markInk(colors);
   return (
     <article className="pb-2">
-      <section className={cn('mb-4 rounded-2xl border p-4', colors.panelBg, colors.panelBorder)}>
+      <section data-appearance-card="" className={cn('mb-4 rounded-2xl border p-4', colors.panelBg, colors.panelBorder)}>
         <div className="flex items-center gap-4">
           <Cover src={playlist.cover} eager className="aspect-square w-32 shrink-0 rounded-lg" />
           <div className="min-w-0">

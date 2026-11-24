@@ -5,7 +5,7 @@
 // decides what each one shows.
 import { themeInk } from '../lib/theme-ink';
 import React, { useEffect, useRef, useState } from 'react';
-import { Heart, Mail, Pencil } from 'lucide-react';
+import { Check, Heart, Mail, Pencil, Sparkles } from 'lucide-react';
 import { apiFetch, sendUserMessageToThread, useBytelight } from '../bytelight';
 import { ageLabel, clockParts } from '../lib/lock-clock';
 import {
@@ -29,6 +29,7 @@ import { isDaytime, weatherIcon } from './LockClock';
 import { useWeather } from './useWeather';
 import { useStatuses } from './useStatuses';
 import { SoundtrackWidget } from './SoundtrackWidget';
+import { LIFE_META, LifeWheel, emptyLifeState, lifeRequest, type LifeState } from './questing/LifeQuesting';
 
 export interface WidgetCompanion {
   slug: string;
@@ -82,6 +83,25 @@ function useNow(ms: number) {
   return now;
 }
 
+function useLifeState() {
+  const [state,setState]=useState<LifeState>(emptyLifeState);
+  const refresh=()=>void lifeRequest().then(setState).catch(()=>{});
+  useEffect(()=>{refresh();const on=()=>refresh();window.addEventListener('bytelight:life-quests',on);return()=>window.removeEventListener('bytelight:life-quests',on);},[]);
+  return {state,setState};
+}
+
+function LifeWheelWidget({onOpen}:{onOpen:()=>void}) {
+  const {state}=useLifeState();
+  return <button type="button" data-appearance-card="" onClick={onOpen} className="flex h-full w-full flex-col items-center justify-center rounded-[18px] p-2" style={surface}><LifeWheel state={state} compact/><span className="mt-1 text-[10px] font-semibold uppercase tracking-wider">Life Wheel · {state.totalXp} XP</span></button>;
+}
+
+function NextQuestWidget({onOpen}:{onOpen:()=>void}) {
+  const {state,setState}=useLifeState(); const q=state.quests[0];
+  const complete=async(e:React.MouseEvent)=>{e.stopPropagation();if(!q)return;const next=await lifeRequest(`/${q.id}`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'complete'})});setState(next);window.dispatchEvent(new Event('bytelight:life-quests'));};
+  const open=(e:React.KeyboardEvent)=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();onOpen();}};
+  return <div role="button" data-appearance-card="" tabIndex={0} onKeyDown={open} onClick={onOpen} className="flex h-full w-full cursor-pointer flex-col rounded-[18px] p-3 text-left" style={surface}>{q?<><div className="flex items-center justify-between gap-2"><span className="text-[9px] uppercase tracking-widest" style={{color:LIFE_META[q.category].color}}>{LIFE_META[q.category].name} · {q.xp} XP</span><button type="button" aria-label={`Complete ${q.task}`} onClick={complete} className="flex h-9 w-9 items-center justify-center rounded-full border" style={{borderColor:LIFE_META[q.category].color,color:LIFE_META[q.category].color}}><Check size={16}/></button></div><strong className="mt-auto line-clamp-2 text-sm">{q.title}</strong><span className="line-clamp-2 text-[11px] opacity-75">{q.task}</span></>:<><Sparkles className="m-auto" style={{color:'var(--bytelight-accent)'}}/><span className="text-center text-[11px]">No quest is waiting.</span></>}</div>;
+}
+
 function CompanionsWidget({ companions, onOpen }: { companions: WidgetCompanion[]; onOpen: () => void }) {
   const { thread, last } = useLatestReply();
   const now = useNow(30_000);
@@ -95,7 +115,7 @@ function CompanionsWidget({ companions, onOpen }: { companions: WidgetCompanion[
     setDraft('');
   };
   return (
-    <div className="flex h-full flex-col gap-1.5 rounded-2xl px-3 py-2.5" style={surface}>
+    <div data-appearance-card="" className="flex h-full flex-col gap-1.5 rounded-2xl px-3 py-2.5" style={surface}>
       <button type="button" onClick={onOpen} className="flex min-h-0 min-w-0 flex-1 flex-col gap-0.5 overflow-hidden text-left">
         <span className="flex items-center gap-2">
           <Faces companions={companions} size={24} />
@@ -152,7 +172,7 @@ function NoteWidget({ companions, palette, onOpen }: { companions: WidgetCompani
   const note = latestCompanionNote(notes, companions.map((c) => c.slug));
   if (!note) {
     return (
-      <button type="button" onClick={onOpen} className="flex h-full items-center justify-center rounded-2xl p-3 text-center text-xs" style={{ ...surface, color: 'var(--bytelight-text-muted)' }}>
+      <button type="button" data-appearance-card="" onClick={onOpen} className="flex h-full items-center justify-center rounded-2xl p-3 text-center text-xs" style={{ ...surface, color: 'var(--bytelight-text-muted)' }}>
         No note on the fridge yet.
       </button>
     );
@@ -162,6 +182,7 @@ function NoteWidget({ companions, palette, onOpen }: { companions: WidgetCompani
   return (
     <button
       type="button"
+      data-appearance-card=""
       onClick={onOpen}
       className="flex h-full w-full flex-col justify-between px-3 py-2 text-left shadow-lg"
       style={{ background: paint, color: inkFor(paint), transform: 'rotate(-2.5deg)', borderRadius: 6, fontFamily: "'Caveat', 'Segoe Print', 'Bradley Hand', cursive" }}
@@ -184,7 +205,7 @@ function WeatherWidget({ onOpen }: { onOpen: () => void }) {
   // to give the room something to hold; a long sky word takes the middle and
   // the high and low stay put.
   return (
-    <button type="button" onClick={onOpen} className="flex h-full w-full items-center gap-3 rounded-2xl px-3 text-left" style={surface}>
+    <button type="button" data-appearance-card="" onClick={onOpen} className="flex h-full w-full items-center gap-3 rounded-2xl px-3 text-left" style={surface}>
       <span className="shrink-0">{weather ? weatherIcon(weather.code, isDaytime(weather), 'h-6 w-6') : null}</span>
       <span className="flex min-w-0 flex-1 flex-col">
         <span className="text-xl leading-none">{weather ? `${weather.temp}°` : '—'}</span>
@@ -219,7 +240,7 @@ function LetterWidget({ companions, onOpen }: { companions: WidgetCompanion[]; o
   if (!letter) return null;
   const from = companions.find((c) => c.slug.toLowerCase() === letter.author.toLowerCase());
   return (
-    <button type="button" onClick={onOpen} className="flex h-full items-center gap-3 rounded-2xl px-3 text-left" style={surface}>
+    <button type="button" data-appearance-card="" onClick={onOpen} className="flex h-full items-center gap-3 rounded-2xl px-3 text-left" style={surface}>
       <Mail size={20} style={{ color: from ? themeInk(from.slug, from.color) : 'var(--bytelight-accent)' }} />
       <span className="flex min-w-0 flex-col">
         <span className="truncate text-sm font-semibold">A letter waiting</span>
@@ -234,7 +255,7 @@ function DayWidget() {
   const t = clockParts(new Date(now));
   const [weekday, ...rest] = t.dateLong.split(', ');
   return (
-    <div className="flex h-full items-center justify-between rounded-2xl px-4" style={surface}>
+    <div data-appearance-card="" className="flex h-full items-center justify-between rounded-2xl px-4" style={surface}>
       <span className="text-2xl leading-none">{weekday}</span>
       <span className="text-sm" style={{ color: 'var(--bytelight-text-muted)' }}>{rest.join(', ')}</span>
     </div>
@@ -358,7 +379,7 @@ function StatusWidget({ companions, onOpen, onEditStatus }: { companions: Widget
   }
 
   return (
-    <div className="relative h-full overflow-hidden rounded-2xl" style={surface}>
+    <div data-appearance-card="" className="relative h-full overflow-hidden rounded-2xl" style={surface}>
       <button
         key={index % slides.length}
         type="button"
@@ -555,6 +576,8 @@ export function HomeWidgets({
         if (id === 'day') body = <DayWidget />;
         if (id === 'soundtrack') body = <SoundtrackWidget onOpen={() => onOpenAppId('spotify')} editing={!!lifted} />;
         if (id === 'status') body = <StatusWidget companions={companions} onOpen={() => onOpenAppId('messages')} onEditStatus={onEditStatus} />;
+        if (id === 'life-wheel') body = <LifeWheelWidget onOpen={() => onOpenAppId('questing')} />;
+        if (id === 'next-quest') body = <NextQuestWidget onOpen={() => onOpenAppId('questing')} />;
         return (
           <div
             key={id}
@@ -580,7 +603,7 @@ export function QuietLine({ companions, onOpen }: { companions: WidgetCompanion[
   const line = replyLines(last.content, 2).find((l) => !l.action) ?? replyLines(last.content, 1)[0];
   if (!line) return null;
   return (
-    <button type="button" onClick={onOpen} className="flex w-full items-center gap-2 rounded-2xl px-3 py-2 text-left" style={surface}>
+    <button type="button" data-appearance-card="" onClick={onOpen} className="flex w-full items-center gap-2 rounded-2xl px-3 py-2 text-left" style={surface}>
       <Faces companions={companions} size={18} />
       <span className="min-w-0 flex-1 truncate text-xs">{line.text}</span>
       <span className="text-[10px]" style={{ color: 'var(--bytelight-text-muted)' }}>{ageLabel(Date.parse(last.created_at), now)}</span>
@@ -608,6 +631,7 @@ export function WidgetSheet({
   return (
     <div className="absolute inset-0 z-50 flex items-end" onClick={onClose} style={{ background: 'rgba(0,0,0,0.45)' }}>
       <div
+        data-appearance-card=""
         className="w-full space-y-2 rounded-t-3xl p-4"
         style={{ background: 'var(--bytelight-surface-strong)', color: 'var(--bytelight-text)', maxHeight: '85vh', overflowY: 'auto', paddingBottom: 'calc(var(--sab, 0px) + 1rem)' }}
         onClick={(e) => e.stopPropagation()}

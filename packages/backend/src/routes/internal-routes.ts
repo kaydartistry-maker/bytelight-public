@@ -1,10 +1,11 @@
 import { Router, type Response } from 'express';
 import { requireLocalhost } from '../middleware/localhost.js';
 import { staleBlockText } from '../services/heartbeat/stale-walls.js';
+import { markLaneManualDue } from '../services/heartbeat/runtime.js';
 import { normalizeNoteColor } from '@bytelight/shared';
 import crypto from 'crypto';
 import { readFileSync, existsSync } from 'fs';
-import { basename } from 'path';
+import { basename, dirname } from 'path';
 import {
   listThreads,
   getThread,
@@ -67,6 +68,7 @@ import { addFieldNote, listFieldNotes, fieldNotesLimit, FieldNoteError } from '.
 import { getStatusSnapshot, setCompanionStatus, StatusError } from '../services/db/statuses.js';
 import { cancelIntention, createIntention, IntentionError, listIntentions } from '../services/db/intentions.js';
 import { postToTreehouse, getTreehouseInfo, getTreehouseMessages, treehouseMembers } from '../services/treehouse.js';
+import { appendMaintenanceEntry } from '../services/maintenance-ledger.js';
 
 // A self-knowledge entry is owned by a companion or by 'shared'. 'shared' is a
 // deliberate owner (a truth both companions hold) and is NOT a row in the companions
@@ -89,7 +91,10 @@ import { searchVectors, getCacheStats, type SearchFilter } from '../services/vec
 import { getMemorySnapshot } from '../services/memory-profiler.js';
 import { saveFileInternal, saveFile, getFile } from '../services/files.js';
 import { buildImageReactPrompt } from '../services/image-react-prompt.js';
-import { generateImage, recordGalleryMeta, getImageGenSettings, chatGalleryMeta } from '../services/image-gen.js';
+import { generateImage, recordGalleryMeta, getImageGenSettings, chatGalleryMeta, type SpellLineage } from '../services/image-gen.js';
+import { readSpell, saveSource, sourcePath, sourceExtFor, SpellbookError } from '../services/spellbook.js';
+import { ensureSpellbookReady, getSpell, insertSpell, listSpells, markCast, resolveLook, surpriseSpell, type Spell, type SpellFilter } from '../services/spellbook-store.js';
+import { castSeats, parseCast, prepareCast } from '../services/spellbook-cast.js';
 import { queueImageForCompanion } from '../services/pending-visuals.js';
 import { registry } from '../services/registry.js';
 import {
@@ -106,10 +111,12 @@ import type { TelegramService } from '../services/telegram/index.js';
 import type { AgentService } from '../services/agent.js';
 import { getActiveDiscordService, type DiscordService } from '../services/discord/index.js';
 import { errMessage } from '../util/errors.js';
-import { readShelf, currentlyReading, readAlong, highlightsSoFar, addNote, readNotes, LibraryError } from '../services/library.js';
+import { readShelf, currentlyReading, readAlong, highlightsSoFar, addNote, reachedNotes, LibraryError } from '../services/library.js';
+import { bookBridgeView, queueBookBridgeNote, readForBookBridge } from '../services/book-bridge.js';
 import { needle } from '../services/needle.js';
 import storyShelfInternalRoutes from './internal/story-shelf.js';
 import bookClubInternalRoutes from './internal/library-book-club.js';
+import theaterInternalRoutes from './internal/theater.js';
 
 // After a render lands we hand ourselves a turn to look at it and react — so the
 // picture and our genuine reaction arrive in the same beat, without blocking the
@@ -155,6 +162,44 @@ async function runBackfillLoop(batchSize: number, intervalMs: number): Promise<v
   };
   tick();
 }
+
+/** The newest pictures the owner dropped in a thread, wherever they live: a
+ *  message's metadata.attachments (how images arrive now) or an older
+ *  standalone contentType:'image' row. Paths on disk, newest first. */
+function droppedImagePaths(threadId: string, max: number): string[] {
+  const rows = getDb().prepare(
+    "SELECT content_type, metadata FROM messages WHERE thread_id = ? AND role = 'user' AND deleted_at IS NULL AND (content_type = 'image' OR metadata LIKE '%\"attachments\"%') ORDER BY created_at DESC, sequence DESC LIMIT 20",
+  ).all(threadId) as Array<{ content_type: string; metadata: string | null }>;
+  const fileIds: string[] = [];
+  for (const r of rows) {
+    if (fileIds.length >= max) break;
+    if (!r.metadata) continue;
+    try {
+      const m = JSON.parse(r.metadata) as { fileId?: string; attachments?: Array<{ fileId?: string; contentType?: string }> };
+      if (r.content_type === 'image') {
+        if (m.fileId) fileIds.push(m.fileId);
+      } else if (Array.isArray(m.attachments)) {
+        for (const a of m.attachments) if (a?.contentType === 'image' && a.fileId) fileIds.push(a.fileId);
+      }
+    } catch { /* ignore */ }
+  }
+  const out: string[] = [];
+  for (const id of [...new Set(fileIds)].slice(0, max)) {
+    const f = getFile(id);
+    if (f) out.push(f.path);
+  }
+  return out;
+}
+
+/** A spell as the companions see it: enough to pick one, never the vault dump. */
+function spellBrief(s: Spell) {
+  return {
+    id: s.id, title: s.title, tags: s.tags, origin: s.origin, credit: s.credit, castSize: s.castSize,
+    timesCast: s.timesCast, lastCastAt: s.lastCastAt, scene: s.scene.slice(0, 400),
+  };
+}
+
+const SPELL_FILTERS = new Set(['all', 'mine', 'community', 'unmade']);
 
 export function createInternalRoutes(): Router {
   const router = Router();
@@ -202,6 +247,9 @@ export function createInternalRoutes(): Router {
   // reads words back into a room after a compaction.
   router.get('/internal/compaction-refresh', requireLocalhost, (req, res) => {
     const lane = typeof req.query.lane === 'string' ? req.query.lane : '';
+    // The squash folded the per-session manual away with everything else, so
+    // the lane's next turn carries the full [Context] again.
+    markLaneManualDue(lane);
     res.json({ success: true, refresh: staleBlockText(lane) });
   });
 
@@ -314,76 +362,25 @@ export function createInternalRoutes(): Router {
   // Generate an image and drop it into the chat thread. Free Codex lane by
   // default; metered OpenAI lane if configured. The picture is saved to the
   // Studio gallery AND posted as a companion message (mirrors /internal/share).
-  router.post('/internal/generate-image', requireLocalhost, async (req, res) => {
-    const { prompt, subjects, size, threadId: explicitThreadId, caption, useDroppedImage } = req.body as {
-      prompt?: string;
-      subjects?: string[];
-      size?: 'square' | 'portrait' | 'landscape';
-      threadId?: string;
-      caption?: string;
-      useDroppedImage?: boolean;
-    };
-
-    if (!prompt || typeof prompt !== 'string') {
-      res.status(400).json({ error: 'prompt is required' });
-      return;
-    }
-
-    let threadId = explicitThreadId;
-    if (!threadId) {
-      const threads = listThreads({ includeArchived: false, limit: 1 });
-      if (threads.length === 0) {
-        res.status(404).json({ error: 'No active threads found' });
-        return;
-      }
-      threadId = threads[0].id;
-    }
-    if (!getThread(threadId)) {
-      res.status(404).json({ error: 'Thread not found' });
-      return;
-    }
-
-    // A render takes ~1-3 minutes (longer with several reference drawers) — past
-    // the caller's command/Bash timeout. So ACK immediately and finish in the
-    // background; the picture lands in the chat via broadcast when it's ready.
-    // (If gen is disabled, surface that synchronously so the caller hears it now.)
-    if (!getImageGenSettings().enabled) {
-      res.status(400).json({ error: 'Image generation is switched off. Turn it on in the Studio drawer → Settings.' });
-      return;
-    }
-    // One-off references: image(s) just dropped in this thread. Not saved.
-    const extraRefs: string[] = [];
-    if (useDroppedImage) {
-      try {
-        // The two newest images the user dropped, wherever they live: a message's
-        // metadata.attachments (how images arrive now — one message, one row)
-        // or an older standalone contentType:'image' row.
-        const rows = getDb().prepare(
-          "SELECT content_type, metadata FROM messages WHERE thread_id = ? AND role = 'user' AND deleted_at IS NULL AND (content_type = 'image' OR metadata LIKE '%\"attachments\"%') ORDER BY created_at DESC, sequence DESC LIMIT 20",
-        ).all(threadId) as Array<{ content_type: string; metadata: string | null }>;
-        const fileIds: string[] = [];
-        for (const r of rows) {
-          if (fileIds.length >= 2) break;
-          if (!r.metadata) continue;
-          try {
-            const m = JSON.parse(r.metadata) as { fileId?: string; attachments?: Array<{ fileId?: string; contentType?: string }> };
-            if (r.content_type === 'image') {
-              if (m.fileId) fileIds.push(m.fileId);
-            } else if (Array.isArray(m.attachments)) {
-              for (const a of m.attachments) if (a?.contentType === 'image' && a.fileId) fileIds.push(a.fileId);
-            }
-          } catch { /* ignore */ }
-        }
-        for (const id of [...new Set(fileIds)].slice(0, 2)) {
-          const f = getFile(id);
-          if (f) extraRefs.push(f.path);
-        }
-      } catch (e) {
-        console.warn('[image-gen] dropped-ref resolve failed:', e instanceof Error ? e.message : e);
-      }
-    }
-
-    const tid = threadId;
+  // A picture rendered into a thread: a "generating…" placeholder now, the
+  // finished picture (or an error note) when the background render ends. The
+  // chat image door and the Spellbook's chat hands both come through here;
+  // prepare() runs in the background too, so a spell that needs its words
+  // rewritten first never holds the caller's ACK.
+  interface ThreadRenderJob {
+    prompt: string; subjects?: string[]; size?: string; extraRefs?: string[]; styleRefs?: string[]; caption?: string;
+    /** What the gallery card shows as the prompt (the engine's has the identity rule on it). */
+    galleryPrompt?: string;
+    spell?: SpellLineage;
+  }
+  const startThreadRender = (
+    req: import('express').Request,
+    res: Response,
+    tid: string,
+    pendingText: string,
+    ack: Record<string, unknown>,
+    prepare: () => Promise<ThreadRenderJob>,
+  ): void => {
     // Show a live "generating…" placeholder in the chat immediately; swap it for
     // the finished picture (or an error note) when the background render ends.
     const startNow = new Date().toISOString();
@@ -391,14 +388,14 @@ export function createInternalRoutes(): Router {
       id: crypto.randomUUID(),
       threadId: tid,
       role: 'companion',
-      content: 'Generating an image…',
+      content: pendingText,
       metadata: { source: 'image_gen_pending' },
       createdAt: startNow,
     });
     updateThreadActivity(tid, startNow, true);
     registry.broadcast({ type: 'message', message: placeholder });
 
-    res.json({ success: true, status: 'generating', placeholderId: placeholder.id, message: 'On its way — the image will appear in the chat shortly (up to a few minutes for all of us together).' });
+    res.json({ success: true, status: 'generating', placeholderId: placeholder.id, message: 'On its way — the image will appear in the chat shortly (up to a few minutes for all of us together).', ...ack });
 
     const clearPlaceholder = () => {
       try {
@@ -409,7 +406,13 @@ export function createInternalRoutes(): Router {
 
     void (async () => {
       try {
-        const result = await generateImage({ prompt, subjects, size, extraRefs });
+        const job = await prepare();
+        const { prompt, subjects, size, extraRefs, styleRefs, caption } = job;
+        // Omitted styleId is the chat door: it resolves the operator's starred
+        // My Styles default. A spell supplies styleRefs, which deliberately
+        // suppresses that default inside prepareStudioGeneration so the two
+        // style systems never get blended accidentally.
+        const result = await generateImage({ prompt, subjects, size, extraRefs, styleRefs });
         const buffer = readFileSync(result.path);
         const fileMeta = saveFileInternal(buffer, result.filename);
         const now = new Date().toISOString();
@@ -438,11 +441,14 @@ export function createInternalRoutes(): Router {
         updateThreadActivity(tid, now, true);
         registry.broadcast({ type: 'message', message });
 
+        if (job.spell) { try { markCast(job.spell.id, now); } catch (e) { console.warn('[spellbook] mark cast failed:', e instanceof Error ? e.message : e); } }
+
         // Show it to ourselves on the next turn — so we actually see what we made.
         queueImageForCompanion(tid, fileMeta.fileId);
 
         try {
-          await recordGalleryMeta(result.filename, chatGalleryMeta({ prompt, subjects, size, model: result.model, backend: result.backend, messageId: message.id, threadId: tid, createdAt: now }));
+          const card = chatGalleryMeta({ prompt: job.galleryPrompt ?? prompt, subjects, size, model: result.model, backend: result.backend, messageId: message.id, threadId: tid, createdAt: now });
+          await recordGalleryMeta(result.filename, job.spell ? { ...card, spell: job.spell } : card);
         } catch (e) {
           console.warn('[image-gen] gallery meta record failed:', e instanceof Error ? e.message : e);
         }
@@ -487,6 +493,139 @@ export function createInternalRoutes(): Router {
         } catch { /* ignore */ }
       }
     })();
+  };
+
+  router.post('/internal/generate-image', requireLocalhost, async (req, res) => {
+    const { prompt, subjects, size, threadId: explicitThreadId, caption, useDroppedImage } = req.body as {
+      prompt?: string;
+      subjects?: string[];
+      size?: 'square' | 'portrait' | 'landscape';
+      threadId?: string;
+      caption?: string;
+      useDroppedImage?: boolean;
+    };
+
+    if (!prompt || typeof prompt !== 'string') {
+      res.status(400).json({ error: 'prompt is required' });
+      return;
+    }
+
+    let threadId = explicitThreadId;
+    if (!threadId) {
+      const threads = listThreads({ includeArchived: false, limit: 1 });
+      if (threads.length === 0) {
+        res.status(404).json({ error: 'No active threads found' });
+        return;
+      }
+      threadId = threads[0].id;
+    }
+    if (!getThread(threadId)) {
+      res.status(404).json({ error: 'Thread not found' });
+      return;
+    }
+
+    // A render takes ~1-3 minutes (longer with several reference drawers) — past
+    // the caller's command/Bash timeout. So ACK immediately and finish in the
+    // background; the picture lands in the chat via broadcast when it's ready.
+    // (If gen is disabled, surface that synchronously so the caller hears it now.)
+    if (!getImageGenSettings().enabled) {
+      res.status(400).json({ error: 'Image generation is switched off. Turn it on in the Studio drawer → Settings.' });
+      return;
+    }
+    // One-off references: image(s) just dropped in this thread. Not saved.
+    const extraRefs: string[] = [];
+    if (useDroppedImage) {
+      try {
+        extraRefs.push(...droppedImagePaths(threadId, 2));
+      } catch (e) {
+        console.warn('[image-gen] dropped-ref resolve failed:', e instanceof Error ? e.message : e);
+      }
+    }
+
+    startThreadRender(req, res, threadId, 'Generating an image…', {}, async () => ({ prompt, subjects, size, extraRefs, caption }));
+  });
+
+  // ─── Spellbook hands (slice 6) ─────────────────────────────────
+  // The companions run the Spellbook from chat: find a spell, pull a
+  // forgotten one, cast it with whoever, or read a picture the operator dropped in
+  // the thread. Renders land in the thread AND pin to the wall.
+
+  router.post('/internal/spellbook/search', requireLocalhost, async (req, res) => {
+    await ensureSpellbookReady();
+    const b = req.body as { query?: string; filter?: string; tag?: string; limit?: number };
+    const filter = SPELL_FILTERS.has(b.filter ?? '') ? b.filter as SpellFilter : 'all';
+    const limit = Math.max(1, Math.min(25, Number(b.limit) || 10));
+    const spells = listSpells({ q: typeof b.query === 'string' ? b.query.slice(0, 120) : undefined, filter, tag: typeof b.tag === 'string' ? b.tag : undefined, limit });
+    res.json({ spells: spells.map(spellBrief) });
+  });
+
+  router.post('/internal/spellbook/surprise', requireLocalhost, async (req, res) => {
+    await ensureSpellbookReady();
+    const b = req.body as { filter?: string; tag?: string };
+    const filter = SPELL_FILTERS.has(b.filter ?? '') ? b.filter as SpellFilter : 'all';
+    const s = surpriseSpell({ filter, tag: typeof b.tag === 'string' ? b.tag : undefined });
+    if (!s) { res.status(404).json({ error: 'Nothing in the book matches that.' }); return; }
+    res.json({ spell: spellBrief(s) });
+  });
+
+  const spellThread = (explicit: unknown): string | null => {
+    if (typeof explicit === 'string' && getThread(explicit)) return explicit;
+    const threads = listThreads({ includeArchived: false, limit: 1 });
+    return threads[0]?.id ?? null;
+  };
+
+  router.post('/internal/spellbook/cast', requireLocalhost, async (req, res) => {
+    try {
+      await ensureSpellbookReady();
+      const b = req.body as { spellId?: string; cast?: unknown; look?: string; size?: string; caption?: string; threadId?: string };
+      const spell = typeof b.spellId === 'string' ? getSpell(b.spellId) : null;
+      if (!spell) throw new SpellbookError('That spell is not in the book. Search for it first.');
+      const cast = parseCast(b.cast);
+      const look = resolveLook(b.look);
+      if (!getImageGenSettings().enabled) throw new SpellbookError('Image generation is switched off in Studio Settings.');
+      const tid = spellThread(b.threadId);
+      if (!tid) { res.status(404).json({ error: 'No thread to cast into.' }); return; }
+      const size = b.size === 'square' || b.size === 'landscape' ? b.size : 'portrait';
+      startThreadRender(req, res, tid, `Casting "${spell.title}"…`, { spell: spellBrief(spell) }, async () => {
+        const p = await prepareCast(spell, cast, look.id, { justRead: true });
+        return { prompt: p.enginePrompt, subjects: cast.map((m) => m.slug), size, styleRefs: p.styleRefs.length ? p.styleRefs : undefined, caption: b.caption, galleryPrompt: p.prompt, spell: p.lineage };
+      });
+    } catch (error) {
+      res.status(400).json({ error: error instanceof Error ? error.message : 'The spell fizzled.' });
+    }
+  });
+
+  router.post('/internal/spellbook/read', requireLocalhost, async (req, res) => {
+    try {
+      await ensureSpellbookReady();
+      const b = req.body as { cast?: unknown; look?: string; size?: string; caption?: string; threadId?: string; credit?: string };
+      const cast = parseCast(b.cast);
+      const look = resolveLook(b.look);
+      if (!getImageGenSettings().enabled) throw new SpellbookError('Image generation is switched off in Studio Settings.');
+      const tid = spellThread(b.threadId);
+      if (!tid) { res.status(404).json({ error: 'No thread to cast into.' }); return; }
+      const picture = droppedImagePaths(tid, 1)[0];
+      if (!picture) throw new SpellbookError('There is no picture dropped in this thread to read.');
+      const ext = picture.toLowerCase().split('.').pop() ?? '';
+      const mime = ({ jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', webp: 'image/webp', gif: 'image/gif', heic: 'image/heic' } as Record<string, string>)[ext];
+      if (!mime || !sourceExtFor(mime)) throw new SpellbookError('The dropped file is not a picture the reader can open.');
+      const size = b.size === 'square' || b.size === 'landscape' ? b.size : 'portrait';
+      startThreadRender(req, res, tid, 'Reading the picture, then casting…', {}, async () => {
+        const source = await saveSource(readFileSync(picture), mime);
+        const path = sourcePath(source);
+        if (!path) throw new Error('saved source could not be resolved');
+        const scene = await readSpell(path, cast.length, look, await castSeats(cast));
+        const spell = insertSpell({
+          title: scene.title, scene: scene.scene, tags: scene.tags, look: look.id, origin: 'mine', source,
+          credit: typeof b.credit === 'string' ? b.credit.trim().slice(0, 120) || null : null,
+        });
+        if (!spell) throw new Error('spell insert was ignored');
+        const p = await prepareCast(spell, cast, look.id, { justRead: true });
+        return { prompt: p.enginePrompt, subjects: cast.map((m) => m.slug), size, styleRefs: p.styleRefs.length ? p.styleRefs : undefined, caption: b.caption, galleryPrompt: p.prompt, spell: p.lineage };
+      });
+    } catch (error) {
+      res.status(400).json({ error: error instanceof Error ? error.message : 'The spell fizzled.' });
+    }
   });
 
   // Telegram send — send files/photos/voice to user via Telegram
@@ -1803,7 +1942,7 @@ export function createInternalRoutes(): Router {
           // Chapters are 1-based for companions, as she sees them.
           const chapter = req.body.chapter !== undefined ? Number(req.body.chapter) - 1 : undefined;
           const r = readAlong(target, chapter);
-          const notes = readNotes(target).filter((n) => n.chapter === r.chapter);
+          const notes = reachedNotes(target).filter((n) => n.chapter === r.chapter);
           res.json({
             bookId: r.bookId,
             title: r.title,
@@ -1867,6 +2006,39 @@ export function createInternalRoutes(): Router {
     }
   });
 
+  // ── Native BOOX Book Bridge — companion-facing read + margin-note hands.
+  // The service enforces Live vs One Chapter Ahead; the model cannot widen it.
+  router.post('/internal/book-bridge', requireLocalhost, (req, res) => {
+    const { action } = req.body ?? {};
+    try {
+      if (action === 'status') { res.json(bookBridgeView()); return; }
+      const bookId = req.body.bookId === undefined ? undefined : Number(req.body.bookId);
+      const chapter = req.body.chapter === undefined ? undefined : Number(req.body.chapter) - 1;
+      if (action === 'read') {
+        const r = readForBookBridge({ bookId, chapter });
+        res.json({
+          bookId: r.bookId, title: r.title, authors: r.authors,
+          chapter: r.chapter + 1, chapterTitle: r.chapterTitle, chapterCount: r.chapterCount,
+          readingWindow: r.cutAtHerPlace ? 'ahead-or-current-cut' : 'reached',
+          text: r.paragraphs.join('\n\n'),
+        });
+        return;
+      }
+      if (action === 'note') {
+        if (!bookId || chapter === undefined) throw new LibraryError('bookId and chapter are required.');
+        const note = queueBookBridgeNote({
+          bookId, chapter,
+          quote: String(req.body.quote ?? ''), note: String(req.body.note ?? ''), author: String(req.body.author ?? ''),
+        });
+        res.status(201).json({ success: true, note: { ...note, chapter: note.chapter + 1 } });
+        return;
+      }
+      res.status(400).json({ error: "action must be 'status', 'read', or 'note'" });
+    } catch (error) {
+      res.status(error instanceof LibraryError ? 400 : 400).json({ error: error instanceof Error ? error.message : 'Book Bridge error' });
+    }
+  });
+
   // ─── The Needle (Nov 2026) ── a companion drops a song on the operator's phone.
   // Plays straight through Spotify when a device is active; with none, wakes
   // the operator's Android app with a data-only push and answers without waiting for it.
@@ -1879,6 +2051,18 @@ export function createInternalRoutes(): Router {
     }
   });
 
+  // Maintenance wakes leave structured receipts here so Status can distinguish
+  // found/fixed/built/waiting/verified instead of relying on chat archaeology.
+  router.post('/internal/maintenance', requireLocalhost, (req, res) => {
+    try {
+      const root = dirname(getBytelightConfig().server.db_path);
+      const entry = appendMaintenanceEntry(root, req.body ?? {});
+      res.status(201).json({ success: true, entry });
+    } catch (error) {
+      res.status(400).json({ error: error instanceof Error ? error.message : 'Invalid maintenance entry' });
+    }
+  });
+
   // ── The Story Shelf (agent-facing) ── ported from Aerie (routes/internal/
   // story-shelf.ts, every route requireLocalhost). The companions shelve
   // books, write scenes, hang pictures, finish books and tie keepsakes there;
@@ -1888,6 +2072,10 @@ export function createInternalRoutes(): Router {
   // ── The Book Club (agent-facing) ── pitches and votes, localhost only
   // (routes/internal/library-book-club.ts); her door is /api/library/book-club.
   router.use(bookClubInternalRoutes);
+
+  // ── The Theater (agent-facing) ── the live night, its clock and the
+  // lookback window, read only, localhost only (routes/internal/theater.ts).
+  router.use(theaterInternalRoutes);
 
   return router;
 }

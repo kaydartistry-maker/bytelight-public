@@ -11,6 +11,8 @@ import { noteColorsForAccent } from '../lib/note-colors';
 import { HomeWidgets, QuietLine, WidgetSheet, type WidgetCompanion } from './HomeWidgets';
 import { StatusSheet } from './StatusSheet';
 import type { OwnerStatus } from '../lib/statuses';
+import { NookNowPlaying } from './NookNowPlaying';
+import { useNookPlayerMaybe } from '../lib/nook-player';
 
 interface HomeScreenProps {
   onOpenApp: (app: AppDef) => void;
@@ -52,6 +54,9 @@ export function HomeScreen({
   onThemeChange,
 }: HomeScreenProps) {
   const colors = themeConfig[themeMode];
+  // The audiobook's bar rides just above the dock while a book is loaded; the
+  // widgets sit up by its height so it never covers one.
+  const nookBar = useNookPlayerMaybe()?.book ? 52 : 0;
   const [pressedAppId, setPressedAppId] = useState<string | null>(null);
   // A long press on the home screen opens the widget sheet, the way a phone's
   // home screen does. Not from inside a text box, where a long press selects,
@@ -142,7 +147,7 @@ export function HomeScreen({
           and the long press that opens the widget sheet. */}
       <div
         className="flex flex-1 flex-col justify-end px-5"
-        style={{ paddingBottom: quietLine ? 150 : 106 }}
+        style={{ paddingBottom: (quietLine ? 150 : 106) + nookBar }}
         {...holdHandlers}
         onContextMenu={(e) => e.preventDefault()}
       >
@@ -162,12 +167,13 @@ export function HomeScreen({
           the dock past the viewport. Long labels truncate; the icon is
           the primary affordance. */}
       <div className="absolute bottom-4 left-0 right-0 flex flex-col items-center gap-2 px-4">
+        <NookNowPlaying className="max-w-[380px]" />
         {quietLine && (
           <div className="w-full max-w-[380px]">
             <QuietLine companions={companions} onOpen={() => openById('messages')} />
           </div>
         )}
-        <div className="bytelight-dock flex items-center gap-2 rounded-[1.4rem] px-3 py-2 max-w-full overflow-hidden">
+        <div data-appearance-card="" className="bytelight-dock flex items-center gap-2 rounded-[1.4rem] px-3 py-2 max-w-full overflow-hidden">
           {/* Quick picks scroll sideways when there are more than fit;
               the Apps launcher stays pinned on the right. */}
           <div

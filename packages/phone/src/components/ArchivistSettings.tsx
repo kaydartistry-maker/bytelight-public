@@ -125,7 +125,7 @@ export function ArchivistSettings({ themeConfig, themeMode }: ArchivistSettingsP
   }
 
   return (
-    <div className={cn('mb-4 rounded-xl border', colors.panelBorder, colors.panelBg)}>
+    <div data-appearance-card="" className={cn('mb-4 rounded-xl border', colors.panelBorder, colors.panelBg)}>
       <button
         onClick={() => setOpen(!open)}
         className="w-full flex items-center justify-between px-3 py-2 text-xs font-medium"

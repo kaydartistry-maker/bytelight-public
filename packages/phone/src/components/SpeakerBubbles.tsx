@@ -10,7 +10,8 @@ import { MessageSegments } from './MessageSegments';
 import type { MessageSegment } from '../bytelight';
 import type { CustomEmoji } from '../types';
 import { resolveStickerRef } from '../bytelight/stickers';
-import { prepareChatText } from '../lib/chat-text';
+import { prepareChatText, stickerSizeClass, stickerSrc } from '../lib/chat-text';
+import { BubblePaintLayers } from './AppearanceRuntime';
 
 // Per-speaker bubble stack — the visual carried over from the Svelte house
 // (MessageBubble.svelte speaker bubbles).
@@ -55,11 +56,13 @@ function SpeakerFace({ face, fallbackEmoji, name }: { face?: RosterFace; fallbac
           loading="lazy"
           decoding="async"
           className="w-9 h-9 rounded-full object-cover border-2"
+          data-appearance-avatar=""
           style={{ borderColor: face.color || 'transparent' }}
         />
       ) : (
         <div
           className="w-9 h-9 rounded-full flex items-center justify-center text-base border-2"
+          data-appearance-avatar=""
           style={{ borderColor: face?.color || 'transparent', background: 'rgba(127,127,127,0.15)' }}
         >
           {face?.emoji || fallbackEmoji}
@@ -71,23 +74,29 @@ function SpeakerFace({ face, fallbackEmoji, name }: { face?: RosterFace; fallbac
 
 export function SpeakerBubbles({ rows, roster, colors, textColorClass, isLightText, customEmojis }: SpeakerBubblesProps) {
   const faceFor = (speaker: string): RosterFace | undefined =>
-    roster?.find((c) => c.slug === speaker || c.display_name.toLowerCase() === speaker);
+    roster?.find((c) => c.slug === speaker || c.display_name.trim().toLowerCase() === speaker.trim().toLowerCase());
   return (
     <div className="flex flex-col gap-1.5">
       {rows.map((row, i) => {
-        const { markdown, stickerSharesText, emoteOnly } = prepareChatText({ text: row.text, resolveSticker: resolveStickerRef, customEmojis });
+        const { markdown, emoteOnly } = prepareChatText({ text: row.text, resolveSticker: resolveStickerRef, customEmojis });
+        const face = faceFor(row.speaker);
+        // Stable internal IDs identify the speaker; the house roster supplies
+        // their actual name, just as it already supplies their portrait.
+        const speakerName = face?.display_name.trim() || NAMES[row.speaker] || row.speaker;
         return (
-          <div key={i} className="flex items-start">
+          <div key={i} data-appearance-message="" data-speaker={faceFor(row.speaker)?.slug ?? row.speaker} className="flex items-start">
           {row.speaker !== 'fallback' && (
             <SpeakerFace
-              face={faceFor(row.speaker)}
+              face={face}
               fallbackEmoji={AVATAR[row.speaker]}
-              name={NAMES[row.speaker] ?? row.speaker}
+              name={speakerName}
             />
           )}
           <div
             data-user="false"
-            data-speaker={row.speaker}
+            data-speaker={faceFor(row.speaker)?.slug ?? row.speaker}
+            data-appearance-bubble=""
+            data-appearance-column=""
             className={cn(
               'bytelight-message-bubble min-w-0 flex-1 border px-3.5 py-2.5 rounded-[var(--shape-bubble)]',
               'rounded-tl-none',
@@ -96,14 +105,15 @@ export function SpeakerBubbles({ rows, roster, colors, textColorClass, isLightTe
               colors.panelBorder,
             )}
           >
+          <BubblePaintLayers />
           {row.speaker !== 'fallback' && (
-            <div className={cn('mb-0.5 text-[11px] font-bold tracking-wide opacity-80 select-none', textColorClass)}>
-              {NAMES[row.speaker] ?? row.speaker}
+            <div data-appearance-name="" className={cn('mb-0.5 text-[11px] font-bold tracking-wide opacity-80 select-none', textColorClass)}>
+              {speakerName}
             </div>
           )}
           <div
             className={cn(
-              'prose prose-sm max-w-none prose-p:leading-relaxed prose-p:my-0 prose-pre:bg-black/30 prose-img:inline prose-img:m-0 select-text [overflow-wrap:anywhere] min-w-0',
+              'prose prose-sm max-w-none prose-p:leading-relaxed prose-pre:bg-black/30 prose-img:inline prose-img:m-0 select-text [overflow-wrap:anywhere] min-w-0',
               isLightText ? 'prose-invert' : '',
               row.speaker === 'fallback' ? 'italic opacity-90' : '',
               textColorClass,
@@ -131,16 +141,16 @@ export function SpeakerBubbles({ rows, roster, colors, textColorClass, isLightTe
             <ReactMarkdown
               remarkPlugins={[remarkGfm, remarkBreaks]}
               components={{
-                p: ({ children }) => <span className="block">{children}</span>,
+                p: ({ children }) => <p className="mb-3 last:mb-0">{children}</p>,
                 h6: ({ children }) => (
                   <span className="block text-[11px] leading-snug opacity-60 italic">{children}</span>
                 ),
                 pre: ({ children }) => <CodeBlock>{children}</CodeBlock>,
                 img: ({ node, src, alt, ...imageProps }) => {
                   if (alt?.startsWith('sticker:') && src) {
-                    return <img src={src} alt={alt.slice('sticker:'.length)} referrerPolicy="no-referrer" className={cn(
+                    return <img src={stickerSrc(src)} alt={alt.slice('sticker:'.length)} referrerPolicy="no-referrer" className={cn(
                       '!inline-block !w-auto object-contain',
-                      stickerSharesText ? '!h-[1.75em] !max-h-[1.75em] !my-0 mx-0.5 align-text-bottom' : 'max-h-32 align-bottom',
+                      stickerSizeClass(src),
                     )} />;
                   }
                   const code = alt?.startsWith('emoji:') ? alt.slice('emoji:'.length) : undefined;

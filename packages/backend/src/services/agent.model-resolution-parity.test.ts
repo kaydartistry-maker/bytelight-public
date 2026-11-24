@@ -49,6 +49,7 @@ process.env.RESONANT_HOME = tmpRoot;
 // Codex on the host makes getCodexAuthPath() resolve to a REAL
 // data/codex-auth.json and this "logged out" scenario false-reds).
 process.env.CODEX_AUTH_PATH = join(tmpRoot, 'no-codex-auth.json');
+process.env.CODEX_CLI_AUTH_PATH = join(tmpRoot, 'no-codex-cli-auth.json');
 
 import { describe, test, before } from 'node:test';
 import assert from 'node:assert/strict';

@@ -86,6 +86,7 @@
     // H2: OpenAI/Codex via the warm Codex app-server daemon (subscription/CLI-login).
     // Always selectable like claude-cli; catalog from /api/models?provider=codex-cli.
     { id: 'codex-cli',    label: 'Codex (CLI · subscription)' },
+    { id: 'zai',          label: 'Z.ai · GLM Coding Plan' },
   ];
 
   // Provider availability from /api/models/status (mirrors ModelSelector).
@@ -96,6 +97,7 @@
     openrouter: { configured: boolean };
     groq: { configured: boolean };
     xai: { configured: boolean };
+    zai: { configured: boolean };
     openai: { configured: boolean; enabled?: boolean };
     'openai-codex'?: { available: boolean };
   }>(null);
@@ -108,13 +110,13 @@
   // H2: Codex-CLI (warm daemon) catalog — same lazy-fetch shape as codexModels,
   // sourced from /api/models?provider=codex-cli.
   let codexCliModels = $state<Array<{ id: string; name: string }>>([]);
-  type CompatProviderId = 'openrouter' | 'groq' | 'xai';
-  const COMPAT_PROVIDERS: readonly CompatProviderId[] = ['openrouter', 'groq', 'xai'];
+  type CompatProviderId = 'openrouter' | 'groq' | 'xai' | 'zai';
+  const COMPAT_PROVIDERS: readonly CompatProviderId[] = ['openrouter', 'groq', 'xai', 'zai'];
   function isCompatProvider(p: string): p is CompatProviderId {
-    return p === 'openrouter' || p === 'groq' || p === 'xai';
+    return p === 'openrouter' || p === 'groq' || p === 'xai' || p === 'zai';
   }
   let compatModels = $state<Record<CompatProviderId, Array<{ id: string; name: string }>>>({
-    openrouter: [], groq: [], xai: [],
+    openrouter: [], groq: [], xai: [], zai: [],
   });
 
   // Provider availability gate — mirrors ModelSelector.providerEnabled().
@@ -127,6 +129,7 @@
     if (id === 'codex-cli') return true;
     if (!providerStatus) return false;
     if (id === 'openai-codex') return providerStatus['openai-codex']?.available === true;
+    if (id === 'zai') return providerStatus.zai.configured;
     if (routingIsSdk) return false;
     if (id === 'ollama') return providerStatus.ollama.configured && providerStatus.ollama.enabled;
     if (id === 'openai') return providerStatus.openai.configured && !!providerStatus.openai.enabled;
@@ -326,7 +329,7 @@
     { id: 'orange',   label: 'Orange',   color: '#d87818' },
     { id: 'amber',    label: 'Amber',    color: '#c88818' },
     { id: 'forest',   label: 'Forest',   color: '#1e7840' },
-    { id: 'emerald',  label: 'Emerald',  color: '#1a9868' },
+    { id: 'emerald',  label: 'User',  color: '#1a9868' },
     { id: 'mint',     label: 'Mint',     color: '#1aaa90' },
     { id: 'teal',     label: 'Teal',     color: '#18b8a8' },
     { id: 'ocean',    label: 'Ocean',    color: '#1880c0' },

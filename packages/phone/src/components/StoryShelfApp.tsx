@@ -457,7 +457,7 @@ export function StoryShelfApp({ onClose, themeConfig, themeMode }: StoryShelfApp
 
 function Notice({ colors, children }: { colors: ThemeColors; children: ReactNode }) {
   return (
-    <div className={cn('rounded-[var(--shape-control)] border px-4 py-6 text-center text-xs', colors.panelBg, colors.panelBorder, colors.textMuted)}>
+    <div data-appearance-card="" className={cn('rounded-[var(--shape-control)] border px-4 py-6 text-center text-xs', colors.panelBg, colors.panelBorder, colors.textMuted)}>
       {children}
     </div>
   );
@@ -477,7 +477,7 @@ function Section({
   children: ReactNode;
 }) {
   return (
-    <section className={cn('mb-4 rounded-[var(--shape-control)] border p-4', colors.panelBg, colors.panelBorder)}>
+    <section data-appearance-card="" className={cn('mb-4 rounded-[var(--shape-control)] border p-4', colors.panelBg, colors.panelBorder)}>
       <header className="mb-1 flex items-baseline justify-between gap-3">
         <h3 className={cn('text-[10px] font-bold uppercase tracking-[0.14em]', colors.textMuted)}>{title}</h3>
         {count > 0 && <span className={cn('text-[10px] font-semibold tabular-nums', colors.textMuted)}>{count}</span>}
@@ -883,7 +883,7 @@ function TitlePage({ book, from, colors, onPicture }: { book: StoryBook; from: s
       ? `${book.sceneCount} ${book.sceneCount === 1 ? 'page' : 'pages'} so far`
       : 'Not begun';
   return (
-    <section className={cn('rounded-[var(--shape-control)] border p-4', colors.panelBg, colors.panelBorder)}>
+    <section data-appearance-card="" className={cn('rounded-[var(--shape-control)] border p-4', colors.panelBg, colors.panelBorder)}>
       {book.coverUrl && (
         <div className="mb-4 overflow-hidden rounded-xl" style={{ boxShadow: PAPER_SHADOW }}>
           <Shot
@@ -940,7 +940,7 @@ function TitlePage({ book, from, colors, onPicture }: { book: StoryBook; from: s
 
 function BookThreads({ entries, colors, onOpenBook }: { entries: KeepsakeEntry[]; colors: ThemeColors; onOpenBook: (id: string) => void }) {
   return (
-    <section className={cn('rounded-[var(--shape-control)] border p-3', colors.panelBg, colors.panelBorder)}>
+    <section data-appearance-card="" className={cn('rounded-[var(--shape-control)] border p-3', colors.panelBg, colors.panelBorder)}>
       <h3 className={cn(LABEL, colors.textMuted)}>Threads</h3>
       <ul className="mt-2 flex flex-col gap-1.5">
         {entries.map((entry) => (
@@ -998,7 +998,7 @@ function ScenePage({
   onWidgetMove: (value: string) => void;
 }) {
   return (
-    <section className={cn('rounded-[var(--shape-control)] border p-4', colors.panelBg, colors.panelBorder)}>
+    <section data-appearance-card="" className={cn('rounded-[var(--shape-control)] border p-4', colors.panelBg, colors.panelBorder)}>
       {page.imageUrl && (
         <div className="-mx-1 -mt-1 mb-3 overflow-hidden rounded-xl">
           <Shot src={thumbSrc(page.imageUrl, 768)} alt="" className="block w-full" onOpen={() => onPicture(page.imageUrl!)} />
@@ -1144,7 +1144,7 @@ function BookFoot({
 
   if (stage.stage === 'begin') {
     return (
-      <section className={cn(panel, 'text-center')}>
+      <section data-appearance-card="" className={cn(panel, 'text-center')}>
         <p className={cn('text-[13px] leading-relaxed', colors.textMain)}>The bible is written and the first page is not. Begin, and they write it.</p>
         <button
           type="button"
@@ -1162,7 +1162,7 @@ function BookFoot({
 
   if (stage.stage === 'writing') {
     return (
-      <section className={cn(panel, 'flex flex-col items-center gap-2 text-center')}>
+      <section data-appearance-card="" className={cn(panel, 'flex flex-col items-center gap-2 text-center')}>
         <Writing />
         <p className={cn('text-[13px]', colors.textMain)}>{stage.first ? 'They are writing the first page.' : 'They are writing the next page.'}</p>
         <p className={cn('text-[11px]', colors.textMuted)}>It will be here when you come back.</p>
@@ -1173,7 +1173,7 @@ function BookFoot({
 
   if (stage.stage === 'stalled') {
     return (
-      <section className={cn(panel, 'text-center')}>
+      <section data-appearance-card="" className={cn(panel, 'text-center')}>
         <p className={cn('text-[13px] leading-relaxed [overflow-wrap:anywhere]', colors.textMain)}>{stage.reason}</p>
         <button
           type="button"
@@ -1191,7 +1191,7 @@ function BookFoot({
 
   if (stage.stage === 'the-end') {
     return (
-      <section className={cn(panel, 'text-center')}>
+      <section data-appearance-card="" className={cn(panel, 'text-center')}>
         <div aria-hidden className="mx-auto mb-2 h-px w-16" style={{ background: thread }} />
         <p className={cn('text-[15px] font-semibold italic', colors.textMain)}>The end.</p>
         {book.finishedAt && <p className={cn('mt-1 text-[11px]', colors.textMuted)}>Finished {formatDay(book.finishedAt)}</p>}
@@ -1201,7 +1201,7 @@ function BookFoot({
 
   // Their person's move.
   return (
-    <section className={panel}>
+    <section data-appearance-card="" className={panel}>
       {staged && (
         <div className="mb-3 rounded-xl border-l-[3px] p-3" style={{ borderColor: thread, background: CARD }}>
           <div className={cn(LABEL, colors.textMuted)}>From the widget</div>
@@ -1427,7 +1427,7 @@ function TableTalk({
     if (box) box.scrollTop = box.scrollHeight;
   }, [latestId, showTyping]);
   return (
-    <section className={cn('rounded-[var(--shape-control)] border p-3', colors.panelBg, colors.panelBorder)}>
+    <section data-appearance-card="" className={cn('rounded-[var(--shape-control)] border p-3', colors.panelBg, colors.panelBorder)}>
       <h3 className={cn(LABEL, colors.textMuted)}>At the table</h3>
       {/* The house's one table (components/RoomTable.tsx; theirs, Oct 28 2026:
           one frame every room draws from). */}

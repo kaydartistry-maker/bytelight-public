@@ -5,9 +5,14 @@ import localforage from 'localforage';
 import { MessageBubble } from './components/MessageBubble';
 import { TypingIndicator } from './components/TypingIndicator';
 import { ChatInput } from './components/ChatInput';
-import { Message, AppTheme, ContactProfile, AppSettings, CustomEmoji } from './types';
+import { Message, AppTheme, ContactProfile, AppSettings, CustomEmoji, type AppThemePreset, type AppearanceSaveResult } from './types';
+import { pushServerSettingsDetailed, serializeSettingsSnapshot, type ServerSettingsBlob } from './bytelight/settings-sync';
+import { normalizeThemeAppearance } from '@bytelight/shared';
 import { Loader2, Smartphone, Search, X, Star, Settings, ChevronLeft, ChevronDown, Download, Square, Wifi, WifiOff, Menu } from 'lucide-react';
-import { motion, AnimatePresence } from 'motion/react';
+import { motion, AnimatePresence, useReducedMotion, MotionGlobalConfig } from 'motion/react';
+import { AppearanceRuntime } from './components/AppearanceRuntime';
+import { AppBackground as ThemedAppBackground } from './components/ThemedAppBackground';
+import { reconcileThemeSnapshot, themeFirstPaintCache } from './lib/theme-state';
 import { cn, haptic } from './lib/utils';
 import { SettingsDashboard } from './components/SettingsDashboard';
 import { ContactInfo } from './components/ContactInfo';
@@ -18,6 +23,7 @@ import { JournalApp } from './components/JournalApp';
 import { LibraryApp } from './components/LibraryApp';
 import { LettersApp } from './components/LettersApp';
 import { TreehouseApp } from './components/TreehouseApp';
+import { TheaterApp } from './components/TheaterApp';
 import { FieldNotesApp } from './components/FieldNotesApp';
 import { StudioApp } from './components/StudioApp';
 import { ThreadSwitcher } from './components/ThreadSwitcher';
@@ -31,8 +37,12 @@ import { ModelPill } from './components/ModelPill';
 import { CanvasApp } from './components/CanvasApp';
 import { XRayApp } from './components/XRayApp';
 import { GamesApp } from './components/GamesApp';
+import { QuestingApp } from './components/QuestingApp';
+import { GifApp } from './components/GifApp';
+import { CutoutApp } from './components/CutoutApp';
+import { AppShell } from './components/AppShell';
+import { Scissors } from 'lucide-react';
 import { CompanionsApp } from './components/CompanionsApp';
-import { RadarApp } from './components/RadarApp';
 import { WeatherApp } from './components/WeatherApp';
 import { SpotifyApp } from './components/SpotifyApp';
 
@@ -127,6 +137,9 @@ import { deliverLastCrashReport } from './bytelight/pocket-voice';
 import { normalizeCompanionRow } from './lib/companion-row';
 import { buildSearchRequest, parseSearchPage, searchDelayMs, type SearchMode } from './lib/search-domain';
 import { pushJumpFromMessage, pushJumpFromSearch, stripPushJumpParams, type PushJump } from './bytelight/push-target';
+import { NookPlayerProvider } from './lib/nook-player';
+import { nookReturnTo } from './lib/library-audiobook';
+import { NookNowPlaying } from './components/NookNowPlaying';
 
 // A push tap that cold-started the app carries its target in the URL. Read
 // once at load and strip it, so a later reload doesn't jump again.
@@ -176,18 +189,18 @@ function AppBackground({ theme }: { theme: AppTheme }) {
 
   useEffect(() => {
     if (!theme.slideshowEnabled || !theme.wallpapers || theme.wallpapers.length <= 1) return;
-    
+
     const interval = setInterval(() => {
       setSlideshowIndex((prev) => (prev + 1) % theme.wallpapers!.length);
     }, 10000); // 10 seconds
-    
+
     return () => clearInterval(interval);
   }, [theme.slideshowEnabled, theme.wallpapers]);
 
   if (theme.slideshowEnabled && theme.wallpapers && theme.wallpapers.length > 0) {
     return (
       <AnimatePresence>
-        <motion.img 
+        <motion.img
           key={slideshowIndex}
           initial={{ opacity: 0 }}
           animate={{ opacity: 0.8 }}
@@ -204,7 +217,7 @@ function AppBackground({ theme }: { theme: AppTheme }) {
 
   if (theme.wallpaper) {
     return (
-      <img 
+      <img
         className="absolute inset-0 z-0 opacity-80 pointer-events-none w-full h-full object-cover"
         src={theme.wallpaper}
         alt="Wallpaper"
@@ -221,7 +234,6 @@ export type OsScreen =
   | 'home'
   | 'appdrawer'
   | 'messages'
-  | 'radar'
   | 'weather'
   | 'notes'
   | 'status'
@@ -242,8 +254,12 @@ export type OsScreen =
   | 'files'
   | 'artifacts'
   | 'inbox'
+  | 'gif'
+  | 'cutout'
+  | 'questing'
   | 'games'
-  | 'library';
+  | 'library'
+  | 'theater';
 
 export default function App() {
   // byte-light opens on home as it always has; the lock button on home (or
@@ -411,7 +427,7 @@ export default function App() {
   const [showContactInfo, setShowContactInfo] = useState(false);
 
   // Theme State
-  const [theme, setTheme] = useState<AppTheme>(() => {
+  const [storedTheme, setTheme] = useState<AppTheme>(() => {
     const saved = localStorage.getItem('bytelight_theme');
     if (saved) {
       try {
@@ -431,11 +447,15 @@ export default function App() {
         delete parsed.wallpaper;
         delete parsed.lockScreenWallpaper;
         delete parsed.wallpapers;
-        return parsed;
+        return themeFirstPaintCache(parsed);
       } catch (e) {}
     }
     return DEFAULT_THEME;
   });
+  // Render-only previews must never enter persistence or cross-device sync.
+  const [previewTheme, setPreviewTheme] = useState<AppTheme | undefined>();
+  const theme = previewTheme ?? storedTheme;
+  useEffect(() => { if (!showSettings) setPreviewTheme(undefined); }, [showSettings]);
   // Read only while the lock screen is up and its message card can show.
   const lockUnread = useLockUnread(lockThreads, osState === 'locked' && lockShowOf(theme.lockShow) !== 'nothing');
 
@@ -539,28 +559,15 @@ export default function App() {
   // The same call reports who owns the house, so views that show the owner's
   // name next to ours read it from the server instead of carrying one inside.
   const [ownerName, setOwnerName] = useState('You');
-  const companionsRefreshVersion = useRef(0);
-  async function refreshCompanions() {
-    const version = ++companionsRefreshVersion.current;
-    try {
-      const res = await apiFetch('/api/companions');
-      if (!res.ok) return;
-      const data = await res.json();
-      if (version !== companionsRefreshVersion.current) return;
-      if (data?.companions) {
-        const rows = data.companions.map(toDbCompanion) as DBCompanion[];
-        setDbCompanions(rows);
-        setThreadCompanions(prev => prev.flatMap(c => {
-          const updated = rows.find(row => row.id === c.id);
-          return updated ? [updated] : [];
-        }));
-      }
-      const owner = ownerFromCompanionsPayload(data) ?? await fetchOwnerFromPreferences();
-      if (version === companionsRefreshVersion.current && owner?.name) setOwnerName(owner.name);
-    } catch { /* keep the last successfully loaded registry */ }
-  }
   useEffect(() => {
-    void refreshCompanions();
+    apiFetch('/api/companions')
+      .then(res => res.ok ? res.json() : null)
+      .then(async data => {
+        if (data?.companions) setDbCompanions(data.companions.map(toDbCompanion));
+        const owner = ownerFromCompanionsPayload(data) ?? await fetchOwnerFromPreferences();
+        if (owner?.name) setOwnerName(owner.name);
+      })
+      .catch(() => {});
     // Re-read once main's profiles land so the rows pick up the live photos.
   }, [ksProfiles]);
 
@@ -671,6 +678,16 @@ export default function App() {
   // initial fetch and risk overwriting newer server state with stale
   // localStorage from a different browser.
   const serverSettingsHydrated = useRef(false);
+  const settingsSnapshot = useRef<ServerSettingsBlob>({ theme: storedTheme, contacts, appSettings });
+  settingsSnapshot.current = { theme: storedTheme, contacts, appSettings };
+  const settingsSyncTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const settingsSaveInFlight = useRef(false);
+  const [settingsSaving, setSettingsSaving] = useState(false);
+  const [settingsSyncError, setSettingsSyncError] = useState<string | undefined>();
+  const [settingsCacheErrors, setSettingsCacheErrors] = useState<Record<string, string>>({});
+  const settingsEnvelope = (updates: Partial<ServerSettingsBlob> = {}): ServerSettingsBlob => ({
+    ...settingsSnapshot.current, ...updates, extras: collectLocalExtras(),
+  });
 
   // Load from localforage on mount (for large data like base64 images)
   useEffect(() => {
@@ -730,7 +747,7 @@ export default function App() {
         const blob = await fetchServerSettings();
         if (cancelled) return;
         if (blob) {
-          if (blob.theme) setTheme((prev) => ({ ...prev, ...blob.theme! }));
+          if (blob.theme) setTheme((prev) => reconcileThemeSnapshot(prev, blob.theme!, DEFAULT_THEME));
           if (blob.contacts) setContacts((prev) => ({ ...prev, ...blob.contacts! }));
           if (blob.appSettings) {
             const serverAppSettings = {
@@ -1013,17 +1030,18 @@ export default function App() {
   // Persist Theme (Local)
   useEffect(() => {
     if (!isLoaded) return;
-    localforage.setItem('bytelight_theme', theme).catch(e => {
+    localforage.setItem('bytelight_theme', storedTheme).catch(e => {
       console.error('Failed to save theme to localforage:', e);
+      setSettingsCacheErrors((previous) => ({ ...previous, theme: 'The theme could not be cached on this device. Retry saving before relying on offline access.' }));
     });
     try {
-      const themeForLocalStorage = { ...theme };
+      const themeForLocalStorage = themeFirstPaintCache(storedTheme);
       delete themeForLocalStorage.wallpaper;
       delete themeForLocalStorage.lockScreenWallpaper;
       delete themeForLocalStorage.wallpapers;
       localStorage.setItem('bytelight_theme', JSON.stringify(themeForLocalStorage));
     } catch (e) {}
-  }, [theme, isLoaded]);
+  }, [storedTheme, isLoaded]);
 
   // Persist Contacts
   useEffect(() => {
@@ -1042,6 +1060,7 @@ export default function App() {
     if (!isLoaded) return;
     localforage.setItem('bytelight_settings', appSettings).catch(e => {
       console.error('Failed to save settings to localforage:', e);
+      setSettingsCacheErrors((previous) => ({ ...previous, settings: 'Settings could not be cached on this device. Retry saving before relying on offline access.' }));
     });
     try {
       localStorage.setItem('bytelight_settings', JSON.stringify(appSettings));
@@ -1055,11 +1074,15 @@ export default function App() {
   useEffect(() => {
     if (!isLoaded || !authenticated) return;
     if (!serverSettingsHydrated.current) return;
+    if (settingsSaveInFlight.current) return;
     const t = setTimeout(() => {
-      void pushServerSettings({ theme, contacts, appSettings, extras: collectLocalExtras() });
+      void pushServerSettingsDetailed(settingsEnvelope()).then((result) => {
+        setSettingsSyncError('error' in result ? result.error : undefined);
+      });
     }, 1000);
-    return () => clearTimeout(t);
-  }, [theme, contacts, appSettings, isLoaded, authenticated]);
+    settingsSyncTimer.current = t;
+    return () => { clearTimeout(t); if (settingsSyncTimer.current === t) settingsSyncTimer.current = undefined; };
+  }, [storedTheme, contacts, appSettings, isLoaded, authenticated, settingsSaving]);
 
   // Reconcile custom emojis with the backend on first successful connect:
   // upload any legacy base64 entries, pull anything new, and write the
@@ -1218,6 +1241,71 @@ export default function App() {
 
   const updateAppSettings = (updates: Partial<typeof appSettings>) => {
     setAppSettings(prev => ({ ...prev, ...updates }));
+  };
+
+  const assertSettingsReady = () => {
+    if (!isLoaded || !authenticated || !serverSettingsHydrated.current) throw new Error('Wait for your saved setup to load before saving. Your draft is preserved.');
+  };
+  const startSettingsSave = () => {
+    assertSettingsReady();
+    if (settingsSaveInFlight.current) throw new Error('Another settings save is still running. Your draft is preserved.');
+    settingsSaveInFlight.current = true;
+    clearTimeout(settingsSyncTimer.current);
+    settingsSyncTimer.current = undefined;
+    setSettingsSaving(true);
+  };
+  const finishSettingsSave = () => { settingsSaveInFlight.current = false; setSettingsSaving(false); };
+  const applyThemeDurably = async (next: AppTheme): Promise<AppearanceSaveResult> => {
+    assertSettingsReady();
+    serializeSettingsSnapshot(settingsEnvelope({ theme: next }));
+    startSettingsSave();
+    try {
+      // Failed IndexedDB writes leave both the real theme and editor history
+      // untouched. A preview is never mistaken for durable storage.
+      try { await localforage.setItem('bytelight_theme', next); }
+      catch { throw new Error('This device could not save the theme. Your draft is preserved; free browser storage and retry.'); }
+      setSettingsCacheErrors((previous) => { const copy = { ...previous }; delete copy.theme; return copy; });
+      setTheme(next);
+      const result = await pushServerSettingsDetailed(settingsEnvelope({ theme: next }));
+      const message = 'error' in result ? `Applied on this device. ${result.error}` : 'Applied and synced.';
+      setSettingsSyncError('error' in result ? message : undefined);
+      return { synced: result.ok, message };
+    } finally { finishSettingsSave(); }
+  };
+  const validatePresets = (themePresets: AppThemePreset[]) => {
+    assertSettingsReady();
+    serializeSettingsSnapshot(settingsEnvelope({ appSettings: { ...settingsSnapshot.current.appSettings, themePresets } }));
+  };
+  const savePresetsDurably = async (themePresets: AppThemePreset[]): Promise<void> => {
+    validatePresets(themePresets);
+    startSettingsSave();
+    try {
+      const next = { ...settingsSnapshot.current.appSettings, themePresets };
+      try { await localforage.setItem('bytelight_settings', next); }
+      catch { throw new Error('This device could not save the preset library. Existing presets are unchanged.'); }
+      setSettingsCacheErrors((previous) => { const copy = { ...previous }; delete copy.settings; return copy; });
+      setAppSettings((previous) => ({ ...previous, themePresets }));
+      const result = await pushServerSettingsDetailed(settingsEnvelope({ appSettings: { ...settingsSnapshot.current.appSettings, themePresets } }));
+      setSettingsSyncError('error' in result ? `Presets saved on this device. ${result.error}` : undefined);
+    } finally { finishSettingsSave(); }
+  };
+  const retrySettingsSync = async (): Promise<void> => {
+    let started = false;
+    try {
+      startSettingsSave();
+      started = true;
+      const current = settingsEnvelope();
+      serializeSettingsSnapshot(current);
+      await localforage.setItem('bytelight_theme', current.theme);
+      await localforage.setItem('bytelight_settings', current.appSettings);
+      setSettingsCacheErrors({});
+      const result = await pushServerSettingsDetailed(current);
+      setSettingsSyncError('error' in result ? result.error : undefined);
+    } catch (cause) {
+      setSettingsSyncError(cause instanceof Error ? cause.message : 'Could not retry settings sync.');
+    } finally {
+      if (started) finishSettingsSave();
+    }
   };
 
   const exportChat = async (_type: 'main' | 'private' = 'main') => {
@@ -1583,6 +1671,16 @@ export default function App() {
   // toasts) skip re-splitting voices and re-parsing markdown for the whole
   // history — unchanged element references let React bail out of each
   // bubble's subtree entirely.
+  const motionPreference = useMemo(() => normalizeThemeAppearance(theme.appearance).motion, [theme.appearance]);
+  const systemReducedMotion = useReducedMotion();
+  const animationsOff = !!systemReducedMotion || motionPreference?.enabled === false || motionPreference?.reduceMotion === true || motionPreference?.duration === 0 || (motionPreference?.scale ?? theme.fx?.motion ?? 100) === 0;
+  useEffect(() => {
+    const previous = MotionGlobalConfig.skipAnimations;
+    MotionGlobalConfig.skipAnimations = animationsOff;
+    return () => { MotionGlobalConfig.skipAnimations = previous; };
+  }, [animationsOff]);
+  const entranceEnabled = !systemReducedMotion && motionPreference?.enabled !== false && motionPreference?.reduceMotion !== true && motionPreference?.entrance !== false;
+  const entranceDuration = entranceEnabled ? ((motionPreference?.duration ?? 200) / 1000) * ((motionPreference?.scale ?? theme.fx?.motion ?? 100) / 100) : 0;
   const renderedMessages = useMemo(() => {
     const voiceRoster = threadCompanions.length > 0 ? threadCompanions : dbCompanions;
     return filteredMessages.flatMap((msg, index) => {
@@ -1672,9 +1770,9 @@ export default function App() {
             <motion.div
               key={`${msg.id}-${index}-v${vi}`}
               data-msg-id={vi === 0 ? msg.id : undefined}
-              initial={{ opacity: 0, y: 10, scale: 0.95 }}
+              initial={entranceEnabled ? { opacity: 0, y: 10, scale: 0.95 } : false}
               animate={{ opacity: 1, y: 0, scale: 1 }}
-              transition={{ duration: 0.2 }}
+              transition={{ duration: entranceDuration }}
             >
               {bubbleFor(
                 { ...msg, content: sec.content, segments: sec.segments },
@@ -1692,9 +1790,9 @@ export default function App() {
           <motion.div
             key={`${msg.id}-${index}`}
             data-msg-id={msg.id}
-            initial={{ opacity: 0, y: 10, scale: 0.95 }}
+            initial={entranceEnabled ? { opacity: 0, y: 10, scale: 0.95 } : false}
             animate={{ opacity: 1, y: 0, scale: 1 }}
-            transition={{ duration: 0.2 }}
+            transition={{ duration: entranceDuration }}
           >
             {bubbleFor(msg, undefined, 'only')}
           </motion.div>,
@@ -1713,6 +1811,8 @@ export default function App() {
     appSettings.customEmojis,
     ownerAvatar,
     appSettings.userAvatarColor,
+    entranceEnabled,
+    entranceDuration,
   ]);
 
   useEffect(() => {
@@ -1757,6 +1857,10 @@ export default function App() {
     root.style.setProperty('--scrollbar-thumb', solid(resolved.accent, customMode?.accent));
     root.style.setProperty('--scrollbar-track', theme.mode === 'dark' ? 'rgba(0,0,0,0.3)' : 'rgba(0,0,0,0.1)');
     root.style.setProperty('--bytelight-accent', solid(resolved.accent, customMode?.accent));
+    // The filled-button color rooms ported from Aerie paint with (Story Shelf,
+    // Theater, …). Never defined here, so those buttons came out unpainted:
+    // dark on dark. It is the theme's own accent.
+    root.style.setProperty('--bytelight-selected-fill', solid(resolved.accent, customMode?.accent));
     root.style.setProperty('--bytelight-on-accent', contrastTextColor(accentForContrast, theme.mode === 'dark' ? '#090807' : '#ffffff'));
     root.style.setProperty('--bytelight-page', solid(resolved.pageBg, customMode?.pageBg));
     root.style.setProperty('--bytelight-header', theme.mode === 'light' ? '#ffffff' : solid(resolved.pageBg, customMode?.pageBg));
@@ -1808,24 +1912,37 @@ export default function App() {
     }
   }, [colors, theme.mode, theme.id, theme.customColors, theme.shapeRadius, theme.skin, theme.fx, theme.accentOverride, theme.accentPalette, theme.typography]);
 
+  // The audiobook's now-playing bar opens the Reading Nook on the book being
+  // read; back from there returns to the thread or drawer she tapped it in.
+  const openNookFromBar = () => {
+    if (osState === 'library') return;
+    setAppReturnTo(nookReturnTo(osState));
+    setShowSettings(false);
+    setOsState('library');
+  };
+
   return (
+    // The Reading Nook's audiobook player belongs to the whole phone, so the
+    // voice keeps reading when she leaves the Nook (lib/nook-player.tsx).
+    <NookPlayerProvider onOpenNook={openNookFromBar}>
     <div
       className={cn(
-        // Pinned to the screen's edges rather than sized in viewport units:
-        // after the keyboard closed, a 100svh height could hold the keyboard-up
-        // height for a couple of seconds and leave a block of page color under
-        // the message box. Edges follow the window the moment it changes.
-        "bytelight-root fixed inset-0 flex flex-col overflow-hidden transition-colors duration-500",
+        // iOS installed-web-app mode can resolve fixed bottom:0 against a
+        // shorter layout viewport, leaving a body-colour shelf below the app.
+        // Dynamic viewport height follows the actual visible screen and the
+        // keyboard; unlike the old 100svh attempt, it does not retain the
+        // keyboard-up height after the keyboard closes.
+        "bytelight-root fixed inset-x-0 top-0 h-[100dvh] flex flex-col overflow-hidden transition-colors duration-500",
         colors.pageBg,
         colors.textMain,
         activeFontFamily
       )}
       data-theme-mode={theme.mode}
-      style={{ paddingBottom: 'var(--sab)' }}
     >
       {customThemeStyles && <style>{customThemeStyles}</style>}
       {/* Global Wallpaper Layer */}
-      <AppBackground theme={theme} />
+      {authenticated && <AppearanceRuntime appearance={theme.appearance} section={showSettings ? 'settings' : osState} legacyMotion={theme.fx?.motion} />}
+      {authenticated && <ThemedAppBackground theme={theme} />}
 
       {/* Bytelight auth gate — overlays everything when a passcode is required */}
       <BytelightLoginGate />
@@ -1841,7 +1958,8 @@ export default function App() {
           <LockScreen
             key="locked"
             onUnlock={() => setOsState('home')}
-            wallpaper={theme.lockScreenWallpaper || theme.wallpaper}
+            wallpaper={authenticated ? theme.lockScreenWallpaper || theme.wallpaper : undefined}
+            backgroundTheme={authenticated ? theme : undefined}
             face={lockFaceOf(theme.lockFace)}
             position={lockPositionOf(theme.lockClockPosition)}
             size={lockSizeOf(theme.lockClockSize)}
@@ -1922,6 +2040,8 @@ export default function App() {
           <AgentApp
             key="agent"
             onClose={closeApp}
+            // Integrations opens on Providers; back still returns to where Agent was opened from.
+            onOpenIntegrations={() => setOsState('integrations')}
             themeConfig={activeTheme}
             themeMode={theme.mode}
           />
@@ -1968,19 +2088,9 @@ export default function App() {
         {osState === 'companions' && (
           <CompanionsApp
             key="companions"
-            onCompanionsChange={refreshCompanions}
             onClose={closeApp}
             themeConfig={activeTheme}
             themeMode={theme.mode}
-          />
-        )}
-        {osState === 'radar' && (
-          <RadarApp
-            key="radar"
-            onClose={closeApp}
-            themeConfig={activeTheme}
-            themeMode={theme.mode}
-            companions={dbCompanions}
           />
         )}
         {osState === 'weather' && (
@@ -2015,6 +2125,9 @@ export default function App() {
             themeMode={theme.mode}
           />
         )}
+        {osState === 'gif' && <GifApp onClose={closeApp} themeConfig={activeTheme} themeMode={theme.mode} />}
+        {osState === 'cutout' && <AppShell title="Cut Out" icon={Scissors} onClose={closeApp} themeConfig={activeTheme} themeMode={theme.mode}><CutoutApp themeConfig={activeTheme} themeMode={theme.mode} /></AppShell>}
+        {osState === 'questing' && <QuestingApp key="questing" onClose={closeApp} themeConfig={activeTheme} themeMode={theme.mode} />}
         {osState === 'games' && (
           <GamesApp
             key="games"
@@ -2032,6 +2145,14 @@ export default function App() {
             userAvatar={ownerAvatar}
             userAvatarColor={appSettings.userAvatarColor}
             ownerName={ownerName}
+          />
+        )}
+        {osState === 'theater' && (
+          <TheaterApp
+            key="theater"
+            onClose={closeApp}
+            themeConfig={activeTheme}
+            themeMode={theme.mode}
           />
         )}
         {osState === 'fieldnotes' && (
@@ -2116,13 +2237,14 @@ export default function App() {
           )}
           style={{ paddingTop: 'var(--sat)' }}
         >
-          <div className="flex flex-col px-4 sm:px-6 py-3 sm:py-4 gap-2 sm:gap-3">
+          <div className="bytelight-chat-header-main flex flex-col px-3 sm:px-6 py-2 sm:py-4 gap-1.5 sm:gap-3">
             <div className="flex items-center justify-between">
               <div className="flex min-w-0 items-center gap-1 sm:gap-2">
                 <button
                   onClick={() => { setOsState(messagesReturnTo); setMessagesReturnTo('home'); }}
+                  aria-label="Back from Messages"
                   className={cn(
-                    "p-2 -ml-2 rounded-full transition-colors hover:bg-black/10 dark:hover:bg-white/10",
+                    "bytelight-back-button p-2 -ml-2 rounded-full transition-colors hover:bg-black/10 dark:hover:bg-white/10",
                     colors.textMuted
                   )}
                 >
@@ -2228,7 +2350,7 @@ export default function App() {
                     switch nothing could turn on — unreachable for eleven weeks. It belongs
                     here: the faces at the top of a conversation open the people in it. The
                     Companions screen is still in the app drawer. */}
-                <div className="flex items-center justify-between gap-3">
+                <div className="bytelight-chat-identity flex items-center justify-between gap-3">
                 <div className="flex min-w-0 items-center justify-start gap-3 sm:gap-4 cursor-pointer group" onClick={() => setShowContactInfo(true)}>
               <div className="relative flex shrink-0 -space-x-2 sm:-space-x-3">
                 {(threadCompanions.length > 0 ? threadCompanions : dbCompanions.length > 0 ? dbCompanions : Object.values(contacts)).map((c: any, index: number) => (
@@ -2272,7 +2394,7 @@ export default function App() {
         </div>
         
         {!isSearching && (
-          <div className="w-full flex flex-wrap items-center justify-center gap-x-3 gap-y-1.5 pb-3 sm:pb-4 px-4">
+          <div className="bytelight-chat-meta w-full flex flex-wrap items-center justify-center gap-x-3 gap-y-1 pb-2 sm:pb-4 px-3">
             <ModelPill themeConfig={activeTheme} themeMode={theme.mode} />
             <RateLimitBanner themeConfig={activeTheme} themeMode={theme.mode} />
             <ContextIndicator themeConfig={activeTheme} themeMode={theme.mode} />
@@ -2302,10 +2424,14 @@ export default function App() {
         )}
       </header>
 
+      {/* The audiobook's now-playing bar: its own row under the header, so it
+          never covers the thread or the composer. */}
+      <NookNowPlaying className="relative z-10 shrink-0 px-4 pb-2 pt-1" />
+
       <CompactionBanner themeConfig={activeTheme} themeMode={theme.mode} />
 
       {/* Message Thread */}
-      <main ref={scrollContainerRef} className="bytelight-wallpaper-text flex-1 overflow-y-auto overflow-x-hidden px-4 py-6 scrollbar-hide relative z-1">
+      <main ref={scrollContainerRef} className="bytelight-wallpaper-text flex-1 overflow-y-auto overflow-x-hidden px-4 py-3 sm:py-6 scrollbar-hide relative z-1">
         <div className="max-w-4xl mx-auto min-h-full flex flex-col">
           {isLoading && messages.length === 0 ? (
             <div className="flex flex-col items-center justify-center flex-1 py-20 opacity-40">
@@ -2426,7 +2552,17 @@ export default function App() {
       <AnimatePresence>
         {showSettings && (
           <SettingsDashboard
-            theme={theme}
+            theme={storedTheme}
+            previewTheme={previewTheme}
+            onPreviewChange={setPreviewTheme}
+            onThemeReplace={applyThemeDurably}
+            onPresetsSave={savePresetsDurably}
+            validatePresets={validatePresets}
+            syncError={[...Object.values(settingsCacheErrors), settingsSyncError].filter(Boolean).join(' ')}
+            settingsSaving={settingsSaving}
+            onRetrySync={retrySettingsSync}
+            companions={dbCompanions}
+            ownerAvatar={ownerAvatar}
             appSettings={appSettings}
             onThemeChange={updateTheme}
             onSettingsChange={updateAppSettings}
@@ -2448,5 +2584,6 @@ export default function App() {
         )}
       </AnimatePresence>
     </div>
+    </NookPlayerProvider>
   );
 }

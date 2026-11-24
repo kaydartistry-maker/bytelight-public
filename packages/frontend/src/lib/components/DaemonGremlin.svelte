@@ -1,7 +1,7 @@
 <script lang="ts">
   import type { PresenceStatus } from '@bytelight/shared';
 
-  let { status, size = 48 } = $props<{ status: PresenceStatus; size?: number }>();
+  let { status, size = 48 }: { status: PresenceStatus; size?: number } = $props();
 
   // Map presence to gremlin state
   const gremlinState = $derived(() => {

@@ -113,6 +113,17 @@ export function sleepsAfterThisPiece(mode: SleepMode, seg: number, segCount: num
   return mode === 'chapter' && seg >= segCount - 1;
 }
 
+/** Where play picks up after a sleep timer paused the voice (the book stays
+ *  loaded, paused). End of chapter: the next chapter's first piece, never the
+ *  piece on screen in the chapter just finished; 'end' when that chapter was
+ *  the book's last (the end of the book puts it down). The minute timers: the
+ *  piece it paused on. */
+export function sleepResumePoint(stoppedBy: 'chapter' | 'minutes', pos: PiecePos, segCount: number, chapterCount: number): PiecePos | 'end' {
+  if (stoppedBy === 'minutes') return { chapter: pos.chapter, seg: pos.seg };
+  const step = nextPiece({ chapter: pos.chapter, seg: Math.max(pos.seg, segCount - 1) }, segCount, chapterCount);
+  return step.kind === 'end' ? 'end' : { chapter: step.chapter, seg: 0 };
+}
+
 /** The timer counts listening time, not the clock: a pause holds it. */
 export function tickSleep(leftMs: number, elapsedMs: number): number {
   return Math.max(0, leftMs - Math.max(0, elapsedMs));
@@ -147,4 +158,42 @@ export function bookmarkFraction(segments: Segment[], seg: number, paragraphCoun
 export function seekTarget(currentTime: number, duration: number, delta: number): number {
   const end = Number.isFinite(duration) && duration > 0 ? duration : Math.max(0, currentTime + delta);
   return Math.min(end, Math.max(0, currentTime + delta));
+}
+
+// ── the player belongs to the whole phone ─────────────────────────────────
+// The audiobook player lives above every screen (lib/nook-player.tsx), so the
+// voice keeps reading when she leaves the Reading Nook. A reader is a client
+// of it, and has to know whether the book in the player is its own.
+
+/** How a reader open on `readerBookId` stands to the player:
+ *  'idle' — nothing loaded; the reader's play starts its own book.
+ *  'this' — the player holds this book; the reader follows along.
+ *  'other' — another book is loaded; the reader shows "Now playing" and a
+ *  switch button, and never takes the player over by itself. */
+export type ReaderRelation = 'idle' | 'this' | 'other';
+
+export function readerRelation(playerBookId: number | null | undefined, readerBookId: number): ReaderRelation {
+  if (playerBookId === null || playerBookId === undefined) return 'idle';
+  return playerBookId === readerBookId ? 'this' : 'other';
+}
+
+/** The app-wide now-playing bar shows while a book is loaded (playing, or
+ *  paused mid-book), unless the screen it would sit on is the reader itself,
+ *  which carries its own player. Stopping (× or the end of the book) unloads
+ *  the book, and the bar goes with it; a sleep timer only pauses it. */
+export function showsNowPlaying(playerBookId: number | null | undefined, hiddenHere = false): boolean {
+  return playerBookId !== null && playerBookId !== undefined && !hiddenHere;
+}
+
+/** A rendered piece's cache key. The player outlives any one book, so the
+ *  book is part of it: piece 4 of chapter 1 is a different piece in each. */
+export function pieceKey(bookId: number, chapter: number, seg: number, voice: string): string {
+  return `${bookId}:${chapter}-${seg}-${voice}`;
+}
+
+/** Where back from the Nook goes when the now-playing bar opened it: the
+ *  thread she was in, the drawer, else home. */
+export function nookReturnTo(screen: string): 'messages' | 'appdrawer' | 'home' {
+  if (screen === 'messages' || screen === 'appdrawer') return screen;
+  return 'home';
 }

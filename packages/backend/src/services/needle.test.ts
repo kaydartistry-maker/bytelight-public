@@ -72,9 +72,14 @@ test('needle: an app id that cannot be read in time does not hold the drop back'
     connectInfo: () => new Promise(() => {}),
     connectWaitMs: 20,
   });
-  const answer = await needle.drop({ companion: 'companion-a', uri: SONG });
-  assert.equal(answer.ok, true);
-  assert.deepEqual(pushed, [{ kind: 'needle', uri: SONG, by: 'companion-a', dropId: 'drop-1' }]);
+  // The running application holds its HTTP server open while this unref'ed
+  // deadline ticks. Supply that referenced lifetime in this isolated fixture.
+  const serverLifetime = setInterval(() => {}, 1000);
+  try {
+    const answer = await needle.drop({ companion: 'companion-a', uri: SONG });
+    assert.equal(answer.ok, true);
+    assert.deepEqual(pushed, [{ kind: 'needle', uri: SONG, by: 'companion-a', dropId: 'drop-1' }]);
+  } finally { clearInterval(serverLifetime); }
 });
 
 test('no phone to wake: no active device and no registered device answers ok:false reason push', async () => {

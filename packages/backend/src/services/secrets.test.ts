@@ -1,16 +1,21 @@
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { chmodSync, mkdtempSync, rmSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { join } from 'node:path';
 
 // Real disk-backed DB so getConfig/setConfig (which open by path via
 // getDb()) have a live `config` table to read/write.
-const tmpRoot = mkdtempSync(join(tmpdir(), 'secrets-test-'));
+const tmpRoot = mkdtempSync(join(homedir(), '.virelle-secrets-test-'));
+chmodSync(tmpRoot, 0o700);
 const dbPath = join(tmpRoot, 'test.db');
+const keyPath = join(tmpRoot, 'vault.key');
 
 const { initDb } = await import('./db.js');
 const { getSecret, setSecret, deleteSecret, listSecrets } = await import('./secrets.js');
+const { getSecretDef } = await import('./secrets.js');
+const { getConfig } = await import('./db.js');
+const { provisionVaultKey } = await import('./credential-vault.js');
 
 // tavily_api_key is a pure env-backed slot (no yaml fallback), which
 // keeps these assertions independent of config loading.
@@ -18,6 +23,8 @@ const SLOT = 'tavily_api_key';
 const ENV = 'TAVILY_API_KEY';
 
 before(() => {
+  provisionVaultKey(keyPath);
+  process.env.VIRELLE_VAULT_KEY_FILE = keyPath;
   initDb(dbPath);
   delete process.env[ENV];
   deleteSecret(SLOT);
@@ -25,10 +32,29 @@ before(() => {
 
 after(() => {
   delete process.env[ENV];
+  delete process.env.VIRELLE_VAULT_KEY_FILE;
   rmSync(tmpRoot, { recursive: true, force: true });
 });
 
 describe('getSecret resolver', () => {
+  it('restores the native Theater key slot, environment fallback and encrypted UI override', () => {
+    const name = 'opensubtitles_api_key';
+    const previous = process.env.OPENSUBTITLES_API_KEY;
+    try {
+      assert.equal(getSecretDef(name)?.envVar, 'OPENSUBTITLES_API_KEY');
+      deleteSecret(name);
+      process.env.OPENSUBTITLES_API_KEY = 'synthetic-subtitles-env';
+      assert.equal(getSecret(name), 'synthetic-subtitles-env');
+      setSecret(name, 'synthetic-subtitles-db');
+      assert.equal(getSecret(name), 'synthetic-subtitles-db');
+      assert.match(getConfig(`secret:${name}`) ?? '', /^virelle-vault:1:/);
+      assert.equal(listSecrets().find(slot => slot.name === name)?.hasValue, true);
+    } finally {
+      deleteSecret(name);
+      if (previous === undefined) delete process.env.OPENSUBTITLES_API_KEY;
+      else process.env.OPENSUBTITLES_API_KEY = previous;
+    }
+  });
   it('DB value wins over the env fallback', () => {
     process.env[ENV] = 'from-env';
     setSecret(SLOT, 'from-db');

@@ -147,6 +147,13 @@ const GENERIC_EFFORT_OPTIONS: readonly EffortOption[] = [
   { value: 'low',    label: 'Low' },
 ] as const;
 
+const ZAI_EFFORT_OPTIONS: readonly EffortOption[] = [
+  { value: 'auto', label: 'Auto — Max by default' },
+  { value: 'max', label: 'Max' },
+  { value: 'high', label: 'High' },
+  { value: 'low', label: 'Low' },
+] as const;
+
 /**
  * Return the ordered reasoning-effort options the UI should surface for
  * a given provider. The dropdown reads from this — never from the
@@ -163,6 +170,8 @@ export function getEffortOptionsForProvider(
     case 'claude-cli':   return CLAUDE_EFFORT_OPTIONS; // CLI lane runs Claude models — same effort vocabulary
     case 'openai-codex': return CODEX_EFFORT_OPTIONS;
     case 'codex-cli':    return CODEX_EFFORT_OPTIONS; // warm-daemon CLI lane runs Codex models — same effort vocabulary
+    case 'gemini-cli':   return GENERIC_EFFORT_OPTIONS;
+    case 'zai':          return ZAI_EFFORT_OPTIONS;
     case 'openai':
     case 'openrouter':
     case 'groq':

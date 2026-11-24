@@ -47,7 +47,7 @@ test('with no way to read a picture, auto stays dark rather than guessing', asyn
 test('the switch reaches the lock screen cards, from Settings, and nothing is blurred', () => {
   const lock = read('../components/LockScreen.tsx');
   assert.equal((lock.match(/\$\{ink\.card\}/g) ?? []).length, 3, 'the message card, the note card and the status card wear the look');
-  assert.match(lock, /const look = useLockCardLook\(cards, wallpaper\);/, 'one look, from the owner switch and the wallpaper behind it');
+  assert.match(lock, /const look = useLockCardLook\(cards, backgroundAsset \? themeAssetUrl\(backgroundAsset\) : wallpaper\);/, 'one look, from the owner switch and the actual legacy or appearance wallpaper behind it');
   assert.doesNotMatch(lock, /rounded-2xl border border-white\/15 bg-black\/45/, 'no card keeps the old fixed dark');
   assert.match(read('../App.tsx'), /cards=\{lockCardsOf\(theme\.lockCards\)\}/, 'the owner switch reaches the lock screen');
   const settings = read('../components/SettingsDashboard.tsx');

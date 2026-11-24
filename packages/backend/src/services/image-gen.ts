@@ -23,7 +23,14 @@ import { homedir } from 'os';
 import crypto from 'crypto';
 import { PROJECT_ROOT } from '../config.js';
 import { getConfig, setConfig, getConfigBool, getConfigNumber, getDb } from './db.js';
+import { getSecret } from './secrets.js';
 import { errMessage } from '../util/errors.js';
+import { resolveStudioCodexBin } from './studio-codex.js';
+import { generateOpenRouterImage } from './studio-openrouter.js';
+import { studioImageAspect } from './studio-image-aspect.js';
+import { transformationReferenceGuidance, type StudioTransformation } from './studio-transformations.js';
+import { monthlyStudioImageSpendUsd, recordStudioImageSpend } from './studio-image-budget.js';
+import { composeStyledPrompt, MAX_GENERATION_REFS, resolveImageModel, snapshotStyle, styleAssetPath, type StudioStyle } from './studio-styles.js';
 
 /** Engine tag recorded on usage_events for image generations. */
 export const IMAGE_GEN_ENGINE = 'image-gen';
@@ -33,14 +40,40 @@ export const IMAGE_GEN_ENGINE = 'image-gen';
 export type Subject = string;
 
 export interface Drawer { slug: string; label: string; isDefault: boolean; emoji?: string; }
+export interface SubjectDescription { slug: string; description: string; }
+// Keep private descriptions out of endpoints that return the generic config.
+const descriptionTables = new WeakSet<ReturnType<typeof getDb>>();
+function drawerDescriptionDb() {
+  const db = getDb();
+  if (!descriptionTables.has(db)) {
+    db.exec('CREATE TABLE IF NOT EXISTS studio_drawer_descriptions (slug TEXT PRIMARY KEY, description TEXT NOT NULL)');
+    descriptionTables.add(db);
+  }
+  return db;
+}
 
-const DEFAULT_DRAWERS: ReadonlyArray<{ slug: string; label: string }> = [
-  { slug: 'companion-a', label: 'Companion A' },
-  { slug: 'companion-b', label: 'Companion B' },
+export function getDrawerDescription(slug: string): string {
+  const row = drawerDescriptionDb().prepare('SELECT description FROM studio_drawer_descriptions WHERE slug = ?').get(slug) as { description: string } | undefined;
+  return row?.description ?? '';
+}
+
+export function saveDrawerDescription(slug: string, input: unknown): string {
+  if (!listDrawers().some(d => d.slug === slug)) throw new ImageGenError('Drawer not found.');
+  if (typeof input !== 'string' || input.length > 1200) throw new ImageGenError('Enter a description of up to 1,200 characters.');
+  const description = input.trim();
+  const db = drawerDescriptionDb();
+  if (description) db.prepare('INSERT INTO studio_drawer_descriptions(slug, description) VALUES (?, ?) ON CONFLICT(slug) DO UPDATE SET description=excluded.description').run(slug, description);
+  else db.prepare('DELETE FROM studio_drawer_descriptions WHERE slug = ?').run(slug);
+  return description;
+}
+
+const DEFAULT_DRAWERS: ReadonlyArray<{ slug: string; label: string; emoji?: string }> = [
+  { slug: 'companion-a', label: 'Companion A', emoji: '🦇' },
+  { slug: 'companion-b', label: 'Companion B', emoji: '🦆' },
   { slug: 'user', label: 'You' },
 ];
 
-const DATA_DIR = join(PROJECT_ROOT, 'data');
+const DATA_DIR = process.env.BYTELIGHT_STUDIO_DATA_DIR || join(PROJECT_ROOT, 'data');
 export const REFS_DIR = join(DATA_DIR, 'image-refs');
 export const GALLERY_DIR = join(DATA_DIR, 'generated-images');
 export const STUDIO_UPLOADS_DIR = join(DATA_DIR, 'studio-one-off-refs');
@@ -79,7 +112,7 @@ export type AntigravityModel = typeof ANTIGRAVITY_MODELS[number];
 
 export interface ImageGenSettings {
   enabled: boolean;
-  backend: 'codex' | 'openai' | 'cloudflare' | 'antigravity' | 'openart';
+  backend: 'codex' | 'openai' | 'openrouter' | 'cloudflare' | 'antigravity' | 'openart';
   size: 'square' | 'portrait' | 'landscape';
   quality: Quality;
   openaiModel: string;
@@ -87,6 +120,7 @@ export interface ImageGenSettings {
   openartModel: string;
   monthlyBudgetUsd: number;
   hasOpenaiKey: boolean;
+  hasOpenRouterKey: boolean;
 }
 
 export function getImageGenSettings(): ImageGenSettings {
@@ -96,23 +130,20 @@ export function getImageGenSettings(): ImageGenSettings {
   const antigravityModel = getConfig('image_gen.antigravity_model') as AntigravityModel || 'Gemini 3.5 Flash (Medium)';
   return {
     enabled: getConfigBool('image_gen.enabled', false),
-    backend: ['codex', 'openai', 'cloudflare', 'antigravity', 'openart'].includes(backend) ? backend as ImageGenSettings['backend'] : 'codex',
+    backend: ['codex', 'openai', 'openrouter', 'cloudflare', 'antigravity', 'openart'].includes(backend) ? backend as ImageGenSettings['backend'] : 'codex',
     size: SIZE_MAP[size] ? size : 'square',
     quality: VALID_QUALITY.includes(quality) ? quality : 'auto',
     openaiModel: getConfig('image_gen.openai_model') || 'gpt-image-2',
     antigravityModel: ANTIGRAVITY_MODELS.includes(antigravityModel) ? antigravityModel : 'Gemini 3.5 Flash (Medium)',
     openartModel: getConfig('image_gen.openart_model') || 'nano-banana-2-lite',
     monthlyBudgetUsd: getConfigNumber('image_gen.monthly_budget_usd', 0),
-    hasOpenaiKey: !!getConfig('image_gen.openai_api_key'),
+    hasOpenaiKey: !!getSecret('studio_openai_api_key'),
+    hasOpenRouterKey: !!getSecret('provider_openrouter_api_key'),
   };
 }
 
 function codexBin(): string {
-  // Do not pin Studio to the binary nested inside a particular npm package
-  // version. `codex update` installs the current standalone CLI in ~/.local/bin.
-  // PM2's deliberately minimal PATH does not include that directory, so resolve
-  // the standalone install directly rather than relying on command lookup.
-  return getConfig('image_gen.codex_bin') || process.env.CODEX_BIN || join(homedir(), '.local', 'bin', 'codex');
+  return resolveStudioCodexBin(getConfig('image_gen.codex_bin'), process.env.CODEX_BIN, homedir());
 }
 
 function codexHome(): string {
@@ -148,7 +179,7 @@ function customDrawers(): CustomDrawer[] {
     return Array.isArray(arr)
       ? arr
           .filter((d) => d && typeof d.slug === 'string' && typeof d.label === 'string')
-          .map((d) => ({ slug: d.slug, label: d.label, emoji: typeof d.emoji === 'string' && d.emoji ? d.emoji : undefined }))
+          .map((d) => ({ slug: d.slug, label: d.label, emoji: typeof d.emoji === 'string' ? d.emoji : undefined }))
       : [];
   } catch { return []; }
 }
@@ -163,8 +194,19 @@ function cleanEmoji(e: string | undefined): string | undefined {
 }
 
 export function listDrawers(): Drawer[] {
-  const defaults = DEFAULT_DRAWERS.map((d) => ({ ...d, isDefault: true }));
-  const customs = customDrawers()
+  const saved = customDrawers();
+  let profiles: Record<string, { name?: unknown; emoji?: unknown }> = {};
+  try { const value = JSON.parse(getConfig('profiles') || '{}'); if (value && typeof value === 'object' && !Array.isArray(value)) profiles = value; } catch { /* Keep usable defaults if profile JSON is unavailable. */ }
+  const defaults = DEFAULT_DRAWERS.map((d) => {
+    const override = saved.find(entry => entry.slug === d.slug);
+    const profile = profiles[d.slug];
+    const name = typeof profile?.name === 'string' ? profile.name.trim() : '';
+    const generic = /^(?:companion\s*(?:a|b|1|2|one|two)|you)$/i.test(name);
+    return { ...d, label: override?.label || (name && !generic ? name : d.label),
+      emoji: override?.emoji !== undefined ? override.emoji || undefined : typeof profile?.emoji === 'string' && /\p{Extended_Pictographic}/u.test(profile.emoji) ? cleanEmoji(profile.emoji) : d.emoji,
+      isDefault: true };
+  });
+  const customs = saved
     .filter((d) => !DEFAULT_DRAWERS.some((x) => x.slug === d.slug))
     .map((d) => ({ ...d, isDefault: false }));
   return [...defaults, ...customs];
@@ -205,16 +247,18 @@ export function createDrawer(label: string, emoji?: string): Drawer {
 
 export function renameDrawer(slug: string, label: string, emoji?: string): Drawer {
   const s = sanitizeSlug(slug);
-  if (DEFAULT_DRAWERS.some((d) => d.slug === s)) throw new ImageGenError('The default drawers cannot be renamed.');
+  const isDefault = DEFAULT_DRAWERS.some((d) => d.slug === s);
   const trimmed = String(label || '').trim();
   if (!trimmed) throw new ImageGenError('A name is required.');
   const e = cleanEmoji(emoji);
   const customs = customDrawers();
   const idx = customs.findIndex((d) => d.slug === s);
-  if (idx === -1) throw new ImageGenError('Drawer not found.');
-  customs[idx] = { slug: s, label: trimmed, emoji: e };
+  if (idx === -1 && !isDefault) throw new ImageGenError('Drawer not found.');
+  const renamed = { slug: s, label: trimmed, emoji: e ?? '' };
+  if (idx === -1) customs.push(renamed);
+  else customs[idx] = renamed;
   setCustomDrawers(customs);
-  return { slug: s, label: trimmed, isDefault: false, emoji: e };
+  return { slug: s, label: trimmed, isDefault, emoji: e };
 }
 
 export async function deleteDrawer(slug: string): Promise<boolean> {
@@ -223,7 +267,11 @@ export async function deleteDrawer(slug: string): Promise<boolean> {
   const customs = customDrawers();
   const next = customs.filter((d) => d.slug !== s);
   if (next.length === customs.length) return false;
-  setCustomDrawers(next);
+  const db = drawerDescriptionDb();
+  db.transaction(() => {
+    setCustomDrawers(next);
+    db.prepare('DELETE FROM studio_drawer_descriptions WHERE slug = ?').run(s);
+  })();
   const dir = join(REFS_DIR, s);
   if (existsSync(dir)) await fs.rm(dir, { recursive: true, force: true });
   return true;
@@ -283,6 +331,10 @@ export async function saveOneOffReference(filename: string, buf: Buffer): Promis
 const GALLERY_INDEX = join(GALLERY_DIR, '_index.json');
 
 export interface GalleryMeta {
+  spell?: SpellLineage;
+  generation?: { prompt: string; sourcePrompt: string; styleId: string; styleTitle?: string; imageModelId: string; styleSnapshot?: StudioStyle; subjectDescriptions?: SubjectDescription[] };
+  sourcePrompt?: string;
+  styleId?: string;
   messageId?: string;
   threadId?: string;
   createdAt?: string;
@@ -294,6 +346,20 @@ export interface GalleryMeta {
   folderId?: string;
   aspectRatio?: string;
   references?: string[];
+}
+
+/** Original BL Spellbook provenance is retained alongside custom Studio receipts. */
+export interface SpellLineage {
+  id: string;
+  title: string;
+  scene: string;
+  cast: string[];
+  look: string;
+  tags: string[];
+  source?: string;
+  credit?: string;
+  link?: string;
+  fitted?: boolean;
 }
 
 /** Pixel size a requested picture size maps to. Shared by the Studio tab
@@ -378,16 +444,37 @@ export async function getGalleryMeta(filename: string): Promise<GalleryMeta | nu
   return idx[basename(filename)] ?? null;
 }
 
+export async function spellRenders(): Promise<Map<string, Array<{ filename: string; createdAt: string; cast: string[]; prompt?: string; spell: SpellLineage }>>> {
+  const index = await readGalleryIndex();
+  const renders = new Map<string, Array<{ filename: string; createdAt: string; cast: string[]; prompt?: string; spell: SpellLineage }>>();
+  for (const [filename, meta] of Object.entries(index)) {
+    const spell = meta.spell;
+    if (!spell?.id || !existsSync(join(GALLERY_DIR, filename))) continue;
+    const list = renders.get(spell.id) ?? [];
+    list.push({ filename, createdAt: meta.createdAt ?? '', cast: spell.cast ?? [], prompt: meta.prompt, spell });
+    renders.set(spell.id, list);
+  }
+  for (const list of renders.values()) list.sort((a, b) => a.createdAt < b.createdAt ? 1 : -1);
+  return renders;
+}
+
 export async function recordGalleryMeta(filename: string, meta: GalleryMeta): Promise<void> {
   console.log(`[recordGalleryMeta] ${filename}: prompt=${meta.prompt?.slice(0, 50) || 'NONE'}`);
   await withGalleryIndexLock(async () => {
     const idx = await readGalleryIndex();
-    idx[basename(filename)] = { ...meta };
+    // Chat/folder filing preserves the actual, immutable generation receipt.
+    idx[basename(filename)] = { ...idx[basename(filename)], ...meta };
     await writeGalleryIndex(idx);
   });
 }
 
 export interface GalleryItem {
+  spell?: SpellLineage;
+  subjectDescriptions?: SubjectDescription[];
+  imageModelId?: string;
+  styleTitle?: string;
+  sourcePrompt?: string;
+  styleId?: string;
   filename: string;
   createdAt: string;
   size: number;
@@ -415,15 +502,21 @@ export async function listGallery(limit = 2000): Promise<GalleryItem[]> {
   const items = await Promise.all(
     imgs.map(async (f) => {
       const st = await fs.stat(join(GALLERY_DIR, f));
-      const meta = idx[f] || {};
+      const stored = idx[f] || {};
+      const meta = { ...stored, ...stored.generation };
       return {
         filename: f,
+        spell: meta.spell,
         mediaType: (VIDEO_EXTS.has(extname(f).toLowerCase()) ? 'video' : 'image') as 'image' | 'video',
         createdAt: meta.createdAt || new Date(st.mtimeMs).toISOString(),
         size: st.size,
         messageId: meta.messageId,
         threadId: meta.threadId,
         prompt: meta.prompt,
+        sourcePrompt: meta.sourcePrompt,
+        styleId: meta.styleId,
+        imageModelId: meta.generation?.imageModelId,
+        styleTitle: meta.generation?.styleTitle,
         model: meta.model,
         backend: meta.backend,
         width: meta.width,
@@ -431,6 +524,7 @@ export async function listGallery(limit = 2000): Promise<GalleryItem[]> {
         folderId: meta.folderId,
         aspectRatio: meta.aspectRatio,
         references: meta.references,
+        subjectDescriptions: meta.subjectDescriptions,
       };
     }),
   );
@@ -452,8 +546,22 @@ export async function deleteGalleryItem(filename: string): Promise<boolean> {
 // ─── Generation ──────────────────────────────────────────────────────
 
 export interface GenerateInput {
+  /** Server-resolved original Spellbook look references, distinct from subjects. */
+  styleRefs?: string[];
+  /** Set only by the Studio HTTP entry point; chat retains its own usage record. */
+  usageOrigin?: 'studio';
+  /** Server-owned transform roles; never copied from generic generation bodies. */
+  transformation?: StudioTransformation;
+  imageModelId?: string;
+  /** Internal snapshot; never accepted from HTTP bodies. */
+  styleSnapshot?: StudioStyle;
+  styleResolved?: boolean;
+  sourcePrompt?: string;
+  styleId?: string;
   prompt: string;
   subjects?: string[];
+  descriptionSubjects?: string[];
+  subjectDescriptions?: SubjectDescription[];
   size?: string;
   customWidth?: number;
   customHeight?: number;
@@ -471,11 +579,13 @@ export interface GenerateInput {
 export interface GenerateResult {
   filename: string;
   path: string;
-  backend: 'codex' | 'openai' | 'cloudflare' | 'antigravity' | 'openart';
+  backend: 'codex' | 'openai' | 'openrouter' | 'cloudflare' | 'antigravity' | 'openart';
   model: string;
   mediaType?: 'image' | 'video';
   durationMs: number;
   costUsd: number;
+  costSource?: 'actual' | 'estimate';
+  accountingWarning?: string;
 }
 
 export class ImageGenError extends Error {}
@@ -497,6 +607,12 @@ function resolveSize(input: GenerateInput): { guidance: string; apiSize: string 
 
 const MAX_REFS_PER_SUBJECT = 2;
 
+function findSubjectDrawer(raw: string, drawers: Drawer[]): Drawer | undefined {
+  const name = raw.toLowerCase().trim();
+  const slug = sanitizeSlug(name);
+  return drawers.find(d => d.slug === slug || d.label.toLowerCase() === name || slugifyDrawer(d.label) === slug);
+}
+
 async function resolveSubjectRefs(
   subjects: string[] | undefined,
   maxPerSubject = MAX_REFS_PER_SUBJECT,
@@ -505,22 +621,44 @@ async function resolveSubjectRefs(
   const drawers = listDrawers();
   const out: string[] = [];
   for (const raw of subjects) {
-    const name = String(raw).toLowerCase().trim();
-    const slug = sanitizeSlug(name);
-    const match = drawers.find(
-      (d) => d.slug === slug || d.label.toLowerCase() === name || slugifyDrawer(d.label) === slug,
-    );
-    if (!match) continue;
-    out.push(...(await referencePaths(match.slug)).slice(0, maxPerSubject));
+    const match = findSubjectDrawer(raw, drawers);
+    if (!match) throw new ImageGenError('A selected subject drawer no longer exists. Refresh your reference selection.');
+    out.push(...(await referencePaths(match.slug)));
   }
   return out;
 }
 
 async function resolveAllRefs(input: GenerateInput, maxPerSubject = MAX_REFS_PER_SUBJECT): Promise<string[]> {
   const subjectRefs = await resolveSubjectRefs(input.subjects, maxPerSubject);
-  const extra = (input.extraRefs ?? []).filter((p) => p && existsSync(p));
-  const staged = (input.oneOffRefs ?? []).slice(0, 4).map((name) => join(STUDIO_UPLOADS_DIR, basename(name))).filter(existsSync);
-  return [...subjectRefs, ...extra, ...staged].slice(0, 8);
+  if ((input.oneOffRefs?.length ?? 0) > 4) throw new ImageGenError('Choose at most four one-off references.');
+  const extra = input.extraRefs ?? [];
+  const staged = (input.oneOffRefs ?? []).map(name => join(STUDIO_UPLOADS_DIR, basename(name)));
+  const style = [...(input.styleSnapshot?.references ?? []).map(ref => styleAssetPath(ref.filename)), ...resolveStyleRefs(input)];
+  const refs = [...style, ...subjectRefs, ...extra, ...staged];
+  if (refs.length > MAX_GENERATION_REFS) throw new ImageGenError(`You selected ${refs.length} references. This route accepts at most ${MAX_GENERATION_REFS}; remove some rather than silently dropping them.`);
+  if (refs.some(p => !p || !existsSync(p))) throw new ImageGenError('A selected reference image is missing. Repair the selection before generating.');
+  return refs;
+}
+
+function mixedReferenceGuidance(input: GenerateInput, wording: 'define' | 'are' = 'define'): string {
+  const styleCount = (input.styleSnapshot?.references.length ?? 0) + (input.styleRefs?.length ?? 0);
+  if (!styleCount) return '';
+  const subjectLabels = (input.subjects ?? []).map(raw => {
+    const match = findSubjectDrawer(raw, listDrawers());
+    return match?.label ?? raw;
+  });
+  const identityMap = subjectLabels.length
+    ? ` The remaining subject reference images are grouped in this exact written-subject order: ${subjectLabels.join(', ')}. Those images are the identity authority for each named subject's face, hair, body, markings, and other personal features.`
+    : '';
+  const opening = wording === 'are'
+    ? `The first ${styleCount} attached images are STYLE references: match their rendering, materials and palette, not their subjects.`
+    : `The first ${styleCount} attached images define HOW to render: visual style, materials, palette and texture.`;
+  return `${opening} Every person depicted in those style images is style-only and must never supply a face, hair, body, clothing, or identity to the scene.${identityMap} Use all supplied references without discarding, blending, or substituting identities. Follow the written style and scene separately.`;
+}
+
+/** Original Spellbook compatibility: resolve its persisted local look images. */
+export function resolveStyleRefs(input: GenerateInput): string[] {
+  return (input.styleRefs ?? []).filter(p => p && existsSync(p)).slice(0, 6);
 }
 
 async function newGalleryName(ext = '.png', prefix = 'img'): Promise<string> {
@@ -604,7 +742,11 @@ async function generateViaCodex(input: GenerateInput): Promise<GenerateResult> {
   const refs = await resolveAllRefs(input);
 
   const hasExtraRefs = (input.extraRefs?.length ?? 0) > 0 || (input.oneOffRefs?.length ?? 0) > 0;
-  const refLine = refs.length === 0
+  const refLine = input.transformation
+    ? transformationReferenceGuidance(input.transformation)
+    : (input.styleSnapshot?.references.length ?? 0) + (input.styleRefs?.length ?? 0)
+    ? mixedReferenceGuidance(input)
+    : refs.length === 0
     ? ''
     : hasExtraRefs
       ? `The attached reference images were supplied by the requester (her own avatar art and/or images she dropped in chat). Keep the subject(s) visually consistent with them.`
@@ -725,7 +867,7 @@ async function generateViaCodex(input: GenerateInput): Promise<GenerateResult> {
     filename,
     path: dest,
     backend: 'codex',
-    model: codexModel,
+    model: 'subscription-auto',
     durationMs: Date.now() - start,
     costUsd: 0,
   };
@@ -1194,7 +1336,7 @@ function openAiAcceptedSize(requested: string): '1024x1024' | '1024x1536' | '153
 
 async function generateViaOpenAi(input: GenerateInput): Promise<GenerateResult> {
   const start = Date.now();
-  const key = getConfig('image_gen.openai_api_key');
+  const key = getSecret('studio_openai_api_key');
   if (!key) throw new ImageGenError('OpenAI backend selected but no API key is set in Studio settings.');
   const settings = getImageGenSettings();
   const model = input.openaiModel || settings.openaiModel;
@@ -1207,12 +1349,14 @@ async function generateViaOpenAi(input: GenerateInput): Promise<GenerateResult> 
   if (refs.length > 0) {
     const form = new FormData();
     form.set('model', model);
-    form.set('prompt', input.prompt);
+    const referenceGuidance = input.transformation ? transformationReferenceGuidance(input.transformation) + '\n\n' : mixedReferenceGuidance(input, 'are') ? mixedReferenceGuidance(input, 'are') + '\n\n' : '';
+    form.set('prompt', referenceGuidance + input.prompt);
     form.set('size', apiSize);
     if (quality !== 'auto') form.set('quality', quality);
-    for (const r of refs.slice(0, 4)) {
+    for (const r of refs) {
       const buf = await fs.readFile(r);
-      form.append('image[]', new Blob([buf]), basename(r));
+      const mime = ({ '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp', '.gif': 'image/gif' } as Record<string, string>)[extname(r).toLowerCase()] || 'application/octet-stream';
+      form.append('image[]', new Blob([buf], { type: mime }), basename(r));
     }
     const resp = await fetch('https://api.openai.com/v1/images/edits', {
       method: 'POST',
@@ -1252,10 +1396,28 @@ async function generateViaOpenAi(input: GenerateInput): Promise<GenerateResult> 
   };
 }
 
+async function generateViaOpenRouter(input: GenerateInput): Promise<GenerateResult> {
+  const start = Date.now(), settings = getImageGenSettings();
+  const apiKey = getSecret('provider_openrouter_api_key');
+  if (!apiKey) throw new ImageGenError('OpenRouter is not connected. Save its API key in Integrations before choosing a paid image model.');
+  const { apiSize } = resolveSize(input), aspectRatio = studioImageAspect(input.size || settings.size, apiSize);
+  const paths = await resolveAllRefs(input), refs: string[] = [];
+  for (const path of paths) {
+    const mime = ({ '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp', '.gif': 'image/gif' } as Record<string, string>)[extname(path).toLowerCase()];
+    if (!mime) throw new ImageGenError('OpenRouter references must be PNG, JPEG, WebP or GIF images.');
+    refs.push(`data:${mime};base64,${(await fs.readFile(path)).toString('base64')}`);
+  }
+  const guidance = input.transformation ? transformationReferenceGuidance(input.transformation) + '\n\n' : mixedReferenceGuidance(input, 'are') ? mixedReferenceGuidance(input, 'are') + '\n\n' : '';
+  const result = await generateOpenRouterImage({ apiKey, modelId: input.imageModelId || input.openaiModel || settings.openaiModel, prompt: guidance + input.prompt, refs, aspectRatio, quality: settings.quality });
+  const filename = await newGalleryName(), path = join(GALLERY_DIR, filename);
+  await fs.writeFile(path, result.image);
+  return { filename, path, backend: 'openrouter', model: result.model, durationMs: Date.now() - start, costUsd: result.costUsd ?? estimateOpenAiCost(apiSize), costSource: result.costUsd === null ? 'estimate' : 'actual' };
+}
+
 async function generateViaCloudflare(input: GenerateInput): Promise<GenerateResult> {
   const endpoint = getConfig('image_gen.cloudflare_endpoint') || process.env.IMAGEGEN_MCP_ENDPOINT;
   if (!endpoint) throw new ImageGenError('Cloudflare Flux is not configured. Set image_gen.cloudflare_endpoint (ImageGenMCP).');
-  const token = getConfig('image_gen.cloudflare_token') || process.env.IMAGEGEN_MCP_TOKEN;
+  const token = getSecret('studio_cloudflare_token');
   const model = input.cloudflareModel || getConfig('image_gen.cloudflare_model') || '@cf/black-forest-labs/flux-1-schnell';
   const { apiSize } = resolveSize(input);
   const [width, height] = apiSize.split('x').map(Number);
@@ -1291,7 +1453,57 @@ async function generateViaCloudflare(input: GenerateInput): Promise<GenerateResu
   return { filename, path, backend: 'cloudflare', model, durationMs: Date.now() - start, costUsd: 0 };
 }
 
+export function prepareStudioGeneration(input: GenerateInput): GenerateInput {
+  if (input.styleResolved) return input;
+  if (typeof input.prompt !== 'string' || !input.prompt.trim() || input.prompt.length > 16000) throw new ImageGenError('Enter a scene prompt (up to 16,000 characters).');
+  for (const refs of [input.subjects, input.oneOffRefs]) if (refs !== undefined && (!Array.isArray(refs) || refs.length > 16 || refs.some(r => typeof r !== 'string' || !r))) throw new ImageGenError('Invalid reference selection.');
+  const style = input.transformation ? undefined : snapshotStyle(input.styleId ?? (input.styleRefs !== undefined ? '' : undefined));
+  const model = resolveImageModel(input.imageModelId ?? (input.backend === 'openai' || input.backend === 'openrouter' ? input.openaiModel || getImageGenSettings().openaiModel : undefined) ?? getConfig('studio.chat_image_model') ?? 'subscription-auto');
+  const sourcePrompt = input.sourcePrompt ?? input.prompt;
+  let subjectDescriptions: SubjectDescription[] | undefined;
+  let scene = sourcePrompt;
+  if (input.subjectDescriptions !== undefined || input.descriptionSubjects !== undefined) {
+    const explicit = input.subjectDescriptions === undefined ? [] : input.subjectDescriptions;
+    const saved = input.descriptionSubjects === undefined ? [] : input.descriptionSubjects;
+    if (!Array.isArray(explicit) || !Array.isArray(saved) || explicit.length + saved.length > 16) throw new ImageGenError('Choose at most 16 written subject references.');
+    if (explicit.length + saved.length > 0) {
+      const drawers = listDrawers();
+      const names = new Map(drawers.map(d => [d.slug, d.label]));
+      const photoSlugs = new Set(input.subjects?.map(s => findSubjectDrawer(s, drawers)?.slug));
+      const seen = new Set<string>();
+      const fromDrawers = saved.map(slug => {
+        if (typeof slug !== 'string' || !names.has(slug)) throw new ImageGenError('A selected description drawer no longer exists.');
+        const description = getDrawerDescription(slug);
+        if (!description) throw new ImageGenError(`Save a written description for ${names.get(slug)} first.`);
+        return { slug, description };
+      });
+      subjectDescriptions = [...explicit, ...fromDrawers].map(ref => {
+        if (!ref || typeof ref.slug !== 'string' || !names.has(ref.slug) || typeof ref.description !== 'string' || ref.description.length > 1200 || !ref.description.trim()) throw new ImageGenError('Enter a description of up to 1,200 characters for each selected person.');
+        if (seen.has(ref.slug) || photoSlugs.has(ref.slug)) throw new ImageGenError('Choose either photos or a description for each person.');
+        seen.add(ref.slug);
+        return { slug: ref.slug, description: ref.description.trim() };
+      });
+      scene = `${sourcePrompt.trim()}\n\nWritten subject references (appearance):\n${subjectDescriptions.map(ref => `${names.get(ref.slug)}: ${ref.description}`).join('\n\n')}`;
+    }
+  }
+  return { ...input, sourcePrompt, subjectDescriptions, prompt: composeStyledPrompt(scene, style), styleId: style?.id ?? '', styleSnapshot: style, styleResolved: true, imageModelId: model.id, backend: model.backend, ...(model.metered ? { openaiModel: model.id } : {}) };
+}
+
 export async function generateImage(input: GenerateInput): Promise<GenerateResult> {
+  const prepared = prepareStudioGeneration(input);
+  resolveImageModel(prepared.imageModelId);
+  const result = await renderImage(prepared);
+  if (prepared.usageOrigin === 'studio') {
+    const receipt = recordStudioImageSpend({ filename: result.filename, model: result.model, backend: result.backend, costUsd: result.costUsd, costSource: result.costSource });
+    if (!receipt.recorded) result.accountingWarning = receipt.warning;
+  }
+  try {
+    await recordGalleryMeta(result.filename, { generation: { prompt: prepared.prompt, sourcePrompt: prepared.sourcePrompt ?? input.prompt, styleId: prepared.styleId ?? '', styleTitle: prepared.styleSnapshot?.title, imageModelId: prepared.imageModelId!, styleSnapshot: prepared.styleSnapshot, subjectDescriptions: prepared.subjectDescriptions } });
+  } catch (error) { console.warn('[image-gen] generation receipt could not be filed:', errMessage(error)); }
+  return result;
+}
+
+async function renderImage(input: GenerateInput): Promise<GenerateResult> {
   const settings = getImageGenSettings();
   if (!settings.enabled) {
     throw new ImageGenError('Image generation is switched off. Turn it on in Studio Settings.');
@@ -1301,15 +1513,16 @@ export async function generateImage(input: GenerateInput): Promise<GenerateResul
   }
 
   const effectiveBackend = input.backend || settings.backend;
-  if (effectiveBackend === 'openai' && settings.monthlyBudgetUsd > 0) {
+  if (effectiveBackend === 'openai' || effectiveBackend === 'openrouter') {
     const spent = await monthlySpendUsd();
-    if (spent >= settings.monthlyBudgetUsd) {
+    if (settings.monthlyBudgetUsd > 0 && spent >= settings.monthlyBudgetUsd) {
       throw new ImageGenError(
         `Monthly image budget reached ($${spent.toFixed(2)} / $${settings.monthlyBudgetUsd.toFixed(2)}). Raise it in Studio settings or switch to the free Codex backend.`,
       );
     }
   }
 
+  if (effectiveBackend === 'openrouter') return generateViaOpenRouter(input);
   if (effectiveBackend === 'openai') {
     return generateViaOpenAi(input);
   }
@@ -1325,11 +1538,7 @@ export async function generateImage(input: GenerateInput): Promise<GenerateResul
     return await generateViaCodex(input);
   } catch (error) {
     if (!(error instanceof ImageGenError) || !error.message.startsWith('SAFETY_REFUSED:')) throw error;
-    if ((input.subjects?.length ?? 0) || (input.extraRefs?.length ?? 0) || (input.oneOffRefs?.length ?? 0)) {
-      console.warn('[image-gen] safety-refused with refs — retrying once without reference images');
-      try { return await generateViaCodex({ ...input, subjects: undefined, extraRefs: undefined, oneOffRefs: undefined }); }
-      catch (retryError) { throw stripSafetyPrefix(retryError); }
-    }
+    // Never silently retry without the references the user selected.
     throw stripSafetyPrefix(error);
   }
 }
@@ -1345,20 +1554,7 @@ export function monthlyImageSpendUsd(): Promise<number> {
 }
 
 async function monthlySpendUsd(): Promise<number> {
-  try {
-    const monthStart = new Date();
-    monthStart.setUTCDate(1);
-    monthStart.setUTCHours(0, 0, 0, 0);
-    const row = getDb()
-      .prepare(
-        `SELECT COALESCE(SUM(cost_usd), 0) AS spent FROM usage_events
-         WHERE engine = ? AND created_at >= ?`,
-      )
-      .get(IMAGE_GEN_ENGINE, monthStart.toISOString()) as { spent: number } | undefined;
-    return row?.spent ?? 0;
-  } catch {
-    return 0;
-  }
+  return monthlyStudioImageSpendUsd();
 }
 
 // ─── Async Job Pattern ───────────────────────────────────────────────
@@ -1430,6 +1626,7 @@ export function startGenerateJob(input: GenerateInput, onComplete?: (result: Gen
   const settings = getImageGenSettings();
   if (!settings.enabled) throw new ImageGenError('Image generation is switched off. Turn it on in Studio Settings.');
   if (!input.prompt || !input.prompt.trim()) throw new ImageGenError('A prompt is required to generate an image.');
+  input = prepareStudioGeneration({ ...input, styleId: input.styleId ?? '' });
 
   const id = `job_${Date.now()}_${crypto.randomBytes(4).toString('hex')}`;
   const job: ImageJob = { id, status: 'pending', input, createdAt: Date.now() };

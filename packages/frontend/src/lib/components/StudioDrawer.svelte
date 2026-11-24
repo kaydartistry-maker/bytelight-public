@@ -56,7 +56,8 @@
   ];
   const PROVIDERS = ['codex', 'openai', 'cloudflare', 'antigravity', 'openart'] as const;
   const MODELS: Record<string, Array<{ value: string; label: string }>> = {
-    codex: [{ value: 'gpt-5.4', label: 'GPT-5.4' }, { value: 'gpt-5.4-mini', label: 'GPT-5.4 Mini' }],
+    // Same live list as the phone's CODEX_MODELS. 5.5 / 5.4 / 5.4 Mini were retired for ChatGPT-account Codex (2026-11-17).
+    codex: [{ value: 'gpt-6.1-sol', label: 'GPT-6.1 Sol' }, { value: 'gpt-6-astra', label: 'GPT-6 Astra' }, { value: 'gpt-6-sol', label: 'GPT-6 Sol' }, { value: 'gpt-6-luna', label: 'GPT-6 Luna' }, { value: 'gpt-5.6-sol', label: 'GPT-5.6 Sol' }, { value: 'gpt-5.6-terra', label: 'GPT-5.6 Terra' }, { value: 'gpt-5.6-luna', label: 'GPT-5.6 Luna' }],
     openai: [{ value: 'gpt-image-2', label: 'GPT Image 2' }, { value: 'gpt-image-1.5', label: 'GPT Image 1.5' }],
     cloudflare: [{ value: '@cf/black-forest-labs/flux-1-schnell', label: 'Flux Schnell' }, { value: '@cf/black-forest-labs/flux-2-klein-4b', label: 'Flux Klein 4B' }, { value: '@cf/black-forest-labs/flux-2-dev', label: 'Flux 2 Dev' }],
     antigravity: [{ value: 'Gemini 3.5 Flash (Medium)', label: 'Gemini 3.5 Flash' }, { value: 'Gemini 3.1 Pro (High)', label: 'Gemini 3.1 Pro' }],
@@ -110,7 +111,7 @@
   let gallery = $state<GalleryItem[]>([]);
   let jobs = $state<Job[]>([]);
   let folders = $state<Folder[]>([]);
-  let prompt = $state(''); let provider = $state<string>('codex'); let model = $state('gpt-5.4'); let hydrateProviderOnLoad = false; let settingsLoadId = 0;
+  let prompt = $state(''); let provider = $state<string>('codex'); let model = $state('gpt-6.1-sol'); let hydrateProviderOnLoad = false; let settingsLoadId = 0;
   let renderSize = $state('square'); let customWidth = $state(1024); let customHeight = $state(1024);
   let style = $state('None'); let selectedSubjects = $state<string[]>([]); let generating = $state(false); let enhancing = $state(false);
   let oneOffRefs = $state<Array<{ token: string; name: string }>>([]);

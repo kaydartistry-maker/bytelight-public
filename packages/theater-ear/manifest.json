@@ -1,0 +1,30 @@
+{
+  "manifest_version": 3,
+  "name": "The Ear",
+  "short_name": "The Ear",
+  "version": "0.1.0",
+  "description": "Hears the subtitles on Netflix and Hulu and passes them to the Theater, so the couch knows what just played.",
+  "permissions": ["storage", "scripting"],
+  "host_permissions": [
+    "https://www.netflix.com/*",
+    "https://www.hulu.com/*",
+    "https://your-house.example.com/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://www.netflix.com/watch/*",
+        "https://www.hulu.com/watch/*"
+      ],
+      "js": ["lib.js", "content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "action": {
+    "default_title": "The Ear",
+    "default_popup": "popup.html"
+  }
+}

@@ -7,7 +7,8 @@ import { wholeSpeakerFor, interleavedAs, splitInterleaved } from './speakers';
 test('a single companion stamp names the whole speaker; the shared stamp does not', () => {
   assert.equal(wholeSpeakerFor('companion-a'), 'companion-a');
   assert.equal(wholeSpeakerFor('companion-b'), 'companion-b');
-  assert.equal(wholeSpeakerFor('companion-c'), 'companion-c');
+  assert.equal(wholeSpeakerFor('nova', [{ slug: 'nova', display_name: 'Nova' }]), 'nova');
+  assert.equal(wholeSpeakerFor('nova'), null);
   assert.equal(wholeSpeakerFor('companion-a-b'), null);
   assert.equal(wholeSpeakerFor(undefined), null);
   assert.equal(wholeSpeakerFor('someone-else'), null);

@@ -3,10 +3,10 @@
   let {
     onresult,
     onclose,
-  } = $props<{
+  }: {
     onresult?: (result: { messageId: string; threadId: string }) => void;
     onclose?: () => void;
-  }>();
+  } = $props();
 
   interface SearchHit {
     messageId: string;

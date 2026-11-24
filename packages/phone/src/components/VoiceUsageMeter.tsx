@@ -77,7 +77,7 @@ export function VoiceUsageMeter({ themeConfig, themeMode }: VoiceUsageMeterProps
   }, []);
 
   return (
-    <div className={cn('rounded-2xl border p-3 mb-3', colors.panelBg, colors.panelBorder)}>
+    <div data-appearance-card="" className={cn('rounded-2xl border p-3 mb-3', colors.panelBg, colors.panelBorder)}>
       <div className={cn('text-[11px] font-bold uppercase tracking-[0.12em] mb-2', colors.textMuted)}>
         ElevenLabs credits
       </div>

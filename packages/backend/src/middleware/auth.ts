@@ -7,6 +7,7 @@ import {
   getWebSession,
   touchWebSession,
   deleteExpiredSessions,
+  deleteWebSession,
 } from '../services/db.js';
 import { getBytelightConfig } from '../config.js';
 
@@ -22,11 +23,11 @@ export function getCookieName(): string {
   return COOKIE_NAME;
 }
 
-function setSessionCookie(req: Request, res: Response, token: string): void {
+export function setSessionCookie(req: Request, res: Response, token: string, forceSecure = false): void {
   // Only mark the cookie Secure when the connection actually is HTTPS.
   // X-Forwarded-Proto covers the cloudflared tunnel; plain HTTP (LAN) does
   // not — a Secure cookie would be silently dropped by the browser.
-  const isSecure = req.headers['x-forwarded-proto'] === 'https' || req.secure;
+  const isSecure = forceSecure || req.headers['x-forwarded-proto'] === 'https' || req.secure;
   res.cookie(COOKIE_NAME, token, {
     httpOnly: true,
     secure: isSecure,
@@ -141,6 +142,8 @@ export function loginHandler(req: Request, res: Response): void {
 }
 
 export function logoutHandler(req: Request, res: Response): void {
+  const token = parseCookie(req.headers.cookie || '')[COOKIE_NAME];
+  if (token) deleteWebSession(token);
   res.clearCookie(COOKIE_NAME, {
     httpOnly: true,
     secure: process.env.NODE_ENV === 'production',

@@ -1,9 +1,10 @@
-import { createSign } from 'crypto';
+import { createECDH, createSign } from 'crypto';
 import webpush from 'web-push';
 import { listPushSubscriptions, removePushSubscription, touchPushSubscription } from './db.js';
 import { listFcmSubscriptions, removePushSubscriptionByToken, touchPushSubscriptionById } from './db/push.js';
 import { registry } from './registry.js';
 import { getSecret } from './secrets.js';
+import { readWebPushPreferences } from './push-preferences.js';
 
 export interface PushPayload {
   title: string;
@@ -11,6 +12,32 @@ export interface PushPayload {
   threadId?: string;
   tag?: string;
   url?: string;
+}
+
+/** Accepted by the push provider, not proof that a device displayed it. */
+export interface PushDeliveryReport { attempted: number; accepted: number; failed: number }
+const emptyReport = (): PushDeliveryReport => ({ attempted: 0, accepted: 0, failed: 0 });
+
+export function validVapidContact(value: string): boolean {
+  if (value.length > 300 || /[\s\r\n]/.test(value)) return false;
+  if (/^mailto:[^@:?]+@[^@:?]+\.[^@:?]+$/i.test(value)) return true;
+  try { const u = new URL(value); return u.protocol === 'https:' && !!u.hostname && !u.username && !u.password; }
+  catch { return false; }
+}
+
+/** web-push checks lengths, but does not verify that the two keys match. */
+export function validateVapidPair(publicKey: string, privateKey: string, contact: string): void {
+  if (!validVapidContact(contact)) throw new Error('Use a mailto: email address or an https: contact URL.');
+  if (!/^[A-Za-z0-9_-]{87}$/.test(publicKey) || !/^[A-Za-z0-9_-]{43}$/.test(privateKey)) {
+    throw new Error('The saved web-push keys are invalid. Restore the matching keypair in Secrets; existing keys were preserved.');
+  }
+  try {
+    const curve = createECDH('prime256v1');
+    curve.setPrivateKey(Buffer.from(privateKey, 'base64url'));
+    if (!curve.getPublicKey().equals(Buffer.from(publicKey, 'base64url'))) throw new Error('mismatch');
+  } catch {
+    throw new Error('The saved web-push keys do not match. Restore the matching keypair in Secrets; existing keys were preserved.');
+  }
 }
 
 const GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token';
@@ -36,6 +63,7 @@ function base64url(input: Buffer | string): string {
  */
 export class PushService {
   private configured = false;
+  private activeVapidPublicKey: string | null = null;
   private account: ServiceAccount | null = null;
   private accessToken: string | null = null;
   private tokenExpiresAt = 0;
@@ -46,8 +74,7 @@ export class PushService {
       // (a bare email instead of mailto:…) — unguarded, that takes the whole
       // backend down at boot. A bad VAPID config just disables push.
       try {
-        webpush.setVapidDetails(vapidContact, vapidPublic, vapidPrivate);
-        this.configured = true;
+        this.configureWebPush(vapidPublic, vapidPrivate, vapidContact);
         console.log('PushService: VAPID configured');
       } catch (err) {
         this.configured = false;
@@ -91,25 +118,41 @@ export class PushService {
   }
 
   getVapidPublicKey(): string | null {
-    return this.configured ? getSecret('vapid_public_key') || null : null;
+    // Expose the key actually active in the sender, never a newly saved key
+    // paired with an old private key still held by the running service.
+    return this.configured ? this.activeVapidPublicKey : null;
+  }
+
+  configureWebPush(publicKey: string, privateKey: string, contact: string): void {
+    validateVapidPair(publicKey, privateKey, contact);
+    webpush.setVapidDetails(contact, publicKey, privateKey);
+    this.activeVapidPublicKey = publicKey;
+    this.configured = true;
   }
 
   /** Send a notification to every browser and every Android app device. */
   async sendPush(payload: PushPayload): Promise<void> {
-    await Promise.all([this.sendWebPush(payload), this.sendFcm(payload)]);
+    await this.sendPushWithReport(payload);
   }
 
-  private async sendWebPush(payload: PushPayload): Promise<void> {
-    if (!this.configured) return;
+  async sendPushWithReport(payload: PushPayload, webEndpoint?: string): Promise<PushDeliveryReport> {
+    const reports = webEndpoint
+      ? [await this.sendWebPush(payload, webEndpoint)]
+      : await Promise.all([this.sendWebPush(payload), this.sendFcm(payload)]);
+    return reports.reduce((sum, item) => ({ attempted: sum.attempted + item.attempted, accepted: sum.accepted + item.accepted, failed: sum.failed + item.failed }), emptyReport());
+  }
 
-    const subscriptions = listPushSubscriptions();
-    if (subscriptions.length === 0) return;
+  private async sendWebPush(payload: PushPayload, onlyEndpoint?: string): Promise<PushDeliveryReport> {
+    if (!this.configured) return emptyReport();
+
+    const subscriptions = listPushSubscriptions().filter(sub => !onlyEndpoint || sub.endpoint === onlyEndpoint);
+    if (subscriptions.length === 0) return emptyReport();
 
     const jsonPayload = JSON.stringify(payload);
 
     const results = await Promise.allSettled(
       subscriptions.map(async (sub) => {
-        if (!sub.endpoint || !sub.keys_p256dh || !sub.keys_auth) return;
+        if (!sub.endpoint || !sub.keys_p256dh || !sub.keys_auth) return false;
 
         try {
           await webpush.sendNotification(
@@ -123,6 +166,7 @@ export class PushService {
             jsonPayload
           );
           touchPushSubscription(sub.endpoint);
+          return true;
         } catch (err: unknown) {
           const statusCode = (err as { statusCode?: number }).statusCode;
           if (statusCode === 410 || statusCode === 404) {
@@ -132,12 +176,14 @@ export class PushService {
           } else {
             console.error(`PushService: failed to send to ${sub.endpoint.slice(0, 50)}...`, err);
           }
+          return false;
         }
       })
     );
 
-    const sent = results.filter(r => r.status === 'fulfilled').length;
+    const sent = results.filter(r => r.status === 'fulfilled' && r.value === true).length;
     console.log(`PushService: sent ${sent}/${subscriptions.length} push notifications`);
+    return { attempted: subscriptions.length, accepted: sent, failed: subscriptions.length - sent };
   }
 
   /** Sign a service-account JWT and trade it for a short-lived access token,
@@ -188,15 +234,15 @@ export class PushService {
   }
 
   /** One FCM message per registered Android app device. */
-  private async sendFcm(payload: PushPayload): Promise<void> {
-    if (!this.account) return;
+  private async sendFcm(payload: PushPayload): Promise<PushDeliveryReport> {
+    if (!this.account) return emptyReport();
     const subs = listFcmSubscriptions();
-    if (subs.length === 0) return;
+    if (subs.length === 0) return emptyReport();
     const accessToken = await this.getFcmAccessToken();
-    if (!accessToken) return;
+    if (!accessToken) return { attempted: subs.length, accepted: 0, failed: subs.length };
 
     const endpoint = `https://fcm.googleapis.com/v1/projects/${this.account.project_id}/messages:send`;
-    await Promise.all(subs.map(async (sub) => {
+    const results = await Promise.all(subs.map(async (sub) => {
       const message = {
         token: sub.device_token,
         notification: { title: payload.title, body: payload.body },
@@ -223,20 +269,23 @@ export class PushService {
         });
         if (res.ok) {
           touchPushSubscriptionById(sub.id);
-          return;
+          return true;
         }
         const text = await res.text();
         // An uninstalled app's or replaced token is gone for good.
         if (res.status === 404 || (res.status === 400 && text.includes('UNREGISTERED'))) {
           removePushSubscriptionByToken(sub.device_token!);
           console.log(`PushService: dropped dead Android device token ${sub.id}`);
-          return;
+          return false;
         }
         console.error(`PushService: FCM send failed (${res.status}): ${text.slice(0, 200)}`);
       } catch (err) {
         console.error('PushService: FCM send error:', err);
       }
+      return false;
     }));
+    const accepted = results.filter(Boolean).length;
+    return { attempted: subs.length, accepted, failed: subs.length - accepted };
   }
 
   /**
@@ -288,10 +337,14 @@ export class PushService {
     return { devices: subs.length, sent: results.filter(Boolean).length };
   }
 
-  /** Send push only when user has no active WebSocket connections */
+  /** Preserve offline delivery. While connected, only explicitly opted-in web
+   * devices receive alerts; FCM and the default policy remain unchanged. */
   async sendIfOffline(payload: PushPayload): Promise<void> {
     if (!registry.isUserConnected()) {
       await this.sendPush(payload);
+    } else {
+      const optedIn = listPushSubscriptions().filter(sub => sub.endpoint && readWebPushPreferences(sub.endpoint).notifyWhileConnected);
+      await Promise.all(optedIn.map(sub => this.sendWebPush(payload, sub.endpoint!)));
     }
   }
 

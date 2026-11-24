@@ -2,7 +2,7 @@
 // Consumed by the home-screen dock and the app drawer.
 
 import type { LucideIcon } from 'lucide-react';
-import { Library, MessageSquare, StickyNote, Settings, Activity, Sticker, LayoutDashboard, Plug, FileText, Bot, Users, Brain, Paintbrush, Box, FolderOpen, BookOpen, Inbox, Mail, ScanSearch, Radar, CloudSun, Telescope, Music, Gamepad2, TreePine } from 'lucide-react';
+import { Library, MessageSquare, StickyNote, Settings, Activity, Sticker, LayoutDashboard, Plug, FileText, Bot, Users, Brain, Paintbrush, Box, FolderOpen, BookOpen, Inbox, Mail, ScanSearch, CloudSun, Telescope, Music, Gamepad2, TreePine, Clapperboard, Sparkles, Film, Scissors } from 'lucide-react';
 import { SPOTIFY_APP_ID } from './spotify';
 import type { OsScreen } from '../App';
 
@@ -26,20 +26,24 @@ export const APPS: AppDef[] = [
   { id: 'packs', name: 'Packs', icon: Sticker, category: 'System', kind: 'screen', screen: 'packs' },
   { id: 'commandcenter', name: 'Command Center', icon: LayoutDashboard, category: 'Companion', kind: 'screen', screen: 'commandcenter' },
   { id: 'canvas', name: 'Canvas', icon: FileText, category: 'Companion', kind: 'screen', screen: 'canvas' },
-  { id: 'companions', name: 'Companions', icon: Users, category: 'Companion', kind: 'screen', screen: 'companions' },
+  { id: 'companions', name: 'Companion Editor', icon: Users, category: 'Companion', kind: 'screen', screen: 'companions' },
   { id: 'memory', name: 'Memory', icon: Brain, category: 'Companion', kind: 'screen', screen: 'memory' },
   { id: 'journal', name: 'Journal', icon: BookOpen, category: 'Companion', kind: 'screen', screen: 'journal' },
   { id: 'letters', name: 'Letters', icon: Mail, category: 'Companion', kind: 'screen', screen: 'letters' },
   { id: 'library', name: 'Reading Nook', icon: Library, category: 'Companion', kind: 'screen', screen: 'library' },
+  // The Theater: the couch for whatever's on the TV.
+  { id: 'theater', name: 'Theater', icon: Clapperboard, category: 'Companion', kind: 'screen', screen: 'theater' },
   { id: 'fieldnotes', name: 'Field Notes', icon: Telescope, category: 'Companion', kind: 'screen', screen: 'fieldnotes' },
   // Spotify (ported from Aerie): the operator's listening, played through her Spotify MCP server.
   { id: SPOTIFY_APP_ID, name: 'Spotify', icon: Music, category: 'Tools', kind: 'screen', screen: 'spotify' },
   // The companions' read-only room (ported from Aerie).
   { id: 'treehouse', name: 'Treehouse', icon: TreePine, category: 'Companion', kind: 'screen', screen: 'treehouse' },
+  { id: 'questing', name: 'Questing', icon: Sparkles, category: 'Fun', kind: 'screen', screen: 'questing' },
+  { id: 'gif', name: 'GIF Lab', icon: Film, category: 'Tools', kind: 'screen', screen: 'gif' },
+  { id: 'cutout', name: 'Cut Out', icon: Scissors, category: 'Tools', kind: 'screen', screen: 'cutout' },
   { id: 'studio', name: 'Studio', icon: Paintbrush, category: 'Tools', kind: 'screen', screen: 'studio' },
   { id: 'files', name: 'Files', icon: FolderOpen, category: 'Tools', kind: 'screen', screen: 'files' },
   { id: 'inbox', name: 'Inbox', icon: Inbox, category: 'Tools', kind: 'screen', screen: 'inbox' },
-  { id: 'radar', name: 'Radar', icon: Radar, category: 'Tools', kind: 'screen', screen: 'radar' },
   { id: 'weather', name: 'Weather', icon: CloudSun, category: 'Tools', kind: 'screen', screen: 'weather' },
   { id: 'artifacts', name: 'Artifacts', icon: Box, category: 'Tools', kind: 'screen', screen: 'artifacts' },
   { id: 'xray', name: 'X-Ray', icon: ScanSearch, category: 'System', kind: 'screen', screen: 'xray' },
@@ -49,6 +53,17 @@ export const APPS: AppDef[] = [
 ];
 
 export const DOCK_APPS = APPS.filter((a) => a.dock);
+
+// Every full-screen phone surface that Advanced Appearance can paint. Keep
+// app-owned screens derived from the launcher registry so adding an app also
+// adds its customization target; the shell-only surfaces are named here.
+export const APPEARANCE_SECTIONS: Array<{ id: string; name: string }> = [
+  { id: 'settings', name: 'Settings' },
+  { id: 'home', name: 'Home' },
+  { id: 'locked', name: 'Lock screen' },
+  { id: 'appdrawer', name: 'App drawer' },
+  ...APPS.filter((app) => app.screen).map((app) => ({ id: app.screen!, name: app.name })),
+].filter((section, index, all) => all.findIndex((candidate) => candidate.id === section.id) === index);
 
 export const CATEGORY_ORDER: AppDef['category'][] = ['Companion', 'Tools', 'Fun', 'System'];
 
@@ -72,42 +87,22 @@ const LEGACY_ORDER_STORAGE_KEY = 'bytelight_app_order_v1';
 
 export type AppSlot = string | null;
 
-const APP_ID_ALIASES: Record<string, string> = {
-  // GIF Lab became a first-class Studio section. Keep old saved dock/drawer
-  // layouts useful instead of leaving a dead tile behind.
-  gif: 'studio',
-  // (X-Ray is NOT aliased: the operator keeps it as its own tile in the Apps drawer.
-  // Aliasing it to Agent wiped its saved drawer position on every load.)
-  // Cortex, Memory Blocks, and Self-Knowledge folded into the Memory hub.
-  cortex: 'memory',
-  memoryblocks: 'memory',
-  selfknowledge: 'memory',
-};
-
+// Keep legacy hub aliases while restoring every upstream launcher.
 export function migrateAppIds(ids: string[]): string[] {
-  const canonicalPresent = new Set(ids.filter((id) => !APP_ID_ALIASES[id]));
-  const seen = new Set<string>();
-  const migrated: string[] = [];
-  for (const id of ids) {
-    const target = APP_ID_ALIASES[id] ?? id;
-    if (APP_ID_ALIASES[id] && canonicalPresent.has(target)) continue;
-    if (seen.has(target)) continue;
-    seen.add(target);
-    migrated.push(target);
-  }
-  return migrated;
+  const allowed = new Set(APPS.map(app => app.id));
+  const aliases: Record<string, string> = { cortex: 'memory', memoryblocks: 'memory', selfknowledge: 'memory' };
+  return [...new Set(ids.map(id => aliases[id] ?? id).filter(id => allowed.has(id)))];
 }
 
 function migrateLayoutSlots(slots: AppSlot[]): AppSlot[] {
-  const canonicalPresent = new Set(slots.filter((id): id is string => Boolean(id) && !APP_ID_ALIASES[id as string]));
+  const allowed = new Set(APPS.map(app => app.id));
   const seen = new Set<string>();
-  return slots.map((slot) => {
-    if (!slot) return null;
-    const target = APP_ID_ALIASES[slot] ?? slot;
-    if (APP_ID_ALIASES[slot] && canonicalPresent.has(target)) return null;
-    if (seen.has(target)) return null;
-    seen.add(target);
-    return target;
+  const aliases: Record<string, string> = { cortex: 'memory', memoryblocks: 'memory', selfknowledge: 'memory' };
+  return slots.map(original => {
+    const slot = original ? aliases[original] ?? original : original;
+    if (!slot || !allowed.has(slot) || seen.has(slot)) return null;
+    seen.add(slot);
+    return slot;
   });
 }
 
@@ -182,4 +177,11 @@ export function applyAppLayout(
     resolved.splice(insertIdx, 0, app);
   }
   return resolved;
+}
+
+/** Unknown and retired paths deliberately leave the shell at home. */
+export function appForPath(path: string): AppDef | null {
+  const segment = path.split('/').filter(Boolean)[0]?.toLowerCase();
+  const aliases: Record<string, string> = { chat: 'messages', cc: 'commandcenter', 'command-center': 'commandcenter' };
+  return APPS.find(app => app.id === (aliases[segment] ?? segment)) ?? null;
 }

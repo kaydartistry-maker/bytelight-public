@@ -1,4 +1,4 @@
-import { useId, useRef, useState } from 'react';
+import React, { useId, useRef, useState } from 'react';
 import { Upload, Trash2, Loader2, Pencil, Plus, X } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { refThumbSrc } from '../../lib/thumb';
@@ -14,6 +14,7 @@ export function RefsPanel({
   handleRefFileChange,
   deleteRefImage,
   renameDrawer,
+  saveDescription,
   deleteDrawer,
   newDrawerName,
   setNewDrawerName,
@@ -26,6 +27,17 @@ export function RefsPanel({
   const [pendingDeleteKeys, setPendingDeleteKeys] = useState<Set<string>>(() => new Set());
   const [renaming, setRenaming] = useState<{ slug: string; label: string; emoji: string } | null>(null);
   const [savingRename, setSavingRename] = useState(false);
+  const [editingDescription, setEditingDescription] = useState<{ slug: string; text: string } | null>(null);
+  const [savingDescription, setSavingDescription] = useState(false);
+  const [descriptionError, setDescriptionError] = useState('');
+
+  const confirmDescription = async () => {
+    if (!editingDescription || savingDescription) return;
+    setSavingDescription(true); setDescriptionError('');
+    try { await saveDescription(editingDescription.slug, editingDescription.text); setEditingDescription(null); }
+    catch (cause) { setDescriptionError(cause instanceof Error ? cause.message : 'Description could not be saved.'); }
+    finally { setSavingDescription(false); }
+  };
 
   const confirmRename = async () => {
     if (!renaming || savingRename) return;
@@ -60,8 +72,8 @@ export function RefsPanel({
 
   return (
     <div className="flex-1 overflow-y-auto p-4 space-y-4">
-      <p className={cn("rounded-xl border px-3 py-2 text-sm", colors.panelBg, colors.panelBorder, colors.textMuted)}>
-        Upload reference images for each subject. When generating, select subjects to include their references.
+      <p data-appearance-card="" className={cn("rounded-xl border px-3 py-2 text-sm", colors.panelBg, colors.panelBorder, colors.textMuted)}>
+        Save a written description or add photos for each person. On Create, tap Description or Photos to use what’s saved here.
       </p>
       {error && (
         <div className="sticky top-0 z-10 rounded-xl border border-red-500/30 bg-red-950/90 px-3 py-2 text-sm text-red-200 shadow-lg backdrop-blur">
@@ -73,7 +85,7 @@ export function RefsPanel({
         const inputId = `${inputIdPrefix}-reference-upload-${drawer.slug}`;
 
         return (
-          <div key={drawer.slug} className={cn("rounded-xl border p-4", colors.panelBg, colors.panelBorder)}>
+          <div key={drawer.slug} data-appearance-card="" className={cn("rounded-xl border p-4", colors.panelBg, colors.panelBorder)}>
             <div className="flex items-center justify-between mb-3">
               <div className="flex min-w-0 items-center gap-2">
                 {drawer.emoji && <span className="text-lg">{drawer.emoji}</span>}
@@ -123,7 +135,6 @@ export function RefsPanel({
                   {uploadingFor === drawer.slug ? <Loader2 className="w-3 h-3 animate-spin" /> : <Upload className="w-3 h-3" />}
                   {uploadingFor === drawer.slug ? 'Uploading...' : 'Add'}
                 </label>
-                {!drawer.isDefault && (
                   <button
                     type="button"
                     onClick={() => setRenaming({ slug: drawer.slug, label: drawer.label, emoji: drawer.emoji ?? '' })}
@@ -133,7 +144,6 @@ export function RefsPanel({
                   >
                     <Pencil className="w-4 h-4" />
                   </button>
-                )}
                 {!drawer.isDefault && (
                   <button
                     type="button"
@@ -187,6 +197,19 @@ export function RefsPanel({
               </div>
             )}
 
+            <div className={cn('mb-3 rounded-lg border p-3', colors.panelBorder)}>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <h3 className="text-sm font-medium">Written description</h3>
+                {editingDescription?.slug !== drawer.slug && <button type="button" disabled={savingDescription} onClick={() => { setEditingDescription({ slug: drawer.slug, text: drawer.description ?? '' }); setDescriptionError(''); }} className="min-h-10 px-2 text-xs underline" aria-label={`${drawer.description ? 'Edit' : 'Add'} description for ${drawer.label}`}>{drawer.description ? 'Edit description' : 'Add description'}</button>}
+              </div>
+              {editingDescription?.slug === drawer.slug ? <div className="mt-2 space-y-2">
+                <textarea aria-label={`Written description for ${drawer.label}`} value={editingDescription.text} maxLength={1200} disabled={savingDescription} onChange={e => setEditingDescription({ slug: drawer.slug, text: e.target.value })} placeholder="Hair, eyes, clothing, distinct features…" className={cn('w-full min-h-24 rounded-lg border p-2 text-base', colors.panelBg, colors.panelBorder, colors.textMain)} />
+                <p className={cn('text-xs', colors.textMuted)}>Save it once and reuse it from Create. Save an empty field to remove it.</p>
+                {descriptionError && <p role="alert" className="text-sm">{descriptionError}</p>}
+                <div className="flex gap-2"><button type="button" disabled={savingDescription} onClick={() => void confirmDescription()} className="rounded-lg px-3 min-h-10 text-xs font-semibold disabled:opacity-50" style={{ backgroundColor: colors.accent, color: ACCENT_TEXT_COLOR_BY_THEME[themeMode] }}>{savingDescription ? 'Saving…' : 'Save description'}</button><button type="button" disabled={savingDescription} onClick={() => setEditingDescription(null)} className="px-3 min-h-10 text-xs">Cancel</button></div>
+              </div> : drawer.description ? <p className="mt-1 text-sm whitespace-pre-wrap break-words">{drawer.description}</p> : <p className={cn('text-xs', colors.textMuted)}>No description saved.</p>}
+            </div>
+
             {drawer.refs.length > 0 ? (
               <div className="grid grid-cols-3 gap-2">
                 {drawer.refs.map(ref => {
@@ -230,7 +253,7 @@ export function RefsPanel({
                 })}
               </div>
             ) : (
-              <p className={cn("text-sm text-center py-4", colors.textMuted)}>No references yet</p>
+              <p className={cn("text-sm text-center py-4", colors.textMuted)}>No photos yet</p>
             )}
           </div>
         );

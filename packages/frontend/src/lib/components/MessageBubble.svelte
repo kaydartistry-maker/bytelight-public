@@ -19,13 +19,13 @@
   import { humanizeToolName, toolFamily, FAMILY_LABELS, type ToolFamily } from '$lib/utils/tool-names';
   import { getProfile } from '$lib/stores/profiles.svelte';
 
-  let { message, isStreaming = false, streamTokens = '', toolEvents = [], segments = null } = $props<{
+  let { message, isStreaming = false, streamTokens = '', toolEvents = [], segments = null }: {
     message: Message;
     isStreaming?: boolean;
     streamTokens?: string;
     toolEvents?: ToolEvent[];
     segments?: MessageSegment[] | null;
-  }>();
+  } = $props();
 
   // Format timestamp
   function formatTime(timestamp: string): string {

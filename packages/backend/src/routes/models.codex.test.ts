@@ -58,6 +58,7 @@ function snapshot(overrides: Partial<CodexAuthSnapshot> = {}): CodexAuthSnapshot
     loggedIn: false,
     expiresAt: null,
     refreshable: false,
+    source: null,
     loginSession: { status: 'idle' },
     ...overrides,
   };
@@ -249,17 +250,13 @@ describe('buildCodexCatalogEntries — Codex catalog exposure', () => {
   const entries = buildCodexCatalogEntries();
   const ids = entries.map((m) => m.id).sort();
 
-  test('returns the Codex catalog (7 entries)', () => {
-    assert.equal(entries.length, 7, `expected 7 Codex catalog rows, got ${entries.length}`);
+  test('returns the Codex catalog (3 live entries; 4 retired 2026-11-17)', () => {
+    assert.equal(entries.length, 3, `expected 3 Codex catalog rows, got ${entries.length}`);
   });
 
   test('contains every expected Codex model id', () => {
     // Sorted (ids is `.sort()`ed above) — mirrors pi-ai 0.80.6 openai-codex registry.
     assert.deepEqual(ids, [
-      'gpt-5.3-codex-spark',
-      'gpt-5.4',
-      'gpt-5.4-mini',
-      'gpt-5.5',
       'gpt-5.6-luna',
       'gpt-5.6-sol',
       'gpt-5.6-terra',
@@ -292,14 +289,16 @@ describe('buildCodexCatalogEntries — Codex catalog exposure', () => {
   });
 
   test('catalog entries carry context_length sourced from pi-ai', () => {
-    const gpt55 = entries.find((m) => m.id === 'gpt-5.5');
-    assert.ok(gpt55, 'gpt-5.5 should be in the catalog');
-    assert.equal(gpt55.context_length, 272000,
-      'pi-ai registers gpt-5.5 with contextWindow 272000');
-    const spark = entries.find((m) => m.id === 'gpt-5.3-codex-spark');
-    assert.ok(spark, 'gpt-5.3-codex-spark should be in the catalog');
-    assert.equal(spark.context_length, 128000,
-      'pi-ai registers gpt-5.3-codex-spark with contextWindow 128000');
+    const sol = entries.find((m) => m.id === 'gpt-5.6-sol');
+    assert.ok(sol, 'gpt-5.6-sol should be in the catalog');
+    assert.equal(sol.context_length, 372000,
+      'pi-ai registers gpt-5.6-sol with contextWindow 372000');
+  });
+
+  test('retired ChatGPT-account ids never reach the catalog', () => {
+    for (const dead of ['gpt-5.3-codex-spark', 'gpt-5.4', 'gpt-5.4-mini', 'gpt-5.5']) {
+      assert.equal(entries.find((m) => m.id === dead), undefined, `${dead} is retired and must not be offered`);
+    }
   });
 });
 

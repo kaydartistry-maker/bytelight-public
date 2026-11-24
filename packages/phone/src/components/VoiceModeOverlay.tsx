@@ -1219,11 +1219,13 @@ export function VoiceModeOverlay({
           </header>
 
           <div className="relative z-10 flex min-h-0 flex-1 flex-col items-center justify-between px-5 pb-5 pt-3">
-            <div className="flex min-h-[6.5rem] flex-col items-center justify-center">
+            <div className="flex min-h-[6.5rem] shrink-0 flex-col items-center justify-center">
               <AvatarStack companions={companions} accent={colors.accent} speaking={speaking} muted={phase === 'ready'} />
             </div>
 
-            <div className="flex w-full flex-1 flex-col items-center justify-center py-4 text-center">
+            {/* The middle shrinks and scrolls; it never pushes the call controls off
+                the bottom of the screen (tone line + "You said" card can outgrow it). */}
+            <div className="flex min-h-0 w-full flex-1 flex-col items-center justify-center-safe overflow-y-auto py-4 text-center">
               <motion.button
                 type="button"
                 onClick={handlePrimaryAction}
@@ -1301,7 +1303,7 @@ export function VoiceModeOverlay({
               </AnimatePresence>
             </div>
 
-            <div className="w-full max-w-sm" style={{ marginBottom: 'var(--sab)' }}>
+            <div className="w-full max-w-sm shrink-0" style={{ marginBottom: 'var(--sab)' }}>
               {overlayAccess && !overlayAccess.granted && (
                 overlayAccess.supported ? (
                   <button

@@ -314,7 +314,7 @@ export function DiscordRules({ themeConfig, themeMode }: DiscordRulesProps) {
   const rulesPage = usePaged(items);
 
   return (
-    <div className={card}>
+    <div data-appearance-card="" className={card}>
       <button onClick={toggleOpen} className="flex w-full items-center justify-between">
         <span className={sectionTitle}>Rules</span>
         <ChevronRight size={14} className={cn(colors.textMuted, open && 'rotate-90')} />
@@ -326,6 +326,8 @@ export function DiscordRules({ themeConfig, themeMode }: DiscordRulesProps) {
             {TYPES.map((t) => (
               <button
                 key={t.id}
+                data-appearance-tab=""
+                aria-pressed={tab === t.id}
                 onClick={() => { setTab(t.id); setExpanded(null); }}
                 className={cn('flex-1 rounded-lg py-1.5 text-xs font-medium border', colors.panelBorder)}
                 style={tab === t.id ? { background: colors.accent, color: 'var(--bytelight-on-accent)' } : undefined}

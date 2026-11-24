@@ -382,6 +382,8 @@ export function UsageApp({ onClose, themeConfig, themeMode, embedded }: UsageApp
           {TABS.map((t) => (
             <button
               key={t.id}
+              data-appearance-tab=""
+              aria-pressed={tab === t.id}
               onClick={() => setTab(t.id)}
               className={cn(
                 'flex-1 rounded-lg py-1.5 text-xs font-medium transition-colors border',

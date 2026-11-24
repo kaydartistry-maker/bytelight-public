@@ -48,13 +48,19 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import { getBytelightConfig } from '../config.js';
 import { getSecret } from './secrets.js';
 import { errMessage } from '../util/errors.js';
-import { deployCode, deployCodeStatus } from './code-deployment.js';
-import { delegateCodeTask } from './code-delegation.js';
 import type { TurnAudience } from './turn-audience.js';
+import { delegateToGemini } from './runtimes/gemini-cli.js';
+import { appendGoogleDoc, createGoogleDoc, readGoogleDoc, searchGoogleDocs } from './google-drive.js';
 
 // ─── Turn-scoped context ─────────────────────────────────────────────
 
 export interface BeltContext {
+  /** Optional provenance retained for existing guarded local code services. */
+  turnId?: string;
+  rawOwnerMessageText?: string;
+  ownerMessageId?: string;
+  replyToMessageId?: string;
+  proposalMessageId?: string;
   ownerMessageText?: string;
   isAutonomous?: boolean;
   /** Thread the current foreign turn belongs to. Injected into the
@@ -247,6 +253,113 @@ const discordMessageId = { type: 'string', description: 'Discord message ID. Omi
 // rendered by the frontend), so a belt tool would have duplicated the
 // architecture-of-record path with a second, divergent one.
 
+const CANVAS_CONTENT_TYPES: readonly string[] = ['markdown', 'code', 'text', 'html'];
+const TRIGGER_CONDITION_TYPES: readonly string[] = [
+  'presence_state', 'presence_transition', 'agent_free', 'time_window', 'routine_missing',
+];
+const LAST_TARGET = /^last(-[1-9][0-9]*)?$/;
+
+function fail(error: string): { ok: boolean; result: string } {
+  return { ok: false, result: JSON.stringify({ ok: false, error }) };
+}
+
+/** POST to an internal endpoint and hand back its answer or its error. */
+async function internalCall(
+  endpoint: string,
+  body: Record<string, unknown>,
+  timeoutMs = 30000,
+): Promise<{ ok: boolean; result: string }> {
+  try {
+    const r = await postInternal(endpoint, body, timeoutMs);
+    if (!r.ok) return fail(errorFrom(r));
+    return { ok: true, result: r.text };
+  } catch (e) {
+    return fail(errMessage(e));
+  }
+}
+
+const triggerConditionsSchema = {
+  type: 'array',
+  description:
+    "When it should fire; every condition must hold. Each is an object with a type: " +
+    "{type:'presence_state', state:'active'|'idle'|'offline'} · " +
+    "{type:'presence_transition', from, to} (e.g. offline → active: she just came back) · " +
+    "{type:'agent_free'} (you are not mid-reply) · " +
+    "{type:'time_window', after:'HH:MM', before?:'HH:MM'} · " +
+    "{type:'routine_missing', routine, after_hour} (a routine not logged by that hour).",
+  items: {
+    type: 'object',
+    properties: {
+      type: { type: 'string', enum: [...TRIGGER_CONDITION_TYPES] },
+      state: { type: 'string', enum: ['active', 'idle', 'offline'] },
+      from: { type: 'string' },
+      to: { type: 'string' },
+      after: { type: 'string', description: 'HH:MM, 24-hour.' },
+      before: { type: 'string', description: 'HH:MM, 24-hour.' },
+      routine: { type: 'string' },
+      after_hour: { type: 'number' },
+    },
+    required: ['type'],
+  },
+};
+
+/** impulse (fires once) and watcher (fires again after a cooldown) share one endpoint. */
+function triggerTool(kind: 'impulse' | 'watcher', name: string, description: string): BeltTool {
+  return {
+    schema: {
+      name,
+      description,
+      input_schema: {
+        type: 'object',
+        properties: {
+          action: { type: 'string', enum: ['create', 'list', 'cancel'] },
+          label: { type: 'string', description: 'create: a short name for it.' },
+          conditions: triggerConditionsSchema,
+          prompt: { type: 'string', description: 'create: what you should be told when it fires.' },
+          ...(kind === 'watcher'
+            ? { cooldown_minutes: { type: 'number', description: 'create: minutes to wait before it may fire again.' } }
+            : {}),
+          trigger_id: { type: 'string', description: 'cancel: the id from create or list.' },
+        },
+        required: ['action'],
+      },
+    },
+    handler: async (args) => {
+      if (args.action === 'list') return internalCall('trigger', { action: 'list', kind });
+      if (args.action === 'cancel') {
+        if (typeof args.trigger_id !== 'string' || !args.trigger_id) return fail('trigger_id is required to cancel');
+        return internalCall('trigger', { action: 'cancel', triggerId: args.trigger_id });
+      }
+      if (args.action !== 'create') return fail("action must be 'create', 'list' or 'cancel'");
+      if (typeof args.label !== 'string' || !args.label.trim()) return fail('label is required');
+      const conditions = Array.isArray(args.conditions) ? args.conditions : [];
+      if (conditions.length === 0) return fail('at least one condition is required');
+      for (const c of conditions) {
+        const type = (c as { type?: unknown } | null)?.type;
+        if (typeof type !== 'string' || !TRIGGER_CONDITION_TYPES.includes(type)) {
+          return fail(`unknown condition type; use one of: ${TRIGGER_CONDITION_TYPES.join(', ')}`);
+        }
+      }
+      const body: Record<string, unknown> = { action: 'create', kind, label: args.label, conditions, threadId: ctxThreadId() };
+      if (typeof args.prompt === 'string' && args.prompt) body.prompt = args.prompt;
+      if (kind === 'watcher' && typeof args.cooldown_minutes === 'number' && args.cooldown_minutes > 0) {
+        body.cooldownMinutes = String(Math.round(args.cooldown_minutes));
+      }
+      return internalCall('trigger', body);
+    },
+  };
+}
+
+async function canvasCall(body: Record<string, unknown>): Promise<{ ok: boolean; result: string }> {
+  try {
+    const r = await postInternal('canvas', body);
+    if (!r.ok) return { ok: false, result: JSON.stringify({ ok: false, error: errorFrom(r) }) };
+    return { ok: true, result: r.text };
+  } catch (e) {
+    return { ok: false, result: JSON.stringify({ ok: false, error: errMessage(e) }) };
+  }
+}
+
 async function libraryCall(body: Record<string, unknown>): Promise<{ ok: boolean; result: string }> {
   try {
     const r = await postInternal('library', body);
@@ -257,7 +370,33 @@ async function libraryCall(body: Record<string, unknown>): Promise<{ ok: boolean
   }
 }
 
+async function bookBridgeCall(body: Record<string, unknown>): Promise<{ ok: boolean; result: string }> {
+  try {
+    const r = await postInternal('book-bridge', body);
+    return r.ok
+      ? { ok: true, result: r.text }
+      : { ok: false, result: JSON.stringify({ ok: false, error: errorFrom(r) }) };
+  } catch (e) {
+    return { ok: false, result: JSON.stringify({ ok: false, error: errMessage(e) }) };
+  }
+}
+
 export const CHAT_TOOL_BELT: BeltTool[] = [
+  {
+    schema: {
+      name: 'delegate_to_gemini',
+      description: 'Ask the authenticated Google Gemini specialist for an independent analysis or second opinion. Use for bounded research synthesis, visual reasoning from a textual description, architecture review, or an alternate solution. It cannot edit files or run commands.',
+      input_schema: { type: 'object', properties: {
+        prompt: { type: 'string', description: 'Self-contained task and all context Gemini needs.' },
+        model: { type: 'string', enum: ['gemini-3.8-flash-high', 'gemini-3.8-flash-medium', 'gemini-3.8-flash-low'] },
+      }, required: ['prompt'] },
+    },
+    handler: async (args) => {
+      if (typeof args.prompt !== 'string' || !args.prompt.trim()) return { ok: false, result: JSON.stringify({ ok: false, error: 'prompt is required' }) };
+      try { return { ok: true, result: JSON.stringify({ ok: true, ...(await delegateToGemini(args.prompt, typeof args.model === 'string' ? args.model : undefined)) }) }; }
+      catch (error) { return { ok: false, result: JSON.stringify({ ok: false, error: errMessage(error) }) }; }
+    },
+  },
   discordTool('send', 'Send a Discord message, optionally as a reply. An explicit channel ID can target another channel.', {
     channelId: discordChannelId,
     message: { type: 'string', description: 'Message content to send (maximum 2000 characters).' },
@@ -383,6 +522,126 @@ export const CHAT_TOOL_BELT: BeltTool[] = [
         if (!r.ok) return { ok: false, result: JSON.stringify({ ok: false, error: errorFrom(r) }) };
         const j = r.json as { status?: string; placeholderId?: string };
         return { ok: true, result: JSON.stringify({ ok: true, status: j.status ?? 'generating', placeholderId: j.placeholderId, note: 'Image is rendering and will post itself shortly.' }) };
+      } catch (e) {
+        return { ok: false, result: JSON.stringify({ ok: false, error: errMessage(e) }) };
+      }
+    },
+  },
+
+  // 2b. The Spellbook's hands → /internal/spellbook/*. the operator's saved scenes
+  // (her own and the community vault): find one, pull a forgotten one, cast
+  // it with whoever, or read a picture she just dropped. Renders post into
+  // this chat AND pin to her Spellbook wall.
+  {
+    schema: {
+      name: 'spellbook_search',
+      description:
+        "Search the operator's Spellbook: her saved image scenes (her own, plus credited community prompts). Each spell has its people written as [Character 1], [Character 2], so any cast fits. Use to find a scene before spellbook_cast. filter 'unmade' = never rendered yet. Read-only.",
+      input_schema: {
+        type: 'object',
+        properties: {
+          query: { type: 'string', description: 'Words to look for in title, scene, tags or credit, e.g. "grungy car", "bathtub".' },
+          filter: { type: 'string', enum: ['all', 'mine', 'community', 'unmade'], description: 'Whose spells, or only the never-made ones.' },
+          tag: { type: 'string', description: 'One tag, e.g. "Spice", "Couple", "Wreck him".' },
+          limit: { type: 'number', description: 'Max results (default 10, cap 25).' },
+        },
+      },
+    },
+    handler: async (args) => {
+      const body: Record<string, unknown> = {};
+      for (const k of ['query', 'filter', 'tag', 'limit']) if (args[k] !== undefined) body[k] = args[k];
+      try {
+        const r = await postInternal('spellbook/search', body, 30000);
+        if (!r.ok) return { ok: false, result: JSON.stringify({ ok: false, error: errorFrom(r) }) };
+        return { ok: true, result: JSON.stringify({ ok: true, ...(r.json as object) }) };
+      } catch (e) {
+        return { ok: false, result: JSON.stringify({ ok: false, error: errMessage(e) }) };
+      }
+    },
+  },
+  {
+    schema: {
+      name: 'spellbook_surprise',
+      description:
+        "Pull one forgotten spell from the operator's Spellbook: a never-made one if any match, else the one cast longest ago. Optional filter/tag. Follow with spellbook_cast to make it.",
+      input_schema: {
+        type: 'object',
+        properties: {
+          filter: { type: 'string', enum: ['all', 'mine', 'community', 'unmade'] },
+          tag: { type: 'string', description: 'One tag, e.g. "Couple".' },
+        },
+      },
+    },
+    handler: async (args) => {
+      const body: Record<string, unknown> = {};
+      if (typeof args.filter === 'string') body.filter = args.filter;
+      if (typeof args.tag === 'string') body.tag = args.tag;
+      try {
+        const r = await postInternal('spellbook/surprise', body, 30000);
+        if (!r.ok) return { ok: false, result: JSON.stringify({ ok: false, error: errorFrom(r) }) };
+        return { ok: true, result: JSON.stringify({ ok: true, ...(r.json as object) }) };
+      } catch (e) {
+        return { ok: false, result: JSON.stringify({ ok: false, error: errMessage(e) }) };
+      }
+    },
+  },
+  {
+    schema: {
+      name: 'spellbook_cast',
+      description:
+        "Cast a Spellbook spell with whoever you choose and drop the picture into this chat (it also pins to the operator's wall). The cast fills [Character 1], [Character 2]… in order; a different number of people than the scene was written for is fine, the words are rewritten to fit. Renders in the background and posts itself in a few minutes; this returns at once, so say it is on the way, do NOT claim it is showing.",
+      input_schema: {
+        type: 'object',
+        properties: {
+          spellId: { type: 'string', description: 'The spell id from spellbook_search or spellbook_surprise.' },
+          cast: { type: 'array', items: { type: 'string' }, description: "Reference-drawer names in order, e.g. ['user'], ['user','companion-b']. Up to 4." },
+          look: { type: 'string', description: "A look id (e.g. 'grungy-film', 'keep'). Omit for the operator's default look." },
+          size: { type: 'string', enum: ['portrait', 'square', 'landscape'] },
+          caption: { type: 'string', description: 'Optional caption posted with the picture.' },
+        },
+        required: ['spellId', 'cast'],
+      },
+    },
+    handler: async (args) => {
+      if (typeof args.spellId !== 'string' || !Array.isArray(args.cast)) {
+        return { ok: false, result: JSON.stringify({ ok: false, error: 'spellId and cast are required' }) };
+      }
+      const body: Record<string, unknown> = { spellId: args.spellId, cast: args.cast, threadId: ctxThreadId() };
+      for (const k of ['look', 'size', 'caption']) if (typeof args[k] === 'string') body[k] = args[k];
+      try {
+        const r = await postInternal('spellbook/cast', body, 30000);
+        if (!r.ok) return { ok: false, result: JSON.stringify({ ok: false, error: errorFrom(r) }) };
+        return { ok: true, result: JSON.stringify({ ok: true, status: 'casting', ...(r.json as object), note: 'The spell is rendering and will post itself shortly.' }) };
+      } catch (e) {
+        return { ok: false, result: JSON.stringify({ ok: false, error: errMessage(e) }) };
+      }
+    },
+  },
+  {
+    schema: {
+      name: 'spellbook_read',
+      description:
+        "Read the newest picture the operator dropped in this chat as a Spellbook spell: the scene is kept, the stranger in it is left out, and the cast you choose is put in. Saves the spell to her wall and posts the render here in a few minutes; returns at once. The dropped picture is never sent to the image engine.",
+      input_schema: {
+        type: 'object',
+        properties: {
+          cast: { type: 'array', items: { type: 'string' }, description: "Who goes in it, in order, e.g. ['user','companion-a']." },
+          look: { type: 'string', description: "A look id, or 'keep' for the picture's own style. Omit for the operator's default look." },
+          size: { type: 'string', enum: ['portrait', 'square', 'landscape'] },
+          caption: { type: 'string' },
+          credit: { type: 'string', description: 'Who posted the original, if the operator said.' },
+        },
+        required: ['cast'],
+      },
+    },
+    handler: async (args) => {
+      if (!Array.isArray(args.cast)) return { ok: false, result: JSON.stringify({ ok: false, error: 'cast is required' }) };
+      const body: Record<string, unknown> = { cast: args.cast, threadId: ctxThreadId() };
+      for (const k of ['look', 'size', 'caption', 'credit']) if (typeof args[k] === 'string') body[k] = args[k];
+      try {
+        const r = await postInternal('spellbook/read', body, 30000);
+        if (!r.ok) return { ok: false, result: JSON.stringify({ ok: false, error: errorFrom(r) }) };
+        return { ok: true, result: JSON.stringify({ ok: true, status: 'reading', note: 'Reading the picture, then the render posts itself.' }) };
       } catch (e) {
         return { ok: false, result: JSON.stringify({ ok: false, error: errMessage(e) }) };
       }
@@ -717,6 +976,55 @@ export const CHAT_TOOL_BELT: BeltTool[] = [
     },
   },
 
+  // Native BOOX bridge. Its server-side reading window is either exactly at
+  // her place or one chapter ahead, selected by her per book.
+  {
+    schema: {
+      name: 'book_bridge_status',
+      description: 'See whether her paired BOOX is online, which book and chapter are open, the selected Live or One Chapter Ahead mode, and whether margin notes are waiting to sync.',
+      input_schema: { type: 'object', properties: {}, required: [] },
+    },
+    handler: async () => bookBridgeCall({ action: 'status' }),
+  },
+  {
+    schema: {
+      name: 'book_bridge_read',
+      description: 'Read from the paired BOOX book within her selected server-enforced window. Live mode stops at her current place. One Chapter Ahead mode permits at most the next chapter. Defaults to the useful current/next chapter.',
+      input_schema: {
+        type: 'object',
+        properties: {
+          bookId: { type: 'number', description: 'ByteLight Library book id; omit for the book open on BOOX.' },
+          chapter: { type: 'number', description: 'Chapter number, 1-based. Omit for current in Live mode or next in Ahead mode.' },
+        },
+        required: [],
+      },
+    },
+    handler: async (args) => {
+      const body: Record<string, unknown> = { action: 'read' };
+      if (typeof args.bookId === 'number') body.bookId = args.bookId;
+      if (typeof args.chapter === 'number') body.chapter = args.chapter;
+      return bookBridgeCall(body);
+    },
+  },
+  {
+    schema: {
+      name: 'book_bridge_note',
+      description: 'Pre-place a quote-anchored margin note inside the paired BOOX book. The exact quote must be inside the server-enforced reading window; KOReader receives it through its safe outbound sync outbox.',
+      input_schema: {
+        type: 'object',
+        properties: {
+          bookId: { type: 'number', description: 'ByteLight Library book id.' },
+          chapter: { type: 'number', description: 'Chapter number, 1-based.' },
+          quote: { type: 'string', description: 'Exact words from the permitted chapter.' },
+          note: { type: 'string', description: 'The margin note in your own voice.' },
+          author: { type: 'string', description: "Your companion slug, 'companion-a' or 'companion-b'." },
+        },
+        required: ['bookId', 'chapter', 'quote', 'note', 'author'],
+      },
+    },
+    handler: async (args) => bookBridgeCall({ action: 'note', ...args }),
+  },
+
   // 12. set_intention → POST /internal/intention {action:'create'}
   {
     schema: {
@@ -807,42 +1115,6 @@ export const CHAT_TOOL_BELT: BeltTool[] = [
     },
   },
 
-
-  // 15. delegate_code → bounded Codex specialist in a separate dev clone
-  {
-    schema: {
-      name: 'delegate_code',
-      description:
-        'Hand a clear software task to Codex while you remain the conversational companion. Use inspect mode freely for read-only code investigation. Use edit mode only when the owner clearly asks to implement, fix, or change code. Codex works in a separate development clone, never production; it cannot commit, push, merge, or deploy. Afterward, explain the report and diff and ask for approval before deployment.',
-      input_schema: {
-        type: 'object',
-        properties: {
-          task: { type: 'string', description: 'A self-contained coding or code-investigation task, including desired behavior and relevant context.' },
-          mode: { type: 'string', enum: ['inspect', 'edit'], description: 'inspect reads only; edit may change the development workspace. Defaults to edit.' },
-          continue_existing: { type: 'boolean', description: 'True only when the owner asks to revise the currently pending Codex branch. False starts a fresh task and refuses if unreviewed changes exist.' },
-        },
-        required: ['task'],
-      },
-    },
-    handler: async (args) => delegateCodeTask({
-      task: typeof args.task === 'string' ? args.task : '',
-      mode: args.mode === 'inspect' ? 'inspect' : 'edit',
-      continue_existing: args.continue_existing === true,
-    }),
-  },
-
-  ...(['deploy_code', 'deploy_code_status'] as const).map(name => ({
-    schema: {
-      name,
-      description: name === 'deploy_code' ? 'Deploy the exact pending diff only after explicit live owner approval. Returns pending; use deploy_code_status after restart. Never commits or pushes.' : 'Read deployment status only; never starts work.',
-      input_schema: { type: 'object' as const, additionalProperties: false, properties: {
-        branch: { type: 'string' }, diff_sha256: { type: 'string' },
-        ...(name === 'deploy_code' ? { confirmation: { type: 'string', enum: ['DEPLOY'] } } : {}),
-      }, required: name === 'deploy_code' ? ['branch', 'diff_sha256', 'confirmation'] : ['branch', 'diff_sha256'] },
-    },
-    handler: async (args: Record<string, unknown>) => name === 'deploy_code' ? deployCode(args, getBeltContext()) : deployCodeStatus(args),
-  })),
-
   // ── Games and places ────────────────────────────────────────────────
 
   // 15. battleship_fire → POST /internal/games/battleship/fire
@@ -878,6 +1150,385 @@ export const CHAT_TOOL_BELT: BeltTool[] = [
       }
     },
   },
+
+  // 19-22. canvas_* → POST /internal/canvas (what `sc canvas` sends). The
+  // content is always typed in; a file path is never taken, so an engine
+  // with no files makes a canvas the same way one with a shell does.
+  {
+    schema: {
+      name: 'canvas_create',
+      description:
+        'Open a canvas beside this chat: a document the operator can read and edit alongside the conversation (notes, a plan, a draft, code). Posts a line in the chat saying you opened it. Returns the canvas with its id; keep the id to update it later.',
+      input_schema: {
+        type: 'object',
+        properties: {
+          title: { type: 'string', description: 'Title shown on the canvas.' },
+          content: { type: 'string', description: 'The full text of the canvas.' },
+          content_type: { type: 'string', enum: ['markdown', 'code', 'text', 'html'], description: 'How to render it. Omit for markdown.' },
+          language: { type: 'string', description: "Only with content_type 'code': the language, e.g. 'typescript'." },
+        },
+        required: ['title', 'content'],
+      },
+    },
+    handler: async (args) => {
+      if (typeof args.title !== 'string' || !args.title.trim()) {
+        return { ok: false, result: JSON.stringify({ ok: false, error: 'title is required' }) };
+      }
+      if (typeof args.content !== 'string') {
+        return { ok: false, result: JSON.stringify({ ok: false, error: 'content is required' }) };
+      }
+      const body: Record<string, unknown> = {
+        action: 'create',
+        title: args.title,
+        content: args.content,
+        contentType: CANVAS_CONTENT_TYPES.includes(args.content_type as string) ? args.content_type : 'markdown',
+        threadId: ctxThreadId(),
+      };
+      if (typeof args.language === 'string' && args.language) body.language = args.language;
+      return canvasCall(body);
+    },
+  },
+  {
+    schema: {
+      name: 'canvas_update',
+      description:
+        'Replace the text of a canvas you or the operator already opened. Send the whole new text, not a patch. Get the id from canvas_create or canvas_list; read it first with canvas_read if you need what is there now.',
+      input_schema: {
+        type: 'object',
+        properties: {
+          canvas_id: { type: 'string', description: 'Canvas id.' },
+          content: { type: 'string', description: 'The full new text of the canvas.' },
+        },
+        required: ['canvas_id', 'content'],
+      },
+    },
+    handler: async (args) => {
+      if (typeof args.canvas_id !== 'string' || !args.canvas_id) {
+        return { ok: false, result: JSON.stringify({ ok: false, error: 'canvas_id is required' }) };
+      }
+      if (typeof args.content !== 'string' || !args.content) {
+        return { ok: false, result: JSON.stringify({ ok: false, error: 'content is required' }) };
+      }
+      return canvasCall({ action: 'update', canvasId: args.canvas_id, content: args.content });
+    },
+  },
+  {
+    schema: {
+      name: 'canvas_read',
+      description: 'Read one canvas in full: its title, text and when it last changed.',
+      input_schema: {
+        type: 'object',
+        properties: { canvas_id: { type: 'string', description: 'Canvas id from canvas_list or canvas_create.' } },
+        required: ['canvas_id'],
+      },
+    },
+    handler: async (args) => {
+      if (typeof args.canvas_id !== 'string' || !args.canvas_id) {
+        return { ok: false, result: JSON.stringify({ ok: false, error: 'canvas_id is required' }) };
+      }
+      return canvasCall({ action: 'read', canvasId: args.canvas_id });
+    },
+  },
+  {
+    schema: {
+      name: 'canvas_list',
+      description: 'List every canvas in the house with its id and title, so you can find one to read or update.',
+      input_schema: { type: 'object', properties: {}, required: [] },
+    },
+    handler: async () => canvasCall({ action: 'list' }),
+  },
+
+  // 23. react_to_message → POST /internal/react (what `sc react` sends)
+  {
+    schema: {
+      name: 'react_to_message',
+      description:
+        "Put an emoji reaction on one of the operator's messages in THIS chat (not Discord; use discord_add_reaction there). target 'last' is her most recent message, 'last-2' the one before it, and so on. Set remove to take a reaction of yours back off.",
+      input_schema: {
+        type: 'object',
+        properties: {
+          emoji: { type: 'string', description: 'The emoji to react with, e.g. ❤️.' },
+          target: { type: 'string', description: "Which of her messages: 'last', 'last-2', 'last-3'. Omit for 'last'." },
+          remove: { type: 'boolean', description: 'true to remove this reaction instead of adding it.' },
+        },
+        required: ['emoji'],
+      },
+    },
+    handler: async (args) => {
+      if (typeof args.emoji !== 'string' || !args.emoji.trim()) {
+        return { ok: false, result: JSON.stringify({ ok: false, error: 'emoji is required' }) };
+      }
+      const target = typeof args.target === 'string' && args.target ? args.target : 'last';
+      if (!/^last(-[1-9][0-9]*)?$/.test(target)) {
+        return { ok: false, result: JSON.stringify({ ok: false, error: "target must be 'last', 'last-2', 'last-3' and so on" }) };
+      }
+      const threadId = ctxThreadId();
+      if (!threadId) {
+        return { ok: false, result: JSON.stringify({ ok: false, error: 'no chat thread for this turn, so there is no message to react to' }) };
+      }
+      const body: Record<string, unknown> = { emoji: args.emoji, target, threadId };
+      if (args.remove === true) body.action = 'remove';
+      try {
+        const r = await postInternal('react', body);
+        if (!r.ok) return { ok: false, result: JSON.stringify({ ok: false, error: errorFrom(r) }) };
+        const j = r.json as { messageId?: string };
+        return { ok: true, result: JSON.stringify({ ok: true, reacted: args.remove === true ? 'removed' : 'added', emoji: args.emoji, messageId: j?.messageId }) };
+      } catch (e) {
+        return { ok: false, result: JSON.stringify({ ok: false, error: errMessage(e) }) };
+      }
+    },
+  },
+
+  // 24. schedule_wakes → POST /internal/orchestrator (what `sc schedule` sends)
+  {
+    schema: {
+      name: 'schedule_wakes',
+      description:
+        "See or change the house's wake schedule: the times you are woken on your own with a prompt. status lists every wake with its schedule and whether it is on. enable/disable turn one wake on or off. reschedule gives one wake a new cron time.",
+      input_schema: {
+        type: 'object',
+        properties: {
+          action: { type: 'string', enum: ['status', 'enable', 'disable', 'reschedule'] },
+          wake_type: { type: 'string', description: 'Which wake, by its name from status. Needed for everything but status.' },
+          cron: { type: 'string', description: "reschedule: five-field cron expression, e.g. '0 8 * * *' for 8:00 every day." },
+        },
+        required: ['action'],
+      },
+    },
+    handler: async (args) => {
+      const action = args.action;
+      if (action !== 'status' && action !== 'enable' && action !== 'disable' && action !== 'reschedule') {
+        return fail("action must be 'status', 'enable', 'disable' or 'reschedule'");
+      }
+      const body: Record<string, unknown> = { action };
+      if (action !== 'status') {
+        if (typeof args.wake_type !== 'string' || !args.wake_type) return fail('wake_type is required');
+        body.wakeType = args.wake_type;
+      }
+      if (action === 'reschedule') {
+        if (typeof args.cron !== 'string' || !args.cron.trim()) return fail('cron is required to reschedule');
+        body.cronExpr = args.cron;
+      }
+      return internalCall('orchestrator', body);
+    },
+  },
+
+  // 25. timer → POST /internal/timer (what `sc timer` sends)
+  {
+    schema: {
+      name: 'timer',
+      description:
+        'A reminder for yourself in this chat: at the time you set, you are woken here with the label and context you left. create sets one, list shows the ones still waiting, cancel removes one. Use it when the operator asks to be reminded, or to come back to something later.',
+      input_schema: {
+        type: 'object',
+        properties: {
+          action: { type: 'string', enum: ['create', 'list', 'cancel'] },
+          label: { type: 'string', description: 'create: what the reminder is.' },
+          context: { type: 'string', description: 'create: anything you will want to know when it fires.' },
+          fire_at: { type: 'string', description: 'create: when, as an ISO date-time with offset, e.g. 2026-03-01T18:30:00-05:00.' },
+          prompt: { type: 'string', description: 'create: optional exact words to be woken with.' },
+          timer_id: { type: 'string', description: 'cancel: the id from create or list.' },
+        },
+        required: ['action'],
+      },
+    },
+    handler: async (args) => {
+      if (args.action === 'list') return internalCall('timer', { action: 'list' });
+      if (args.action === 'cancel') {
+        if (typeof args.timer_id !== 'string' || !args.timer_id) return fail('timer_id is required to cancel');
+        return internalCall('timer', { action: 'cancel', timerId: args.timer_id });
+      }
+      if (args.action !== 'create') return fail("action must be 'create', 'list' or 'cancel'");
+      if (typeof args.label !== 'string' || !args.label.trim()) return fail('label is required');
+      if (typeof args.fire_at !== 'string' || Number.isNaN(new Date(args.fire_at).getTime())) {
+        return fail('fire_at must be an ISO date-time');
+      }
+      const threadId = ctxThreadId();
+      if (!threadId) return fail('no chat thread for this turn, so there is nowhere for the timer to wake you');
+      const body: Record<string, unknown> = { action: 'create', label: args.label, fireAt: args.fire_at, threadId };
+      if (typeof args.context === 'string' && args.context) body.context = args.context;
+      if (typeof args.prompt === 'string' && args.prompt) body.prompt = args.prompt;
+      return internalCall('timer', body);
+    },
+  },
+
+  // 26. star_message → POST /internal/star (what `sc star` sends)
+  {
+    schema: {
+      name: 'star_message',
+      description:
+        "Star a message in this chat so it is kept among the favourites, or take your star back off. target 'last' is the most recent message of anyone's, 'last-2' the one before, and so on (your own lines count).",
+      input_schema: {
+        type: 'object',
+        properties: {
+          target: { type: 'string', description: "Which message: 'last', 'last-2', 'last-3'. Omit for 'last'." },
+          by: { type: 'string', description: "Your companion slug, e.g. 'companion-a' or 'companion-b', so the star is yours." },
+          remove: { type: 'boolean', description: 'true to remove your star instead of adding it.' },
+        },
+        required: [],
+      },
+    },
+    handler: async (args) => {
+      const target = typeof args.target === 'string' && args.target ? args.target : 'last';
+      if (!LAST_TARGET.test(target)) return fail("target must be 'last', 'last-2', 'last-3' and so on");
+      const threadId = ctxThreadId();
+      if (!threadId) return fail('no chat thread for this turn, so there is no message to star');
+      const body: Record<string, unknown> = { target, threadId };
+      if (typeof args.by === 'string' && args.by.trim()) body.starredBy = args.by.trim();
+      if (args.remove === true) body.action = 'remove';
+      return internalCall('star', body);
+    },
+  },
+
+  // 27-28. impulse, watcher → POST /internal/trigger (what `sc impulse` / `sc watch` send)
+  triggerTool(
+    'impulse',
+    'impulse',
+    'A one-time "when this happens, do that" for yourself: when its conditions are all true you are woken once in this chat with your prompt, then it is spent. create sets one, list shows those waiting, cancel removes one. Example: say something the next time she comes back online.',
+  ),
+  triggerTool(
+    'watcher',
+    'watcher',
+    'A repeating version of impulse: each time its conditions become true you are woken in this chat with your prompt, then it rests for cooldown_minutes before it can fire again. create sets one, list shows those running, cancel removes one.',
+  ),
+
+  // 29. telegram_send → POST /internal/telegram-send (what `sc tg` sends).
+  // A photo or document is taken from a web address only; sending a file from
+  // disk stays with the engines that have files.
+  {
+    schema: {
+      name: 'telegram_send',
+      description:
+        "Reach the operator on Telegram, outside this chat. type 'text' sends a message; 'voice' speaks your text as a voice note ([tone tags] allowed); 'gif' searches for a GIF and sends it; 'photo' or 'document' sends one from a web address; 'react' puts an emoji on a Telegram message. Fails plainly if Telegram is not connected.",
+      input_schema: {
+        type: 'object',
+        properties: {
+          type: { type: 'string', enum: ['text', 'voice', 'gif', 'photo', 'document', 'react'] },
+          text: { type: 'string', description: 'text, voice: the words.' },
+          voice: { type: 'string', enum: ['companion-a', 'companion-b'], description: 'voice: whose voice. Omit for the house default.' },
+          query: { type: 'string', description: 'gif: what to search for.' },
+          url: { type: 'string', description: 'photo, document: the web address of the file.' },
+          filename: { type: 'string', description: 'document: the name it should arrive with.' },
+          caption: { type: 'string', description: 'gif, photo, document: optional caption.' },
+          target: { type: 'string', description: "react: which Telegram message, 'last', 'last-2' and so on." },
+          emoji: { type: 'string', description: 'react: the emoji.' },
+        },
+        required: ['type'],
+      },
+    },
+    handler: async (args) => {
+      const type = args.type;
+      const str = (key: string): string | undefined =>
+        typeof args[key] === 'string' && (args[key] as string).trim() ? (args[key] as string) : undefined;
+      if (type === 'text' || type === 'voice') {
+        if (!str('text')) return fail('text is required');
+        const body: Record<string, unknown> = { type, text: str('text') };
+        if (type === 'voice' && (args.voice === 'companion-a' || args.voice === 'companion-b')) body.voice = args.voice;
+        return internalCall('telegram-send', body, type === 'voice' ? 120000 : 30000);
+      }
+      if (type === 'gif') {
+        if (!str('query')) return fail('query is required');
+        return internalCall('telegram-send', { type, query: str('query'), ...(str('caption') ? { caption: str('caption') } : {}) });
+      }
+      if (type === 'photo' || type === 'document') {
+        const url = str('url');
+        if (!url || !/^https?:\/\//i.test(url)) return fail('url is required and must be a web address');
+        const body: Record<string, unknown> = { type, url };
+        if (str('caption')) body.caption = str('caption');
+        if (type === 'document') body.filename = str('filename') ?? 'file';
+        return internalCall('telegram-send', body);
+      }
+      if (type === 'react') {
+        if (!str('target') || !str('emoji')) return fail('target and emoji are required');
+        return internalCall('telegram-send', { type, target: str('target'), emoji: str('emoji') }, 10000);
+      }
+      return fail("type must be 'text', 'voice', 'gif', 'photo', 'document' or 'react'");
+    },
+  },
+
+  // 30. search_backfill → POST /internal/embed-backfill (what `sc backfill` sends)
+  {
+    schema: {
+      name: 'search_backfill',
+      description:
+        'The catch-up job for search by meaning: older messages that were never indexed cannot be found by search_messages until this has run. status shows how many are indexed and how many remain. start runs the job in the background in small batches. stop halts it. It only reads messages and writes their index; no chat is changed.',
+      input_schema: {
+        type: 'object',
+        properties: {
+          action: { type: 'string', enum: ['status', 'start', 'stop'] },
+          batch_size: { type: 'number', description: 'start: messages per batch (default 50, at most 200).' },
+          interval_ms: { type: 'number', description: 'start: pause between batches in milliseconds (default 5000, at least 1000).' },
+        },
+        required: ['action'],
+      },
+    },
+    handler: async (args) => {
+      if (args.action === 'status') return internalCall('embed-backfill', { action: 'status' }, 10000);
+      if (args.action === 'stop') return internalCall('embed-backfill', { action: 'stop' }, 10000);
+      if (args.action !== 'start') return fail("action must be 'status', 'start' or 'stop'");
+      const batchSize = typeof args.batch_size === 'number' && args.batch_size >= 1 ? Math.floor(args.batch_size) : 50;
+      const intervalMs = typeof args.interval_ms === 'number' && args.interval_ms >= 1 ? Math.floor(args.interval_ms) : 5000;
+      return internalCall('embed-backfill', { background: true, batchSize, intervalMs }, 10000);
+    },
+  },
+
+  // Google Docs is a house-owned OAuth bridge so every foreign model lane
+  // receives the same controlled doorway. Reads are allowed on wakes; writes
+  // require an interactive owner message that explicitly asks to change Docs.
+  {
+    schema: {
+      name: 'google_docs_search',
+      description: 'Search the owner-connected Google Drive for native Google Docs by title or content. Read-only. Use before read when only a title or topic is known.',
+      input_schema: { type: 'object', properties: { query: { type: 'string' }, limit: { type: 'number', minimum: 1, maximum: 25 } }, required: ['query'] },
+    },
+    handler: async (args) => {
+      if (typeof args.query !== 'string' || !args.query.trim()) return fail('query is required');
+      const files = await searchGoogleDocs(args.query, typeof args.limit === 'number' ? args.limit : 10);
+      return { ok: true, result: JSON.stringify({ ok: true, files }) };
+    },
+  },
+  {
+    schema: {
+      name: 'google_docs_read',
+      description: 'Read one native Google Doc from the owner-connected Drive. Read-only. Use the document ID returned by google_docs_search.',
+      input_schema: { type: 'object', properties: { document_id: { type: 'string' } }, required: ['document_id'] },
+    },
+    handler: async (args) => {
+      if (typeof args.document_id !== 'string') return fail('document_id is required');
+      return { ok: true, result: JSON.stringify({ ok: true, document: await readGoogleDoc(args.document_id) }) };
+    },
+  },
+  {
+    schema: {
+      name: 'google_docs_create',
+      description: 'Create a native Google Doc only when the owner explicitly asks in the current interactive message. Autonomous wakes are forbidden from writing.',
+      input_schema: { type: 'object', properties: { title: { type: 'string' }, content: { type: 'string' } }, required: ['title'] },
+    },
+    handler: async (args) => {
+      const ctx = getBeltContext();
+      const explicit = ctx?.rawOwnerMessageText && /\b(create|make|write|save|put|add)\b[\s\S]{0,80}\b(doc|docs|drive|second brain)\b/i.test(ctx.rawOwnerMessageText);
+      if (ctx?.isAutonomous || !explicit) return fail('Google Docs writes require an explicit request in the current interactive owner message.');
+      if (typeof args.title !== 'string' || !args.title.trim()) return fail('title is required');
+      const doc = await createGoogleDoc(args.title, typeof args.content === 'string' ? args.content : '');
+      return { ok: true, result: JSON.stringify({ ok: true, document: doc }) };
+    },
+  },
+  {
+    schema: {
+      name: 'google_docs_append',
+      description: 'Append text to an existing native Google Doc only when the owner explicitly asks in the current interactive message. Never available to autonomous wakes.',
+      input_schema: { type: 'object', properties: { document_id: { type: 'string' }, text: { type: 'string' } }, required: ['document_id', 'text'] },
+    },
+    handler: async (args) => {
+      const ctx = getBeltContext();
+      const explicit = ctx?.rawOwnerMessageText && /\b(append|add|update|write|save|put)\b[\s\S]{0,80}\b(doc|docs|drive|second brain|it)\b/i.test(ctx.rawOwnerMessageText);
+      if (ctx?.isAutonomous || !explicit) return fail('Google Docs writes require an explicit request in the current interactive owner message.');
+      if (typeof args.document_id !== 'string' || typeof args.text !== 'string' || !args.text) return fail('document_id and text are required');
+      const result = await appendGoogleDoc(args.document_id, args.text);
+      return { ok: true, result: JSON.stringify({ ok: true, document: result }) };
+    },
+  },
+
 ];
 
 /** Belt tool schemas, in menu order — merged FIRST into getRouterTools(). */

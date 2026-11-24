@@ -5,7 +5,7 @@ import type { OneOffRef } from './one-off-refs';
 
 export type ThemeMode = 'light' | 'dark';
 export type ViewMode = 'generate' | 'edit' | 'draw' | 'refs' | 'settings';
-export type StudioSection = 'create' | 'gif' | 'cutout' | 'gallery';
+export type StudioSection = 'create' | 'gallery';
 export type Backend = 'codex' | 'antigravity' | 'openart';
 export type DrawTool = 'brush' | 'eraser';
 export type AspectRatioValue =
@@ -19,7 +19,12 @@ export interface StudioPoint {
   y: number;
 }
 
+export interface SubjectDescription { slug: string; description: string; }
+
 export interface GeneratedImage {
+  subjectDescriptions?: SubjectDescription[];
+  imageModelId?: string;
+  styleTitle?: string;
   id: string;
   src: string;
   prompt: string;
@@ -54,6 +59,7 @@ export interface RefDrawer {
   label: string;
   isDefault: boolean;
   emoji?: string;
+  description?: string;
   refs: Array<{ filename: string; url: string }>;
 }
 
@@ -196,6 +202,7 @@ export interface RefsPanelProps extends StudioPanelProps {
   handleRefFileChange: (slug: string, e: ChangeEvent<HTMLInputElement>) => void;
   deleteRefImage: (slug: string, filename: string) => Promise<void>;
   renameDrawer: (slug: string, label: string, emoji?: string) => Promise<boolean>;
+  saveDescription: (slug: string, description: string) => Promise<void>;
   deleteDrawer: (slug: string) => Promise<void>;
   newDrawerName: string;
   setNewDrawerName: (v: string) => void;

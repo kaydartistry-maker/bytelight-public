@@ -6,7 +6,7 @@
  * OpenAI key never comes back: the server only says whether one is saved
  * (hasOpenaiKey), and the UI never shows it.
  */
-export const STUDIO_ENGINES = ['codex', 'openai', 'cloudflare', 'antigravity', 'openart'] as const;
+export const STUDIO_ENGINES = ['codex', 'openai', 'openrouter', 'cloudflare', 'antigravity', 'openart'] as const;
 export type StudioEngine = typeof STUDIO_ENGINES[number];
 
 export interface StudioSettings {
@@ -17,6 +17,7 @@ export interface StudioSettings {
   openaiModel: string;
   monthlyBudgetUsd: number;
   hasOpenaiKey: boolean;
+  hasOpenRouterKey: boolean;
   antigravityModel?: string;
   openartModel?: string;
 }
@@ -24,6 +25,7 @@ export interface StudioSettings {
 export const ENGINE_HINTS: Record<StudioEngine, string> = {
   codex: 'Rides your ChatGPT subscription — no per-image cost. Size and quality aren\'t pinned here — just ask for a shape, or leave it to us (like the GPT app).',
   openai: 'Metered OpenAI API — a few cents per image.',
+  openrouter: 'OpenAI images through your existing OpenRouter connection · metered.',
   cloudflare: 'Cloudflare Flux via the ImageGen MCP — set its endpoint to enable.',
   antigravity: 'Antigravity · Gemini via the agy CLI — rides that subscription.',
   openart: 'OpenArt — its own service (not OpenAI), authorized via the OpenArt MCP; metered in OpenArt credits.',
@@ -61,6 +63,7 @@ export function parseStudioSettings(value: unknown): { settings: StudioSettings 
       openaiModel: typeof s.openaiModel === 'string' ? s.openaiModel : 'gpt-image-2',
       monthlyBudgetUsd: typeof s.monthlyBudgetUsd === 'number' ? s.monthlyBudgetUsd : 0,
       hasOpenaiKey: s.hasOpenaiKey === true,
+      hasOpenRouterKey: s.hasOpenRouterKey === true,
       antigravityModel: typeof s.antigravityModel === 'string' ? s.antigravityModel : undefined,
       openartModel: typeof s.openartModel === 'string' ? s.openartModel : undefined,
     },

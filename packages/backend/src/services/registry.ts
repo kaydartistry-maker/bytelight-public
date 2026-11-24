@@ -29,6 +29,8 @@ export interface ExtendedWebSocket extends WebSocket {
   messageCount: number;
   messageWindowStart: number;
   prosodyAbort: AbortController | null;
+  /** Live Hume tone sidecar for the current conversation-mode utterance, if opted in. */
+  realtimeProsody?: import('./hume-realtime-prosody.js').RealtimeProsodySession | null;
   missedPongs: number; // Track consecutive missed pongs for hidden clients
   lastPongAt: number; // Timestamp of last pong received
 }

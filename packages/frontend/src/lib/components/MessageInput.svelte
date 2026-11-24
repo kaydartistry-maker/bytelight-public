@@ -31,7 +31,7 @@
     oncancelreply,
     onstop,
     oncall,
-  } = $props<{
+  }: {
     replyTo?: Message | null;
     isStreaming?: boolean;
     activeThreadId?: string | null;
@@ -39,7 +39,7 @@
     oncancelreply?: () => void;
     onstop?: () => void;
     oncall?: () => void;
-  }>();
+  } = $props();
 
   let textarea: HTMLTextAreaElement;
   let fileInput: HTMLInputElement;

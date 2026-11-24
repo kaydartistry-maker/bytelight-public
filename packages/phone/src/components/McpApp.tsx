@@ -53,7 +53,7 @@ export function McpApp({ onClose, themeConfig, themeMode, embedded }: McpAppProp
         </button>
       }
     >
-      <div className={card}>
+      <div data-appearance-card="" className={card}>
         <div className="flex items-center gap-2 mb-2">
           <Server size={15} className={colors.textMuted} />
           <span className={label}>SDK Servers</span>
@@ -174,7 +174,7 @@ function McpActivityFeed({
   }, []);
 
   return (
-    <div className={card}>
+    <div data-appearance-card="" className={card}>
       <div className="flex items-center justify-between mb-2">
         <div className="flex items-center gap-2">
           <Server size={15} className={colors.textMuted} />

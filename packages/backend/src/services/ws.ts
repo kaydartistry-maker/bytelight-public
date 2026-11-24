@@ -1,4 +1,6 @@
 import { WebSocketServer, WebSocket } from 'ws';
+import { sameMessageEnvelope } from './message-envelope.js';
+import { isPreservedCloudThread } from './native-history.js';
 import { IncomingMessage, Server as HTTPServer } from 'http';
 import type { Socket } from 'net';
 import { parse as parseCookie } from 'cookie';
@@ -281,6 +283,7 @@ export function createWebSocketServer(server: HTTPServer, agentService?: AgentSe
     extWs.messageCount = 0;
     extWs.messageWindowStart = Date.now();
     extWs.prosodyAbort = null;
+    extWs.realtimeProsody = null;
     extWs.missedPongs = 0;
     extWs.lastPongAt = Date.now();
 
@@ -588,6 +591,8 @@ export function createWebSocketServer(server: HTTPServer, agentService?: AgentSe
         extWs.prosodyAbort.abort();
         extWs.prosodyAbort = null;
       }
+      extWs.realtimeProsody?.abort();
+      extWs.realtimeProsody = null;
       if (extWs.transcriptionAbort) {
         extWs.transcriptionAbort.abort();
         extWs.transcriptionAbort = null;
@@ -668,7 +673,7 @@ export function planDispatchOrder(roster: ReadonlyArray<Pick<Companion, 'brain'>
   return brains;
 }
 
-async function handleMessageSend(
+export async function handleMessageSend(
   msg: Extract<ClientMessage, { type: 'message' }>,
   ws: ExtendedWebSocket,
   agentService: AgentService
@@ -678,6 +683,12 @@ async function handleMessageSend(
   const clientId = msg.clientId;
   const existing = clientId ? getMessageByClientId(clientId) : null;
   if (clientId && existing) {
+    if (!sameMessageEnvelope(existing, msg)) {
+      ws.send(JSON.stringify({ type: 'error', code: 'client_id_conflict',
+        message: 'Pending message identity conflicts with a stored message',
+        clientId, delivery: 'rejected' }));
+      return;
+    }
     ws.send(JSON.stringify({
       type: 'message_ack', clientId, messageId: existing.id,
       threadId: existing.thread_id, status: 'duplicate',
@@ -700,6 +711,11 @@ async function handleMessageSend(
 
   if (!thread) {
     sendError(ws, 'thread_not_found', 'Thread not found');
+    return;
+  }
+
+  if (isPreservedCloudThread(thread.id)) {
+    sendError(ws, 'legacy_history_read_only', 'This preserved Cloud conversation is read-only. Start a new native conversation to continue.');
     return;
   }
 
@@ -984,6 +1000,12 @@ export async function recoverCutOffTurns(agentService: AgentService): Promise<vo
   const userName = getBytelightConfig().identity.user_name;
   console.log(`[turn-leases] Picking up ${leases.length} turn${leases.length === 1 ? '' : 's'} a restart cut off`);
   for (const lease of leases) {
+    // Historical remote turns may already have executed. Never replay them
+    // through the native engine merely because this installation changed lanes.
+    if (isPreservedCloudThread(lease.threadId)) {
+      releaseTurn(lease.id);
+      continue;
+    }
     const thread = getThread(lease.threadId);
     if (!thread) {
       releaseTurn(lease.id);
@@ -1135,7 +1157,12 @@ function discardActiveCapture(ws: ExtendedWebSocket): void {
   ws.voiceAudioChunkCount = 0;
   ws.voiceAnalyzeToneRequested = false;
   ws.activeRecordingId = null;
+  ws.realtimeProsody?.abort();
+  ws.realtimeProsody = null;
 }
+
+// How long a finished utterance waits for Hume's live tone scores.
+const REALTIME_PROSODY_WAIT_MS = 1_800;
 
 function handleVoiceStart(
   ws: ExtendedWebSocket,
@@ -1148,21 +1175,33 @@ function handleVoiceStart(
   ws.transcriptionAbort = null;
   ws.prosodyAbort?.abort();
   ws.prosodyAbort = null;
+  ws.realtimeProsody?.abort();
+  ws.realtimeProsody = null;
   ws.audioChunks = [];
   ws.audioBytes = 0;
   ws.voiceAudioChunkCount = 0;
   ws.isRecording = true;
   ws.audioMimeType = safeAudioMimeType(msg.mimeType);
   ws.voiceCaptureMode = msg.mode || 'dictation';
-  // Tone analysis is accepted and stored, but byte-light's batch-Hume prosody
-  // is vendor-dead (gated behind VOICE_LEGACY_HUME_BATCH). Realtime prosody
-  // sessions are a later slice; here analyzeTone degrades silently and, when
-  // requested, is reported as 'unavailable' rather than surfacing an error.
+  // Tone is a conversation-mode opt-in. It runs on Hume's live EVI stream;
+  // the old batch API stays dead.
+  // Without a Hume key the request is still honoured as 'unavailable'.
   ws.voiceAnalyzeToneRequested = (
     ws.voiceCaptureMode === 'conversation'
     && msg.analyzeTone === true
   );
   ws.activeRecordingId = typeof msg.recordingId === 'string' ? msg.recordingId : null;
+
+  if (ws.voiceAnalyzeToneRequested && voiceServiceInstance?.canAnalyzeRealtimeProsody === true) {
+    try {
+      // Open before the first MediaRecorder blob so EVI receives a continuous
+      // live WebM stream. The phone cancels silent starts after ten seconds.
+      ws.realtimeProsody = voiceServiceInstance.createRealtimeProsodySession();
+    } catch {
+      // Tone is optional; microphone capture and transcription continue.
+      ws.realtimeProsody = null;
+    }
+  }
 }
 
 function handleVoiceAudio(
@@ -1193,6 +1232,7 @@ function handleVoiceAudio(
 
   ws.audioChunks.push(chunk);
   ws.audioBytes += chunk.length;
+  ws.realtimeProsody?.pushAudio(chunk);
 }
 
 async function handleVoiceStop(
@@ -1207,8 +1247,13 @@ async function handleVoiceStop(
   const toneRequested = ws.voiceAnalyzeToneRequested;
   ws.voiceAudioChunkCount = 0;
   ws.voiceAnalyzeToneRequested = false;
+  // This utterance's live tone sidecar now belongs to this stop; a newer
+  // voice_start opens its own.
+  const realtimeProsody = ws.realtimeProsody ?? null;
+  ws.realtimeProsody = null;
 
   if (ws.audioChunks.length === 0) {
+    realtimeProsody?.abort();
     const statusMsg: ServerMessage = {
       type: 'transcription_status',
       status: 'error',
@@ -1234,6 +1279,7 @@ async function handleVoiceStop(
   ws.audioBytes = 0;
 
   if (!voiceServiceInstance?.canTranscribe) {
+    realtimeProsody?.abort();
     const errorMsg: ServerMessage = {
       type: 'transcription_status',
       status: 'error',
@@ -1257,16 +1303,21 @@ async function handleVoiceStop(
     const prosodyAbort = new AbortController();
     ws.prosodyAbort = prosodyAbort;
 
-    // Fire Whisper + Hume in parallel — prosody is enrichment, not critical path
-    const [transcript, prosody] = await Promise.all([
-      voiceServiceInstance.transcribe(audioBuffer, ws.audioMimeType),
-      voiceServiceInstance.canAnalyzeProsody
+    // Fire Whisper + Hume in parallel — prosody is enrichment, not critical
+    // path. A live call's tone comes from its EVI sidecar (bounded wait);
+    // dictation only ever uses the legacy batch path, which is off by default.
+    const prosodyPromise: Promise<Record<string, number> | null> = realtimeProsody
+      ? realtimeProsody.finish(REALTIME_PROSODY_WAIT_MS).catch(() => null)
+      : voiceServiceInstance.canAnalyzeProsody
         ? voiceServiceInstance.analyzeProsody(audioBuffer, ws.audioMimeType, prosodyAbort.signal).catch(err => {
             if (err?.name === 'AbortError') return null;
             console.warn('[Voice] Prosody analysis failed (continuing):', err);
             return null;
           })
-        : Promise.resolve(null),
+        : Promise.resolve(null);
+    const [transcript, prosody] = await Promise.all([
+      voiceServiceInstance.transcribe(audioBuffer, ws.audioMimeType),
+      prosodyPromise,
     ]);
 
     // A newer voice_start superseded this turn while we were transcribing;
@@ -1311,14 +1362,14 @@ async function handleVoiceStop(
       status: 'complete',
       text: transcript,
       ...(prosody && { prosody }),
-      // When tone was requested we always report status. byte-light's batch
-      // prosody is vendor-dead, so this resolves to 'unavailable' unless the
-      // legacy Hume path is explicitly enabled and returns scores.
+      // When tone was requested we always report status: 'complete' when the
+      // live EVI sidecar returned scores, 'unavailable' otherwise.
       ...(toneRequested && { prosodyStatus: prosody ? 'complete' : 'unavailable' }),
       ...(recordingId && { recordingId }),
     };
     ws.send(JSON.stringify(completeMsg));
   } catch (error) {
+    realtimeProsody?.abort();
     console.error('[Voice] Transcription error:', error);
     const errorMsg: ServerMessage = {
       type: 'transcription_status',
@@ -1352,6 +1403,8 @@ function handleVoiceCancel(
   ws.transcriptionAbort = null;
   ws.prosodyAbort?.abort();
   ws.prosodyAbort = null;
+  ws.realtimeProsody?.abort();
+  ws.realtimeProsody = null;
 }
 
 function handleVoiceMode(

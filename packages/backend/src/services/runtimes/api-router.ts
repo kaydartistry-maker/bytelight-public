@@ -71,6 +71,7 @@ import type {
   CapabilityKey,
   NormalizedImage,
 } from './types.js';
+import { createHash } from 'node:crypto';
 import type { ProviderId, RuntimeId } from '@bytelight/shared';
 import { errMessage } from '../../util/errors.js';
 
@@ -168,8 +169,19 @@ function providerIdToRouterProvider(providerId: ProviderId): string {
     case 'claude':       return 'anthropic'; // routing='api' Claude direct
     case 'claude-cli':   return 'anthropic'; // exhaustiveness only — CLI lane dispatches via InteractiveCliRuntime, never the api-router (no [1m] handling touched)
     case 'codex-cli':    return 'codex';     // exhaustiveness only — codex-cli lane dispatches via InteractiveCodexRuntime (warm daemon), never the api-router (H2)
+    case 'gemini-cli':   return 'gemini';    // exhaustiveness only — Antigravity CLI has its own runtime
+    case 'zai':          return 'anthropic'; // exhaustiveness only — GLM uses its isolated Claude-SDK lane
     case 'openai-codex': return 'codex';     // throws in resolveProvider (Step 6B)
   }
+}
+
+/**
+ * OpenRouter uses session_id only as a sticky-routing/cache key. Keep raw
+ * thread names and model refs out of the provider-visible value while making
+ * it stable for every turn on the same thread + model lane.
+ */
+export function openRouterCacheSessionId(threadId: string, modelRef: string): string {
+  return `bl-${createHash('sha256').update(`${threadId}\0${modelRef}`).digest('hex').slice(0, 32)}`;
 }
 
 /** Prefer provider receipts; estimate only when the provider emitted none. */
@@ -318,6 +330,9 @@ export class ApiRouterRuntime implements AgentRuntime {
     const useThinking = input.thinkingEffort
       ? (input.thinkingEffort !== 'none' && input.thinkingEffort !== 'auto')
       : false;
+    const cacheSessionId = routerProvider === 'openrouter'
+      ? openRouterCacheSessionId(input.thread.id, input.modelRef.canonical)
+      : undefined;
 
     try {
       if (effectiveTools.length > 0 && this.options.executeTool) {
@@ -337,6 +352,8 @@ export class ApiRouterRuntime implements AgentRuntime {
           effectiveTools,
           (name, args) => this.options.executeTool!(name, args),
           useThinking,
+          undefined,
+          cacheSessionId,
         )) {
           if (this.aborted) {
             yield { type: 'done', finishReason: 'aborted' };
@@ -403,7 +420,7 @@ export class ApiRouterRuntime implements AgentRuntime {
       let outputChars = 0;
       let providerUsage: Extract<AgentRuntimeEvent, { type: 'usage' }> | undefined;
 
-      for await (const streamEvent of streamInference(messages, modelId, routerProvider, config, useThinking)) {
+      for await (const streamEvent of streamInference(messages, modelId, routerProvider, config, useThinking, cacheSessionId)) {
         if (this.aborted) {
           yield { type: 'done', finishReason: 'aborted' };
           return;

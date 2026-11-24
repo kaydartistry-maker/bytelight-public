@@ -5,8 +5,24 @@ import { runtimeNeedsRouterToolPayload } from './runtime-tool-delivery.js';
 import { codexAppServerArgs } from './codex-app-server-config.js';
 import { createSingleFlight } from './single-flight.js';
 import { assertUniqueToolNames } from './mcp-bridge.js';
+import { CLAUDE_CAPABILITIES } from './runtimes/claude-sdk.js';
+import { CLAUDE_CLI_CAPABILITIES } from './heartbeat/runtime.js';
+import { CODEX_CAPABILITIES } from './runtimes/codex.js';
+import { CODEX_CLI_CAPABILITIES } from './runtimes/codex-daemon.js';
+import { GEMINI_CLI_CAPABILITIES } from './runtimes/gemini-cli.js';
+import { API_ROUTER_CAPABILITIES } from './runtimes/index.js';
 
 describe('MCP transport ownership policies', () => {
+  it('every selectable model runtime keeps a tool-capable Virelle lane', () => {
+    for (const [name, capabilities] of Object.entries({
+      claude: CLAUDE_CAPABILITIES,
+      claudeCli: CLAUDE_CLI_CAPABILITIES,
+      codex: CODEX_CAPABILITIES,
+      codexCli: CODEX_CLI_CAPABILITIES,
+      geminiCli: GEMINI_CLI_CAPABILITIES,
+      apiRouter: API_ROUTER_CAPABILITIES,
+    })) assert.equal(capabilities.tools, true, `${name} must not lose the house tools`);
+  });
   it('requires the exact private bearer credential', () => {
     assert.equal(validMcpBeltBearer(undefined, 'house-secret'), false);
     assert.equal(validMcpBeltBearer('Bearer wrong', 'house-secret'), false);

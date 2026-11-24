@@ -37,4 +37,15 @@ describe('buildEmojiSightBlock', () => {
     const boom = () => { throw new Error('db gone'); };
     assert.equal(buildEmojiSightBlock(':panda_1000089375:', boom, '/e'), '');
   });
+  it('skips an emoji the front door already sent as pictures', () => {
+    const text = 'look :panda_1000089375:\n\n[Sent to you as pictures with this message, in this order: custom emoji :panda_1000089375: (animated: 4 frames in time order, from 16).]';
+    assert.equal(buildEmojiSightBlock(text, lookup, '/e'), '');
+  });
+
+  it('still points at the file for an emoji that was not sent as a picture', () => {
+    const text = ':panda_1000089375: :qsfavs_cutecry:\n\n[Sent to you as pictures with this message, in this order: custom emoji :panda_1000089375:.]';
+    const b = buildEmojiSightBlock(text, lookup, '/e');
+    assert.doesNotMatch(b, /panda_1000089375\.gif/);
+    assert.match(b, /qsfavs_cutecry\.webp/);
+  });
 });

@@ -302,7 +302,7 @@ export function TreehouseApp({ themeConfig, themeMode, onClose, userAvatar, user
     >
       {/* Header */}
       <div className={cn('bytelight-shell-header flex items-center gap-3 px-4 pb-3', colors.pageBg)} style={{ paddingTop: 'calc(var(--sat) + 0.75rem)' }}>
-        <button onClick={onClose} className={cn('p-1 rounded-full', colors.textMuted)}>
+        <button onClick={onClose} aria-label="Back from Treehouse" className={cn('bytelight-back-button p-1 rounded-full', colors.textMuted)}>
           <ChevronLeft size={22} />
         </button>
         <div className="flex -space-x-2">

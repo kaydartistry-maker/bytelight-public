@@ -3,9 +3,9 @@
 
   let {
     ontranscript,
-  } = $props<{
+  }: {
     ontranscript?: (text: string, prosody?: Record<string, number> | null) => void;
-  }>();
+  } = $props();
 
   let recording = $state(false);
   let duration = $state(0);

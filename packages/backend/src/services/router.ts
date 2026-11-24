@@ -27,7 +27,7 @@
  * Bug notes from reference implementation tracker:
  *   - Anthropic and OpenAI use different tool calling formats — convert between them
  *   - Ollama's OpenAI-compat endpoint may fail; fall back to native /api/chat
- *   - Some models spiral on tool calls — max 5 iterations then nudge for text
+ *   - Tool loops stay bounded — default 25 iterations then nudge for text
  */
 
 import { getBytelightConfig } from '../config.js';
@@ -311,6 +311,7 @@ export async function* streamInference(
   provider: string,
   config: ProviderConfig,
   thinking = false,
+  sessionId?: string,
 ): AsyncGenerator<StreamInferenceEvent> {
   const route = await resolveProvider(provider, model, config);
   const { url, headers, isAnthropic } = route;
@@ -346,7 +347,8 @@ export async function* streamInference(
         model,
         messages: inferMsgs,
         stream: true,
-        ...(provider === 'openrouter' ? { usage: { include: true } } : {}),
+        ...(provider === 'openrouter' ? { max_tokens: thinking ? 16000 : 8192, usage: { include: true } } : {}),
+        ...(provider === 'openrouter' && sessionId ? { session_id: sessionId } : {}),
         // Reasoning models (DeepSeek R1, o-series via OpenRouter, etc.) put
         // chain-of-thought in a separate reasoning channel, not in content —
         // the <think>-tag prompt injection above cannot reach it. Ask
@@ -480,13 +482,18 @@ export async function* streamInference(
 
 /**
  * Run inference with tool calling support.
- * Handles up to MAX_ITERATIONS of tool calls, converting between
+ * Handles a bounded number of tool rounds, converting between
  * Anthropic and OpenAI tool formats as needed.
  *
  * @param executeTool - callback to execute a tool by name with args.
  *   byte-light provides this — routes to MCP servers or native tools via
  *   tools-bridge.executeRouterTool.
+ * @param maxIterations - optional caller budget, 1..100 rounds. Default 25
+ *   permits normal inspect/edit/build/readback workflows without the former
+ *   five-round truncation. The final tool-less nudge remains bounded to one.
  */
+export const DEFAULT_TOOL_ITERATIONS = 25;
+
 export async function* inferenceWithTools(
   messages: RouterMessage[],
   model: string,
@@ -495,7 +502,12 @@ export async function* inferenceWithTools(
   tools: ToolSchema[],
   executeTool: (name: string, args: Record<string, unknown>) => Promise<{ result: string; ok: boolean }>,
   thinking = false,
+  maxIterations = DEFAULT_TOOL_ITERATIONS,
+  sessionId?: string,
 ): AsyncGenerator<InferenceEvent, void, void> {
+  if (!Number.isSafeInteger(maxIterations) || maxIterations < 1 || maxIterations > 100) {
+    throw new RangeError('Tool iteration budget must be an integer from 1 to 100');
+  }
   const route = await resolveProvider(provider, model, config);
   const { url, headers, isAnthropic } = route;
   const openaiTools = toolsToOpenAI(tools);
@@ -503,9 +515,7 @@ export async function* inferenceWithTools(
   const conversation = [...messages];
   const allToolResults: ToolResult[] = [];
   let totalUsage: ProviderUsage | undefined;
-  const MAX_ITERATIONS = 5;
-
-  for (let i = 0; i < MAX_ITERATIONS; i++) {
+  for (let i = 0; i < maxIterations; i++) {
     let resp: Response;
 
     if (isAnthropic) {
@@ -533,7 +543,8 @@ export async function* inferenceWithTools(
           messages: conversation,
           tools: openaiTools.length > 0 ? openaiTools : undefined,
           tool_choice: openaiTools.length > 0 ? 'auto' : undefined,
-          ...(provider === 'openrouter' ? { usage: { include: true } } : {}),
+          ...(provider === 'openrouter' ? { max_tokens: thinking ? 16000 : 8192, usage: { include: true } } : {}),
+          ...(provider === 'openrouter' && sessionId ? { session_id: sessionId } : {}),
           ...(thinking && provider === 'openrouter' ? { reasoning: { effort: 'high' } } : {}),
           ...(isOpenAIReasoningModel(model) ? {} : { temperature: 0.8 }),
           stream: false,
@@ -647,7 +658,8 @@ export async function* inferenceWithTools(
         body: JSON.stringify({
           model,
           messages: [...conversation, { role: 'user', content: nudge }],
-          ...(provider === 'openrouter' ? { usage: { include: true } } : {}),
+          ...(provider === 'openrouter' ? { max_tokens: 4096, usage: { include: true } } : {}),
+          ...(provider === 'openrouter' && sessionId ? { session_id: sessionId } : {}),
           ...(isOpenAIReasoningModel(model) ? {} : { temperature: 0.8 }),
           stream: false,
         }),

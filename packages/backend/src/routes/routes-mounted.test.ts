@@ -109,7 +109,12 @@ test('every route module imported by api.ts is used in its body', () => {
 // boundary would work perfectly and never see a session check. Aerie shipped
 // ~60 admin endpoints answering anonymously for exactly this reason
 // (her bc77444e, found by an outside audit).
-test('only public and internal routes mount before the auth boundary', () => {
+//
+// The one deliberate exception: the Theater's Ear (routes/theater-ear.ts), a
+// browser extension with no cookie session. Its door carries its own gate:
+// every route but the one-time pairing claim requires the Ear's bearer token,
+// checked by the next test.
+test('only public and internal routes (and the bearer-gated Ear) mount before the auth boundary', () => {
   const api = readFileSync(join(ROUTES_DIR, 'api.ts'), 'utf8');
 
   const boundary = api.indexOf('router.use(authMiddleware)');
@@ -120,8 +125,17 @@ test('only public and internal routes mount before the auth boundary', () => {
 
   assert.deepEqual(
     mounts,
-    ['createPublicRoutes()', 'createInternalRoutes()'],
+    ['createPublicRoutes()', 'createInternalRoutes()', "'/theater-ear', createEarRoutes()"],
     `Mounted above the auth boundary: ${mounts.join(' · ')}. Only the public and internal routers `
-      + 'may sit above authMiddleware; anything else there answers without a session.',
+      + '(and the bearer-gated Ear) may sit above authMiddleware; anything else there answers without a session.',
   );
+});
+
+test("the Ear's door gates every route but the pairing claim behind its bearer token", () => {
+  const ear = readFileSync(join(ROUTES_DIR, 'theater-ear.ts'), 'utf8');
+  const routes = [...ear.matchAll(/router\.(get|post|put|patch|delete|all)\(\s*'([^']+)'\s*,([^\n]*)/g)]
+    .map(m => ({ method: m[1], path: m[2], rest: m[3] }));
+  assert.ok(routes.length >= 5, 'the Ear door has its routes');
+  const open = routes.filter(r => !/\bbearer\b/.test(r.rest)).map(r => `${r.method} ${r.path}`);
+  assert.deepEqual(open, ['post /claim'], `Ear routes answering without the token: ${open.join(', ')}`);
 });

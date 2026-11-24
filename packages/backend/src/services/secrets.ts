@@ -1,31 +1,8 @@
-/**
- * BYOK secrets store — a single DB-first read path for every managed
- * API key / token in byte-light.
- *
- * Storage: keys live in the existing `config` KV table under a
- * `secret:<name>` prefix, so they never collide with the agent/discord/
- * telegram config rows already in that table. No new table, no migration.
- *
- * Resolution order for `getSecret(name)`:
- *   1. DB   — `config['secret:<name>']` (the BYOK override you save here)
- *   2. env  — `process.env[def.envVar]` (faithful to the pre-BYOK .env deploy)
- *   3. base — `def.fallback()` (e.g. a bytelight.yaml provider block)
- *
- * The env + base fallbacks make this a ZERO-REGRESSION drop-in: with the
- * DB empty, every key resolves byte-for-byte the way it did before this
- * store existed. Saving a value in the DB simply wins over the fallback
- * on the NEXT read — no restart needed for call-time read seams.
- *
- * This is a single-user sovereign deployment: values are stored as
- * plaintext rows (same trust boundary as the session cookie and the DB
- * file itself). No encryption at rest by design. Values are NEVER logged.
- *
- * Pattern ported from a sibling fork's shipped secrets store; registry
- * and read seams are byte-light-native. Lineage credit in the commit body.
- */
-
-import { getConfig, setConfig, deleteConfig } from './db.js';
+/** Native encrypted DB overrides; environment and config fallbacks remain unchanged. */
+import { getConfig, deleteConfig, getDb } from './db.js';
 import { getBytelightConfig } from '../config.js';
+
+import { decryptCredential, encryptCredential, isVaultEnvelope, readVaultKey } from './credential-vault.js';
 
 const PREFIX = 'secret:';
 
@@ -61,13 +38,21 @@ export interface SecretDef {
 // keys that currently live in bytelight.yaml rather than the environment.
 export const SECRETS: SecretDef[] = [
   // ── Model providers ────────────────────────────────────────────────
-  // Model-router provider keys (OpenAI / xAI / Groq-router / OpenRouter /
-  // HuggingFace / Ollama) are intentionally NOT managed here — they live
-  // in bytelight.yaml `providers.*` and are edited on the Providers tab.
-  // The engine dispatch + catalog paths read them directly (byte-identical
-  // to upstream), so no getSecret seam reroutes provider resolution.
-  //
-  // The only provider-category entry is the read-only Anthropic info slot:
+  { name: 'provider_openai_api_key', label: 'OpenAI provider key', category: 'providers', envVar: 'OPENAI_API_KEY' },
+  { name: 'provider_openrouter_api_key', label: 'OpenRouter provider key', category: 'providers', envVar: 'OPENROUTER_API_KEY' },
+  { name: 'provider_groq_api_key', label: 'Groq provider key', category: 'providers', envVar: 'GROQ_API_KEY' },
+  { name: 'provider_xai_api_key', label: 'xAI provider key', category: 'providers', envVar: 'XAI_API_KEY' },
+  { name: 'provider_huggingface_api_key', label: 'Hugging Face provider key', category: 'providers', envVar: 'HUGGINGFACE_API_KEY' },
+  { name: 'provider_ollama_api_key', label: 'Ollama provider key', category: 'providers', envVar: 'OLLAMA_API_KEY' },
+  { name: 'provider_custom_api_key', label: 'Custom provider key', category: 'providers' },
+  { name: 'provider_anthropic_api_key', label: 'Anthropic API-router key', category: 'providers' },
+  {
+    name: 'provider_zai_coding_plan_api_key',
+    label: 'Z.ai GLM Coding Plan key',
+    category: 'providers',
+    envVar: 'ZAI_CODING_PLAN_API_KEY',
+    hint: 'Personal Coding Plan → Plan Overview. Uses plan quota, including Start trial quota.',
+  },
   {
     // Info-only: the Claude SDK authenticates via ambient ANTHROPIC_API_KEY.
     // This store DOES NOT route it — listed so the Keys UI can show its
@@ -81,6 +66,10 @@ export const SECRETS: SecretDef[] = [
     hint: 'Claude SDK ambient auth. Managed via environment only — not editable here.',
   },
 
+  { name: 'studio_openai_api_key', label: 'Studio OpenAI image key', category: 'providers', envVar: 'OPENAI_API_KEY' },
+  { name: 'studio_cloudflare_token', label: 'Studio Cloudflare image token', category: 'providers', envVar: 'IMAGEGEN_MCP_TOKEN' },
+  { name: 'auth_password', label: 'Application password', category: 'other', envVar: 'APP_PASSWORD', readonly: true },
+
   // ── Search ─────────────────────────────────────────────────────────
   {
     name: 'tavily_api_key',
@@ -88,6 +77,13 @@ export const SECRETS: SecretDef[] = [
     category: 'search',
     envVar: 'TAVILY_API_KEY',
     hint: 'tavily.com — powers the search_web tool for foreign engines',
+  },
+  {
+    name: 'opensubtitles_api_key',
+    label: 'OpenSubtitles API key',
+    category: 'search',
+    envVar: 'OPENSUBTITLES_API_KEY',
+    hint: 'opensubtitles.com/consumers — the Theater finds subtitles for a night on its own',
   },
 
   // ── Voice ──────────────────────────────────────────────────────────
@@ -144,6 +140,27 @@ export const SECRETS: SecretDef[] = [
     category: 'platforms',
     envVar: 'TELEGRAM_BOT_TOKEN',
     hint: 'Talk to @BotFather — takes effect on restart',
+  },
+  {
+    name: 'google_drive_client_id',
+    label: 'Google Drive OAuth client ID',
+    category: 'platforms',
+    envVar: 'GOOGLE_DRIVE_CLIENT_ID',
+    hint: 'Google Cloud OAuth 2.0 Web client. Used only to connect the house to Drive and Docs.',
+  },
+  {
+    name: 'google_drive_client_secret',
+    label: 'Google Drive OAuth client secret',
+    category: 'platforms',
+    envVar: 'GOOGLE_DRIVE_CLIENT_SECRET',
+    hint: 'Google Cloud OAuth client secret. Stored encrypted in the local credential vault.',
+  },
+  {
+    name: 'google_drive_refresh_token',
+    label: 'Google Drive refresh token',
+    category: 'platforms',
+    envVar: 'GOOGLE_DRIVE_REFRESH_TOKEN',
+    hint: 'Created by Connect Google Drive. Disconnecting removes this local token without changing any Docs.',
   },
 
   // ── Other ──────────────────────────────────────────────────────────
@@ -211,12 +228,17 @@ function safeConfig(pick: (c: ReturnType<typeof getBytelightConfig>) => string |
 export function getSecret(name: string): string | undefined {
   const def = BY_NAME.get(name);
 
-  // 1. DB override
-  try {
-    const stored = getConfig(PREFIX + name);
-    if (stored) return stored;
-  } catch {
-    /* DB not initialized yet — fall through to env/base */
+  // Only DB readiness is swallowed; vault errors must never select a fallback.
+  let ready = false;
+  try { getDb(); ready = true; } catch { /* pre-init compatibility */ }
+  const stored = ready ? getConfig(PREFIX + name) : null;
+  if (stored) {
+    if (!isVaultEnvelope(stored)) migrateSecrets();
+    const key = readVaultKey();
+    try {
+      const value = decryptCredential(name, getConfig(PREFIX + name)!, key);
+      if (value) return value;
+    } finally { key.fill(0); }
   }
 
   // 2. Environment variable
@@ -238,9 +260,60 @@ export function getSecret(name: string): string | undefined {
   return undefined;
 }
 
-/** Persist a BYOK override. Writes plaintext (single-user sovereign). */
+/** FULL synchronous commit replaces plaintext atomically, including unknown slots.
+ * A crash leaves the original row or the authenticated envelope, never a gap.
+ */
+export function migrateSecrets(): void {
+  const db = getDb();
+  const rowsExist = db.prepare("SELECT 1 FROM config WHERE key LIKE 'secret:%' LIMIT 1").get();
+  if (!rowsExist) return;
+  const key = readVaultKey();
+  const prior = db.pragma('synchronous', { simple: true }) as number;
+  db.pragma('synchronous = FULL');
+  try {
+    db.transaction(() => {
+      const rows = db.prepare("SELECT key, value FROM config WHERE key LIKE 'secret:%'").all() as { key: string; value: string }[];
+      for (const row of rows) {
+        const name = row.key.slice(PREFIX.length);
+        if (isVaultEnvelope(row.value)) decryptCredential(name, row.value, key);
+        else db.prepare('UPDATE config SET value = ? WHERE key = ?').run(encryptCredential(name, row.value, key), row.key);
+      }
+    }).immediate();
+  } finally { db.pragma(`synchronous = ${prior}`); key.fill(0); }
+}
+
+/** Persist an authenticated encrypted override. Key provisioning is explicit. */
 export function setSecret(name: string, value: string): void {
-  setConfig(PREFIX + name, value);
+  migrateSecrets();
+  const key = readVaultKey();
+  const db = getDb();
+  const prior = db.pragma('synchronous', { simple: true }) as number;
+  db.pragma('synchronous = FULL');
+  try {
+    db.prepare('INSERT OR REPLACE INTO config (key, value) VALUES (?, ?)').run(PREFIX + name, encryptCredential(name, value, key));
+  } finally { db.pragma(`synchronous = ${prior}`); key.fill(0); }
+}
+
+/** Save related encrypted values as one durable transaction (e.g. a keypair).
+ * Key provisioning remains explicit; this never creates a vault key. */
+export function setSecretsAtomically(values: Record<string, string>): void {
+  if (!values || typeof values !== 'object' || Array.isArray(values) || !Object.keys(values).length) throw new Error('A non-empty secret map is required');
+  for (const [name, value] of Object.entries(values)) {
+    const def = BY_NAME.get(name);
+    if (!def || def.readonly || typeof value !== 'string' || !value.trim()) throw new Error('Invalid secret entry');
+  }
+  migrateSecrets();
+  const key = readVaultKey();
+  const db = getDb();
+  const prior = db.pragma('synchronous', { simple: true }) as number;
+  try {
+    db.pragma('synchronous = FULL');
+    const encrypted = Object.entries(values).map(([name, value]) => [PREFIX + name, encryptCredential(name, value, key)]);
+    db.transaction(() => {
+      const stmt = db.prepare('INSERT OR REPLACE INTO config (key, value) VALUES (?, ?)');
+      for (const [name, value] of encrypted) stmt.run(name, value);
+    }).immediate();
+  } finally { try { db.pragma(`synchronous = ${prior}`); } finally { key.fill(0); } }
 }
 
 /** Clear a BYOK override — resolution falls back to env/base again. */

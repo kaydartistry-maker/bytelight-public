@@ -312,7 +312,7 @@ export function PreferencesApp({ onClose, themeConfig, themeMode, embedded }: Pr
   return (
     <AppShell embedded={embedded} title="Preferences" icon={SlidersHorizontal} onClose={onClose} themeConfig={themeConfig} themeMode={themeMode}>
       {/* Identity */}
-      <div className={card}>
+      <div data-appearance-card="" className={card}>
         <div className={title}>Identity</div>
         <div className="flex flex-col gap-2.5">
           <label className="flex flex-col gap-1">
@@ -336,7 +336,7 @@ export function PreferencesApp({ onClose, themeConfig, themeMode, embedded }: Pr
       </div>
 
       {/* House engine */}
-      <div className={card}>
+      <div data-appearance-card="" className={card}>
         <div className={title}>House Engine</div>
         <p className={cn('text-[11px] mb-2.5 leading-snug', colors.textMuted)}>
           What answers by default. A pick in a thread's model pill still wins in that thread.
@@ -368,7 +368,7 @@ export function PreferencesApp({ onClose, themeConfig, themeMode, embedded }: Pr
       </div>
 
       {/* How a thread with more than one companion in it actually runs. */}
-      <div className={card}>
+      <div data-appearance-card="" className={card}>
         <div className={title}>The Room</div>
         {chips(ROOM_MODES, multiLane, (v) => { if (v === 'true' && multiLaneWaitingOn) return; setMultiLane(v); })}
         {multiLaneWaitingOn && (

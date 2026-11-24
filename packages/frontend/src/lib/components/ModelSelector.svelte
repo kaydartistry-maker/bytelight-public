@@ -18,6 +18,7 @@
    */
 
   import { onMount } from 'svelte';
+  import { filterModelCatalog } from '../utils/model-catalog.js';
   import { base } from '$app/paths';
   import { apiFetch } from '../utils/api.js';
   import { getActiveThreadId } from '$lib/stores/websocket.svelte';
@@ -74,6 +75,7 @@
     // — no BYOK key). Catalog fetched from /api/models?provider=codex-cli; always
     // selectable like claude-cli (no availability status object gates it).
     { id: 'codex-cli',    label: 'Codex (CLI · subscription)', placeholder: false },
+    { id: 'zai',          label: 'Z.ai · GLM Coding Plan', placeholder: false },
     { id: 'huggingface',  label: 'HuggingFace', placeholder: true },
   ];
 
@@ -124,6 +126,7 @@
     groq: { configured: boolean };
     xai: { configured: boolean };
     openai: { configured: boolean; enabled?: boolean; url?: string };
+    zai: { configured: boolean };
     huggingface: { configured: boolean };
     'openai-codex'?: CodexAvailabilityStatus;
   }>(null);
@@ -162,20 +165,35 @@
   // Same lazy-fetch pattern as Ollama, keyed by provider id. These providers
   // gate on api_key + routing!=sdk only (no two-stage enabled flag), and their
   // model refs resolve through the generic openai-compat dispatch path.
-  type CompatProviderId = 'openrouter' | 'groq' | 'xai';
-  const COMPAT_PROVIDERS: readonly CompatProviderId[] = ['openrouter', 'groq', 'xai'];
+  type CompatProviderId = 'openrouter' | 'groq' | 'xai' | 'zai';
+  const COMPAT_PROVIDERS: readonly CompatProviderId[] = ['openrouter', 'groq', 'xai', 'zai'];
   function isCompatProvider(p: string): p is CompatProviderId {
-    return p === 'openrouter' || p === 'groq' || p === 'xai';
+    return p === 'openrouter' || p === 'groq' || p === 'xai' || p === 'zai';
   }
   let compatModels = $state<Record<CompatProviderId, Array<{ id: string; name: string }>>>({
-    openrouter: [], groq: [], xai: [],
+    openrouter: [], groq: [], xai: [], zai: [],
   });
-  let compatLoaded = $state<Record<CompatProviderId, boolean>>({ openrouter: false, groq: false, xai: false });
-  let compatLoading = $state<Record<CompatProviderId, boolean>>({ openrouter: false, groq: false, xai: false });
+  let compatLoaded = $state<Record<CompatProviderId, boolean>>({ openrouter: false, groq: false, xai: false, zai: false });
+  let compatLoading = $state<Record<CompatProviderId, boolean>>({ openrouter: false, groq: false, xai: false, zai: false });
 
   // Working draft (what the user has selected but not yet applied). Starts
   // mirrored to effective; Apply commits it via PUT.
   let draftProvider = $state<ProviderId>('claude');
+  let modelSearch = $state('');
+  function searched<T>(items: readonly T[], label: (item: T) => string, id: (item: T) => string): T[] {
+    return filterModelCatalog(items, modelSearch, label, id);
+  }
+  let catalogBusy = $derived(
+    draftProvider === 'ollama' ? ollamaLoading : draftProvider === 'openai' ? openaiLoading :
+    draftProvider === 'openai-codex' ? codexLoading || !!codexFetchError :
+    draftProvider === 'codex-cli' ? codexCliLoading || !!codexCliFetchError :
+    isCompatProvider(draftProvider) ? compatLoading[draftProvider] : false,
+  );
+  let visibleModelCount = $derived.by(() => {
+    if (draftProvider === 'claude' || draftProvider === 'claude-cli') return searched(MODEL_VARIANTS, v => v.label, v => v.modelApiId).length;
+    const models = draftProvider === 'ollama' ? ollamaModels : draftProvider === 'openai' ? openaiModels : draftProvider === 'openai-codex' ? codexModels : draftProvider === 'codex-cli' ? codexCliModels : isCompatProvider(draftProvider) ? compatModels[draftProvider] : [];
+    return searched(models, m => m.name, m => m.id).length;
+  });
   let draftModel = $state<string>('claude-sonnet-4-6');
   let draftEffort = $state<ThinkingEffort>('auto');
 
@@ -350,6 +368,7 @@
       if (!providerStatus) return false;
       return providerStatus['openai-codex']?.available === true;
     }
+    if (row.id === 'zai') return !!providerStatus?.zai.configured;
     // H3b-1: OpenAI-compat BYOK lanes (OpenRouter / Groq / xAI). Gated on
     // api_key presence (configured) AND routing != 'sdk' — matching the
     // catalog probe + dispatcher, which refuse these under routing=sdk.
@@ -410,6 +429,7 @@
       if (next) {
         effective = next;
         // Sync the draft to the effective view whenever we re-pull.
+        modelSearch = '';
         draftProvider = next.provider;
         draftModel = next.model;
         draftEffort = next.thinkingEffort;
@@ -602,6 +622,7 @@
 
   // ---------- Selection handlers (draft only) ----------
   function selectProvider(p: ProviderId) {
+    modelSearch = '';
     draftProvider = p;
     // Reset model to a sensible default per provider so the user doesn't
     // see a stale Claude id in another provider's section.
@@ -773,7 +794,7 @@
             onclick={() => enabled && selectProvider(row.id as ProviderId)}
             title={row.placeholder
               ? 'Coming soon'
-              : (row.id === 'ollama' || isCompatProvider(row.id)) && routingIsSdk
+              : (row.id === 'ollama' || (isCompatProvider(row.id) && row.id !== 'zai')) && routingIsSdk
                 ? 'Routing is SDK-only — switch routing in Settings'
                 : isCompatProvider(row.id) && providerStatus && !providerStatus[row.id].configured
                   ? 'Add an API key in Providers'
@@ -788,7 +809,7 @@
               <span class="hint">routing=sdk</span>
             {:else if row.id === 'ollama' && providerStatus && !providerStatus.ollama.enabled}
               <span class="hint">disabled</span>
-            {:else if isCompatProvider(row.id) && routingIsSdk}
+            {:else if isCompatProvider(row.id) && row.id !== 'zai' && routingIsSdk}
               <span class="hint">routing=sdk</span>
             {:else if isCompatProvider(row.id) && providerStatus && !providerStatus[row.id].configured}
               <span class="hint">add key</span>
@@ -802,10 +823,23 @@
       <!-- Model section -->
       <div class="section">
         <div class="section-title">Model</div>
+        <div class="model-search-wrap">
+          <span class="model-search-icon" aria-hidden="true">⌕</span>
+          <input
+            class="model-search"
+            type="search"
+            placeholder="Search models"
+            aria-label="Search models"
+            bind:value={modelSearch}
+          />
+        </div>
+        {#if modelSearch.trim() && !catalogBusy && visibleModelCount === 0}
+          <div class="row disabled" role="status">No matching models</div>
+        {/if}
         {#if draftProvider === 'claude' || draftProvider === 'claude-cli'}
           <!-- H1b: the CLI subscription lane runs the same Claude models as the
                SDK lane, so both share the static MODEL_VARIANTS list. -->
-          {#each MODEL_VARIANTS as variant}
+          {#each searched(MODEL_VARIANTS, v => v.label, v => v.modelApiId) as variant}
             <button
               class="row"
               class:active={draftModel === variant.modelApiId}
@@ -820,7 +854,7 @@
           {:else if ollamaModels.length === 0}
             <div class="row disabled">No Ollama models found — check provider settings</div>
           {:else}
-            {#each ollamaModels as m}
+            {#each searched(ollamaModels, m => m.name, m => m.id) as m}
               <button
                 class="row"
                 class:active={draftModel === m.id}
@@ -836,7 +870,7 @@
           {:else if openaiModels.length === 0}
             <div class="row disabled">No OpenAI chat models found — check API key/base URL.</div>
           {:else}
-            {#each openaiModels as m}
+            {#each searched(openaiModels, m => m.name, m => m.id) as m}
               <button
                 class="row"
                 class:active={draftModel === m.id}
@@ -866,7 +900,7 @@
           {:else if codexModels.length === 0}
             <div class="row disabled">No supported Codex models found</div>
           {:else}
-            {#each codexModels as m}
+            {#each searched(codexModels, m => m.name, m => m.id) as m}
               <button
                 class="row"
                 class:active={draftModel === m.id}
@@ -892,7 +926,7 @@
           {:else if codexCliModels.length === 0}
             <div class="row disabled">No Codex CLI models found</div>
           {:else}
-            {#each codexCliModels as m}
+            {#each searched(codexCliModels, m => m.name, m => m.id) as m}
               <button
                 class="row"
                 class:active={draftModel === m.id}
@@ -909,7 +943,7 @@
           {:else if compatModels[draftProvider].length === 0}
             <div class="row disabled">No models found — check API key (and routing ≠ sdk).</div>
           {:else}
-            {#each compatModels[draftProvider] as m}
+            {#each searched(compatModels[draftProvider], m => m.name, m => m.id) as m}
               <button
                 class="row"
                 class:active={draftModel === m.id}
@@ -1037,6 +1071,43 @@
     color: var(--text-muted);
     padding: 0.25rem 0.5rem 0.125rem;
     opacity: 0.6;
+  }
+
+  .model-search-wrap {
+    position: relative;
+    padding: 0.125rem 0.5rem 0.25rem;
+  }
+
+  .model-search-icon {
+    position: absolute;
+    left: 1rem;
+    top: 50%;
+    transform: translateY(-58%);
+    color: var(--text-muted);
+    opacity: 0.65;
+    pointer-events: none;
+  }
+
+  .model-search {
+    width: 100%;
+    box-sizing: border-box;
+    font: inherit;
+    font-size: 0.75rem;
+    color: var(--text-primary);
+    background: rgba(255, 255, 255, 0.045);
+    border: 1px solid var(--border, rgba(255, 255, 255, 0.12));
+    border-radius: 0.375rem;
+    padding: 0.4rem 0.625rem 0.4rem 1.65rem;
+    outline: none;
+  }
+
+  .model-search::placeholder {
+    color: var(--text-muted);
+  }
+
+  .model-search:focus {
+    border-color: rgba(245, 197, 66, 0.5);
+    box-shadow: 0 0 0 2px rgba(245, 197, 66, 0.08);
   }
 
   .target-chips {

@@ -1,0 +1,14 @@
+import { Router } from 'express';
+import { getDb } from '../services/db.js';
+import { createDoublesDiceStore } from '../services/doubles-dice.js';
+import { QuestError } from '../services/life-quests.js';
+import { companionReaction, companionRewardArtifact, companionRound } from '../services/doubles-companion.js';
+const router=Router(); let cached:ReturnType<typeof createDoublesDiceStore>|null=null;const store=()=>cached??=(createDoublesDiceStore(getDb()));
+const route=(fn:any)=>async(req:any,res:any)=>{try{res.set('Cache-Control','private, no-store');res.json(await fn(req));}catch(e){res.status(e instanceof QuestError?e.status:500).json({error:e instanceof Error?e.message:'Doubles & Dice stumbled.'});}};
+router.get('/',route(()=>store().state()));
+router.post('/start',route((req:any)=>store().start(req.body?.partner,req.body?.partnerId,req.body?.mode)));
+router.post('/round',route((req:any)=>store().begin(req.body?.yourTask,req.body?.partnerTask)));
+router.post('/companion/round',route(async(req:any)=>{const s=store().state().session;if(!s||s.mode!=='companion'||!s.partnerId)throw new QuestError('Choose a companion player first.');const round=s.rounds.length+1;const card=await companionRound(getDb(),s.partnerId,String(req.body?.yourTask??''),round);let next=store().begin(req.body?.yourTask,card.partnerTask);const id=next.session!.rounds.at(-1)!.id;store().setRoundVoice(id,{kickoff:card.kickoff});return store().setRoundArtifacts(id,{taskArtifact:card.artifact});}));
+router.post('/roll',route(async()=>{const rolled=store().roll();const s=rolled.session!,round=s.rounds.at(-1)!;if(s.mode==='companion'&&s.partnerId){const [voice,rewardArtifact]=await Promise.all([companionReaction(getDb(),s.partnerId,round.yourTask,round.partnerTask,rolled.result.total,rolled.result.reward),companionRewardArtifact(getDb(),s.partnerId,rolled.result.reward,rolled.result.total)]);store().setRoundVoice(round.id,voice);store().setRoundArtifacts(round.id,{rewardArtifact});return{...store().state(),result:rolled.result};}return rolled;}));
+router.post('/reset',route(()=>store().reset()));
+export default router;

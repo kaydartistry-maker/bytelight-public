@@ -18,6 +18,52 @@ const orchestratorMod = await import('./orchestrator.js');
 const { DEFAULT_TASKS, getDefaultWakePrompts } = orchestratorMod;
 
 describe('weekly maintenance wake registration', () => {
+  it('turns light_scan into an every-other-night App Night Watch with bounded repair rules', () => {
+    const task = DEFAULT_TASKS.find((candidate) => candidate.wakeType === 'light_scan');
+    assert.ok(task, 'light_scan missing from DEFAULT_TASKS');
+    assert.equal(task.label, 'App Night Watch');
+    assert.equal(task.cronExpr, '0 4 */2 * *');
+    assert.equal(task.category, 'wake');
+
+    const prompt = getDefaultWakePrompts('TestUser')['light_scan'];
+    assert.ok(prompt, 'light_scan default prompt missing');
+    assert.match(prompt, /one concrete defect/i);
+    assert.match(prompt, /prove the regression test fails/i);
+    assert.match(prompt, /Never restart/i);
+    assert.match(prompt, /pre-existing/i);
+    assert.match(prompt, /commit/i);
+  });
+
+  it('defines weekly Deep Work as one evidenced, substantial house improvement', () => {
+    const task = DEFAULT_TASKS.find((candidate) => candidate.wakeType === 'deep_work');
+    assert.ok(task, 'deep_work missing from DEFAULT_TASKS');
+    assert.equal(task.cronExpr, '30 2 * * 3');
+    assert.equal(task.category, 'wake');
+
+    const prompt = getDefaultWakePrompts('TestUser')['deep_work'];
+    assert.ok(prompt, 'deep_work default prompt missing');
+    assert.match(prompt, /one substantial improvement/i);
+    assert.match(prompt, /existing evidence/i);
+    assert.match(prompt, /prove.*fail/i);
+    assert.match(prompt, /Never restart/i);
+    assert.match(prompt, /pre-existing/i);
+    assert.match(prompt, /commit/i);
+    assert.match(prompt, /Maintenance Ledger/i);
+  });
+
+  it('registers a weekly read-only House Health inspection', () => {
+    const task = DEFAULT_TASKS.find((candidate) => candidate.wakeType === 'house_health');
+    assert.ok(task, 'house_health missing from DEFAULT_TASKS');
+    assert.equal(task.cronExpr, '15 3 * * 6');
+    assert.equal(task.category, 'routine');
+    const prompt = getDefaultWakePrompts('TestUser')['house_health'];
+    assert.match(prompt, /read-only safety inspection/i);
+    assert.match(prompt, /database integrity/i);
+    assert.match(prompt, /free disk space/i);
+    assert.match(prompt, /Do not repair data/i);
+    assert.match(prompt, /Maintenance Ledger/i);
+  });
+
   it('registers the daily memory diet at 04:15 as an unconditional routine', () => {
     const task = DEFAULT_TASKS.find((candidate) => candidate.wakeType === 'memory_diet');
     assert.ok(task);

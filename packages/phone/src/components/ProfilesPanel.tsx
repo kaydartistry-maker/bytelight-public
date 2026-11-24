@@ -8,6 +8,7 @@ import { cn } from '../lib/utils';
 import type { ThemeConfig } from '../lib/theme';
 import { apiFetch, loadProfiles, saveProfiles, type Profiles } from '../bytelight';
 import { useHouseRoster } from '../lib/house';
+import { fitImageToLimits } from '../lib/image-resize';
 
 interface ProfilesPanelProps {
   themeConfig: ThemeConfig;
@@ -54,8 +55,13 @@ export function ProfilesPanel({ themeConfig, themeMode }: ProfilesPanelProps) {
     setUploading(key);
     setStatus(null);
     try {
+      const prepared = await fitImageToLimits(file, {
+        maxBytes: 4 * 1024 * 1024,
+        maxDimension: 1024,
+        preferredMime: 'image/webp',
+      });
       const fd = new FormData();
-      fd.append('file', file);
+      fd.append('file', prepared.file);
       const res = await apiFetch('/api/files', { method: 'POST', body: fd });
       if (!res.ok) throw new Error(String(res.status));
       const meta = await res.json();

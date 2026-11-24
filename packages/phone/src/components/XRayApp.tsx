@@ -292,7 +292,7 @@ export function XRayApp({ onClose, themeConfig, themeMode }: XRayAppProps) {
             {saveMessage && <div className={`save-message${saveMessage.startsWith('Error') ? ' error' : ''}`}>{saveMessage}</div>}
 
             {activeSection === 'identity' && (
-              <section className="section">
+              <section data-appearance-card="" className="section">
                 <div className="section-header">
                   <h3 className="section-title">CLAUDE.md</h3>
                   <span className="section-path">{identityPath}</span>
@@ -317,7 +317,7 @@ export function XRayApp({ onClose, themeConfig, themeMode }: XRayAppProps) {
             )}
 
             {activeSection === 'memory' && (
-              <section className="section">
+              <section data-appearance-card="" className="section">
                 <div className="section-header">
                   <h3 className="section-title">Native Claude Memory</h3>
                   <span className="section-path">{nativeMemoryDir}</span>
@@ -395,7 +395,7 @@ export function XRayApp({ onClose, themeConfig, themeMode }: XRayAppProps) {
             )}
 
             {activeSection === 'wakes' && (
-              <section className="section">
+              <section data-appearance-card="" className="section">
                 <div className="section-header">
                   <h3 className="section-title">Wake Prompts</h3>
                   <span className="section-path">{wakesData?.path}</span>
@@ -433,7 +433,7 @@ export function XRayApp({ onClose, themeConfig, themeMode }: XRayAppProps) {
             )}
 
             {activeSection === 'context' && (
-              <section className="section">
+              <section data-appearance-card="" className="section">
                 <div className="section-header">
                   <h3 className="section-title">Context Injection</h3>
                   {contextInfo && <span className="section-path">live · "{contextInfo.meta.threadName}" · {contextInfo.meta.platform}</span>}
@@ -487,7 +487,7 @@ export function XRayApp({ onClose, themeConfig, themeMode }: XRayAppProps) {
             )}
 
             {activeSection === 'hooks' && (
-              <section className="section">
+              <section data-appearance-card="" className="section">
                 <div className="section-header">
                   <h3 className="section-title">Triggers &amp; Watchers</h3>
                 </div>
@@ -546,7 +546,7 @@ export function XRayApp({ onClose, themeConfig, themeMode }: XRayAppProps) {
             )}
 
             {activeSection === 'activity' && (
-              <section className="section">
+              <section data-appearance-card="" className="section">
                 <div className="section-header">
                   <h3 className="section-title">Activity</h3>
                   <span className="section-path">what the companions actually did · {filteredAudit.length} of {auditEntries.length}</span>

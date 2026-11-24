@@ -105,7 +105,7 @@ chmod 600 ~/.claude.json
 Add the OAuth token to your environment:
 
 ```bash
-echo 'export CLAUDE_CODE_OAUTH_TOKEN="sk-ant-oat01-YOUR_TOKEN_HERE"' >> ~/.bashrc
+echo 'export CLAUDE_CODE_OAUTH_TOKEN="YOUR_ANTHROPIC_TOKEN"' >> ~/.bashrc
 source ~/.bashrc
 chmod 600 ~/.bashrc
 ```
@@ -155,7 +155,7 @@ module.exports = {
     cwd: '/root/resonant',
     env: {
       NODE_ENV: 'production',
-      CLAUDE_CODE_OAUTH_TOKEN: 'sk-ant-oat01-YOUR_TOKEN_HERE',
+      CLAUDE_CODE_OAUTH_TOKEN: 'YOUR_ANTHROPIC_TOKEN',
     },
     autorestart: true,
     max_restarts: 10,

@@ -1,7 +1,7 @@
 <script lang="ts">
-  let { onselect } = $props<{
+  let { onselect }: {
     onselect?: (emoji: string) => void;
-  }>();
+  } = $props();
 
   let open = $state(false);
   let activeCategory = $state('smileys');

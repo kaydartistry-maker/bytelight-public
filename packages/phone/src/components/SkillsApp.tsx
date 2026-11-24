@@ -71,6 +71,7 @@ export function SkillsApp({ onClose, themeConfig, themeMode, embedded }: SkillsA
           {skills.map((skill) => (
             <div
               key={skill.name}
+              data-appearance-card=""
               className={cn('rounded-2xl border border-l-[3px] p-3', colors.panelBg, colors.panelBorder)}
               style={{ borderLeftColor: colors.accent }}
             >

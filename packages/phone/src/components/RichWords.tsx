@@ -11,7 +11,7 @@
 // status tags ([companion-a mood: …]) out of the room.
 import React, { useEffect, useState } from 'react';
 import { loadStickers, resolveStickerRef, subscribeStickers } from '../bytelight/stickers';
-import { prepareChatText } from '../lib/chat-text';
+import { prepareChatText, stickerSrc } from '../lib/chat-text';
 import { parseInlineMarkdown } from '../lib/utils';
 
 const STICKER = /::?([a-zA-Z0-9_-]+_[a-zA-Z0-9_-]+)::?/g;
@@ -41,7 +41,7 @@ export function isStickerImage(alt: unknown): boolean {
 export function StickerImage({ src, alt }: { src?: string; alt?: string }) {
   return (
     <img
-      src={src}
+      src={stickerSrc(src)}
       alt={alt?.replace(/^sticker:/, '') || 'sticker'}
       className="my-1 block h-24 w-auto max-w-[60%] object-contain"
       loading="lazy"

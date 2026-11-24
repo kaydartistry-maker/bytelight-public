@@ -175,7 +175,8 @@ export function WeatherApp({ onClose, themeConfig, themeMode }: WeatherAppProps)
       >
         <button
           onClick={onClose}
-          className={cn("p-1.5 rounded-full transition-colors", colors.textMuted, "hover:bg-black/10 dark:hover:bg-white/10")}
+          aria-label="Back from Weather"
+          className={cn("bytelight-back-button p-1.5 rounded-full transition-colors", colors.textMuted, "hover:bg-black/10 dark:hover:bg-white/10")}
         >
           <ChevronLeft className="w-5 h-5" />
         </button>

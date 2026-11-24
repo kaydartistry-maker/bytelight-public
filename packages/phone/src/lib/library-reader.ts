@@ -13,6 +13,28 @@ export interface MarginNote {
   createdAt: string;
 }
 
+/** Gutenberg hard-wraps lines at ~70 columns; rejoin each paragraph. */
+export function toParagraphs(text: string): string[] {
+  return text
+    .split(/\n{2,}/)
+    .map((p) => p.replace(/\s*\n\s*/g, ' ').trim())
+    .filter(Boolean);
+}
+
+/** A chapter as the house sends it: newer houses split it for us. */
+export interface ChapterText { text: string; paragraphs?: string[]; segments?: Segment[] }
+
+export function chapterParagraphs(ch: ChapterText): string[] {
+  return ch.paragraphs ?? toParagraphs(ch.text);
+}
+
+/** The read-aloud pieces; an older house that sends none reads the chapter as one. */
+export function chapterSegments(ch: ChapterText): Segment[] {
+  if (ch.segments) return ch.segments;
+  const n = chapterParagraphs(ch).length;
+  return n ? [{ from: 0, to: n - 1 }] : [];
+}
+
 /** The read-aloud piece that holds paragraph `p` (0 when there is none). */
 export function segmentForParagraph(segments: Segment[], p: number): number {
   const i = segments.findIndex((s) => p >= s.from && p <= s.to);

@@ -10,6 +10,7 @@
 import { existsSync, readFileSync, statSync } from 'fs';
 import { extname, join } from 'path';
 import { getStickerByRef } from './stickers.js';
+import { STICKER_TOKEN, resolveStickerRef } from './sticker-ref.js';
 import { PROJECT_ROOT } from '../config.js';
 import type { NormalizedImage } from './runtimes/types.js';
 
@@ -30,7 +31,6 @@ const MAX_TOTAL_IMAGE_BYTES = 25 * 1024 * 1024;
 export const MAX_IMAGES_PER_TURN = 8;
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 
-const STICKER_REF_REGEX = /:([A-Za-z0-9_-]+)_([A-Za-z0-9_-]+):/g;
 
 function mediaTypeFromPath(filePath: string): ImageBlock['source']['media_type'] | null {
   const ext = extname(filePath).toLowerCase();
@@ -65,13 +65,11 @@ export function stickerRefsToImageBlocks(text: string): ImageBlock[] {
   if (!text) return [];
   const out: ImageBlock[] = [];
   const seen = new Set<string>();
-  let match: RegExpExecArray | null;
-  STICKER_REF_REGEX.lastIndex = 0;
-  while ((match = STICKER_REF_REGEX.exec(text)) !== null) {
-    const [full, packName, stickerName] = match;
+  for (const match of text.matchAll(STICKER_TOKEN)) {
+    const full = match[0];
     if (seen.has(full)) continue;
     seen.add(full);
-    const sticker = getStickerByRef(packName, stickerName);
+    const sticker = resolveStickerRef(match[1], getStickerByRef);
     if (!sticker) continue;
     const path = join(PROJECT_ROOT, 'data', 'stickers', sticker.pack_id, sticker.filename);
     const block = fileToImageBlock(path);

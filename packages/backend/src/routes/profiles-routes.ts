@@ -10,11 +10,12 @@ import { getConfig, setConfig } from '../services/db.js';
 // its neighbors (preferences, companion settings).
 // ============================================================================
 
-const PROFILE_KEYS = ['companion-a', 'companion-b', 'user', 'fallback'] as const;
+const PROFILE_KEYS = ['companion-a', 'companion-b', 'companion-c', 'user', 'fallback'] as const;
 type ProfileEntry = { name: string; emoji: string; image: string | null };
 const PROFILE_DEFAULTS: Record<string, ProfileEntry> = {
 'companion-a':    { name: 'Companion A',     emoji: '🔷', image: null },
 'companion-b':    { name: 'Companion B',     emoji: '🔶', image: null },
+'companion-c':     { name: 'Companion C',      emoji: '🗓️', image: null },
   user:     { name: 'You',                emoji: '🖤', image: null },
   fallback: { name: 'Bytelight', emoji: '✨', image: null },
 };

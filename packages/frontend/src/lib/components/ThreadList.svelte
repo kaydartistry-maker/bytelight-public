@@ -13,7 +13,7 @@
     oncreate,
     ondelete,
     loadThreads,
-  } = $props<{
+  }: {
     threads: ThreadSummary[];
     activeThreadId: string | null;
     routingThreadId?: string | null;
@@ -21,7 +21,7 @@
     oncreate?: () => void;
     ondelete?: (threadId: string) => void;
     loadThreads?: () => Promise<void> | void;
-  }>();
+  } = $props();
 
   // Home marker (reference implementation's routing-dot, renamed): the routing thread is
   // where Discord, Telegram, and autonomous wakes land. User-facing copy says
@@ -473,7 +473,7 @@
         {#each groupedThreads().filtered as thread (thread.id)}
           {@render threadItem(thread)}
         {/each}
-        {#if groupedThreads().filtered.length === 0}
+        {#if groupedThreads().filtered?.length === 0}
           <p class="empty-filter">No matching threads</p>
         {/if}
       {:else}

@@ -1,0 +1,38 @@
+import test, { after } from 'node:test';
+import assert from 'node:assert/strict';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+import { randomUUID } from 'node:crypto';
+import { initDb, setConfig, getConfig } from './db.js';
+import { listDrawers, renameDrawer, deleteDrawer, createDrawer, REFS_DIR } from './image-gen.js';
+const root = mkdtempSync(join(tmpdir(), 'studio-drawers-'));
+initDb(join(root, 'test.db'));
+const ref = join(REFS_DIR, 'companion-a', `rename-proof-${randomUUID()}.png`);
+after(() => { rmSync(ref, { force: true }); rmSync(root, { recursive: true, force: true }); });
+
+test('built-ins use personal defaults, follow configured profiles, and preserve explicit overrides', async () => {
+  setConfig('image_gen.drawers', '[]'); setConfig('profiles', '{}');
+  assert.deepEqual(listDrawers().map(d => d.label), ['Companion A', 'Companion B', 'You']);
+  setConfig('profiles', JSON.stringify({ 'companion-a': { name: 'Companion A', emoji: '🦇' }, 'companion-b': { name: 'Companion B' }, user: { name: 'User' } }));
+  assert.deepEqual(listDrawers().map(d => d.label), ['Companion A', 'Companion B', 'User']);
+  mkdirSync(join(REFS_DIR, 'companion-a'), { recursive: true }); writeFileSync(ref, 'unchanged-reference');
+  const beforeProfiles = getConfig('profiles');
+  const renamed = renameDrawer('companion-a', '  My vampire  ', '');
+  assert.equal(renamed.slug, 'companion-a'); assert.equal(renamed.isDefault, true);
+  assert.equal(listDrawers()[0].label, 'My vampire'); assert.equal(listDrawers()[0].emoji, undefined);
+  assert.equal(JSON.parse(getConfig('image_gen.drawers')!)[0].label, 'My vampire');
+  setConfig('profiles', JSON.stringify({ 'companion-a': { name: 'Changed elsewhere', emoji: '🦇' } }));
+  assert.equal(listDrawers()[0].label, 'My vampire');
+  assert.equal(readFileSync(ref, 'utf8'), 'unchanged-reference');
+  await assert.rejects(deleteDrawer('companion-a'), /cannot be deleted/);
+  assert.equal(readFileSync(ref, 'utf8'), 'unchanged-reference');
+  assert.throws(() => renameDrawer('companion-b', '   '), /name is required/);
+  assert.equal(listDrawers().find(d => d.slug === 'companion-b')?.label, 'Companion B');
+  setConfig('profiles', beforeProfiles!);
+  const custom = createDrawer('Other subject', '🌙');
+  assert.equal(renameDrawer(custom.slug, 'Moon subject').slug, custom.slug);
+  assert.equal(listDrawers().filter(d => d.slug === 'companion-a').length, 1);
+  assert.equal(listDrawers().find(d => d.slug === custom.slug)?.label, 'Moon subject');
+  assert.throws(() => renameDrawer('missing', 'Unknown'), /not found/);
+});

@@ -24,6 +24,7 @@ import {
   audioFileName,
   AUDIO_FILE_RE,
   readNotes,
+  reachedNotes,
   removeNote,
   readHighlights,
   addHighlight,
@@ -226,7 +227,7 @@ router.get('/books/:id/notes', (req, res) => {
   const id = bookId(req.params.id);
   if (!id) return res.status(400).json({ error: 'Bad book id' });
   const chapter = req.query.chapter !== undefined ? Number(req.query.chapter) : null;
-  const notes = readNotes(id);
+  const notes = reachedNotes(id);
   res.json({ notes: chapter === null ? notes : notes.filter((note) => note.chapter === chapter) });
 });
 

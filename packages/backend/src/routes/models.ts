@@ -40,6 +40,7 @@ import {
   type CodexAuthSnapshot,
 } from '../services/auth/codex-oauth.js';
 import { errMessage } from '../util/errors.js';
+import { getSecret } from '../services/secrets.js';
 
 const router: Router = Router();
 
@@ -134,6 +135,20 @@ export function buildCodexCliCatalogEntries(): ModelInfo[] {
     });
   }
   return out;
+}
+
+export function buildGeminiCliCatalogEntries(): ModelInfo[] {
+  return SHARED_MODELS.filter((m) => m.provider === 'gemini-cli').map((entry) => ({
+    id: entry.id, name: entry.label, provider: 'gemini-cli', runtime: 'gemini-cli',
+    tier: 'included', supports_tools: false, ref: entry.ref,
+  }));
+}
+
+export function buildZaiCatalogEntries(): ModelInfo[] {
+  return SHARED_MODELS.filter((m) => m.provider === 'zai').map((entry) => ({
+    id: entry.id, name: entry.label, provider: 'zai', runtime: 'claude-sdk',
+    tier: 'included', context_length: 1_048_576, supports_tools: true, ref: entry.ref,
+  }));
 }
 
 // Claude models — always available via SDK (matches model-manifest entries).
@@ -403,6 +418,12 @@ router.get('/models', async (req: Request, res: Response) => {
   if (!providerFilter || providerFilter === 'codex-cli') {
     models.push(...buildCodexCliCatalogEntries());
   }
+  if (!providerFilter || providerFilter === 'gemini-cli') {
+    models.push(...buildGeminiCliCatalogEntries());
+  }
+  if (!providerFilter || providerFilter === 'zai') {
+    models.push(...buildZaiCatalogEntries());
+  }
 
   if ((!providerFilter || providerFilter === 'huggingface') && providers.huggingface?.api_key && cfg.agent.routing !== 'sdk') {
     try {
@@ -570,6 +591,11 @@ router.get('/models/status', async (_req: Request, res: Response) => {
   res.json({
     routing: cfg.agent.routing,
     claude: { configured: true, runtime: 'claude-sdk' as const },
+    zai: {
+      configured: !!getSecret('provider_zai_coding_plan_api_key'),
+      runtime: 'claude-sdk' as const,
+      url: 'https://api.z.ai/api/anthropic',
+    },
     ollama: {
       configured: !!providers.ollama?.base_url,
       enabled: !!providers.ollama?.enabled,

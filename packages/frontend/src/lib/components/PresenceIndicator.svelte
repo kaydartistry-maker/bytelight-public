@@ -1,7 +1,7 @@
 <script lang="ts">
   import type { PresenceStatus } from '@bytelight/shared';
 
-  let { status } = $props<{ status: PresenceStatus }>();
+  let { status }: { status: PresenceStatus } = $props();
 
   const statusInfo = $derived(() => {
     switch (status) {

@@ -6,11 +6,13 @@ import helmet from 'helmet';
 import { createServer } from 'http';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
-import { existsSync, mkdirSync } from 'fs';
+import { existsSync, mkdirSync, statSync } from 'fs';
 import { loadConfig, PROJECT_ROOT } from './config.js';
-import { initDb, deleteExpiredSessions } from './services/db.js';
+import { initDb, deleteExpiredSessions, migrateWebSessionTokens } from './services/db.js';
 import { seedDefaultBlocks, ensureCompanionBlocks } from './services/memory-blocks.js';
-import { getSecret } from './services/secrets.js';
+import { getSecret, migrateSecrets } from './services/secrets.js';
+import { migrateLegacyCredentialStores } from './services/credential-migration.js';
+import { initializeBuilderJobs } from './services/builder-jobs.js';
 import { loadVectorCache } from './services/vector-cache.js';
 import { createWebSocketServer, setVoiceService, setGatewayServices, registry, recoverCutOffTurns } from './services/ws.js';
 import { holdTurnLeases } from './services/db/turn-leases.js';
@@ -36,6 +38,9 @@ import mcpBeltRouter, { closeBeltMcpSessions } from './routes/mcp-belt.js';
 import { closeMcpJsonClients } from './services/mcp-json-bridge.js';
 import clientErrorRoutes from './routes/client-errors.js';
 import appShellRoutes from './routes/app.js';
+import { requireLocalhost } from './middleware/localhost.js';
+import { armTheaterMouth, stopTheaterMouth } from './services/theater-mouth.js';
+import { verifyMaintenanceStartup } from './services/maintenance-ledger.js';
 
 // Load config FIRST — before any other initialization
 const config = loadConfig();
@@ -62,6 +67,12 @@ if (!existsSync(filesDir)) {
 // Initialize database
 console.log('Initializing database...');
 const db = initDb(DB_PATH);
+// Preserve compatibility with the existing encrypted credential stores. Native
+// chat restoration must never make an older reader consume ciphertext as a key.
+initializeBuilderJobs();
+migrateSecrets();
+migrateLegacyCredentialStores(config);
+migrateWebSessionTokens();
 deleteExpiredSessions();
 loadVectorCache();
 // Self-knowledge semantic index (Wave 2, Slice 3) — embed any entries added
@@ -200,9 +211,12 @@ app.use('/api/app', appShellRoutes);
 // All API routes — auth middleware is applied selectively inside the router
 app.use('/api', apiRoutes);
 
-// Command Center MCP endpoint
+// Command Center MCP endpoint — localhost only. Its one caller is .mcp.json
+// (localhost:3002); with trust proxy on, tunnel traffic carries the outside
+// client's IP and is refused, same as /api/internal/*. It was open to the
+// internet with no auth until 2026-11-09.
 if (config.command_center.enabled) {
-  import('./routes/cc-mcp.js').then(m => app.use('/mcp/cc', m.default));
+  import('./routes/cc-mcp.js').then(m => app.use('/mcp/cc', requireLocalhost, m.default));
 }
 
 // House tool-belt MCP endpoint. Mount synchronously before listen() so the
@@ -357,10 +371,26 @@ server.listen(PORT, HOST, () => {
   console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
   console.log(`Auth enabled: ${config.auth.password ? 'yes' : 'no'}`);
   console.log(`Companion: ${config.identity.companion_name} | User: ${config.identity.user_name}`);
+  // A restart is only proof when the newly loaded process verifies its own
+  // database, phone artifact and scheduled-work registration. The result is
+  // written to Status → Maintenance and promotes eligible built repairs from
+  // "waiting for restart" to "verified live".
+  setTimeout(() => {
+    const compiledAt = (() => { try { return statSync(__filename).mtime; } catch { return new Date(); } })();
+    void verifyMaintenanceStartup(dataDir, {
+      compiledAt,
+      phoneBuildPath: phoneBuildPath ?? null,
+      databaseCheck: () => String(db.pragma('quick_check', { simple: true })),
+      scheduleCheck: async () => (await orchestrator.getStatus()).filter((task) => task.enabled).length,
+    }).catch((error) => console.error('[maintenance] startup verification failed:', error));
+  }, 1_000).unref();
   // Phone turns the last restart cut off. A short wait first, so the lanes
   // and MCP servers have come up before anyone answers.
   setTimeout(() => {
     recoverCutOffTurns(agentService).catch((err) => console.error('[turn-leases] Recovery failed:', err));
+    // The Theater's Mouth: a night left live and playing across a reload
+    // starts listening for beats again (services/theater-mouth.ts).
+    try { armTheaterMouth(agentService); } catch (err) { console.error('[theater] could not re-arm the Mouth:', err); }
   }, 10_000).unref();
 });
 
@@ -397,6 +427,7 @@ async function gracefulShutdown(signal: string): Promise<void> {
 
   // 2. Stop orchestrator (clears all intervals/crons)
   orchestrator.stop();
+  try { stopTheaterMouth(); } catch { /* best-effort */ }
 
   // 3. Stop gateway services
   if (discordService) await discordService.stop().catch(() => {});

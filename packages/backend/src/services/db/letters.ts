@@ -17,7 +17,9 @@ export type LetterSeal = 'open' | 'date' | 'on_open';
 const KINDS: LetterKind[] = ['vow', 'confession', 'letter', 'keepsake'];
 const SEALS: LetterSeal[] = ['open', 'date', 'on_open'];
 
-const LETTERS_DIR = join(PROJECT_ROOT, 'data', 'letters');
+// Default location remains unchanged. An explicit override lets isolated
+// installations/tests keep their redundant mirror outside another app's data.
+const LETTERS_DIR = process.env.BYTELIGHT_LETTERS_DIR || join(PROJECT_ROOT, 'data', 'letters');
 
 export interface Letter {
   id: string;

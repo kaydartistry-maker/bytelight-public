@@ -1,16 +1,16 @@
 # BL internal coding and guarded deployment
 
-Emerald speaks to Gemini/Argon in Bytelight. Argon calls `delegate_code` to send one task to Codex CLI using her ChatGPT subscription. The existing inspect/edit modes, `codex/*` branch creation, dirty-workspace refusal, `continue_existing`, process mutex, safety prompt and 20 minute timeout remain. New tasks start from **local** main; delegation performs no fetch or merge. Updating that baseline is administrator maintenance.
+User speaks to Gemini/Argon in Bytelight. Argon calls `delegate_code` to send one task to Codex CLI using her ChatGPT subscription. The existing inspect/edit modes, `codex/*` branch creation, dirty-workspace refusal, `continue_existing`, process mutex, safety prompt and 20 minute timeout remain. New tasks start from **local** main; delegation performs no fetch or merge. Updating that baseline is administrator maintenance.
 
 The edit report includes branch, report, status, diff stat, bounded diff and `diff_sha256`. The fingerprint covers the complete binary Git patch from HEAD to the working tree, including staged, deleted and untracked nonignored files. The temporary index does not change the real index. Binary patch payloads are omitted from the model report. Committed HEAD is the trusted public baseline, including private-looking example filenames. Changed private paths are rejected; HEAD and pending symlinks/gitlinks are refused.
 
-After explaining the exact pending diff, Argon must wait for Emerald's live owner message: `deploy`, `Lets deploy!` (straight, curly or no apostrophe accepted), `ship it`, `put it live` or `push it live`. The phrase must stand alone, apart from punctuation/whitespace. Negation, cancellation, waiting, guests and autonomous wakes cannot authorize deployment. Argon calls `deploy_code(branch,diff_sha256,confirmation:"DEPLOY")`; model arguments alone cannot approve anything. The handler receives raw current message text and autonomy state from the live agent turn.
+After explaining the exact pending diff, Argon must wait for User's live owner message: `deploy`, `Lets deploy!` (straight, curly or no apostrophe accepted), `ship it`, `put it live` or `push it live`. The phrase must stand alone, apart from punctuation/whitespace. Negation, cancellation, waiting, guests and autonomous wakes cannot authorize deployment. Argon calls `deploy_code(branch,diff_sha256,confirmation:"DEPLOY")`; model arguments alone cannot approve anything. The handler receives raw current message text and autonomy state from the live agent turn.
 
 Deployment returns pending only after a root-owned atomic ready handshake from the reparented real worker. Bootstrap failure or handshake timeout persists failure and removes only the matching coordinator-owned starting lock. A detached launcher exits and reparents the root worker before deployment, so PM2 process-tree cleanup cannot kill it during restart. On the next BL turn, Argon calls `deploy_code_status(branch,diff_sha256)` to retrieve the durable result. Status never starts deployment and needs no fresh approval. Deployment does **not commit, push or merge**, invoke another agent, use a webhook, or provide an arbitrary shell tool.
 
 ## Administrator setup (outside this implementation task)
 
-Use dedicated, distinct non-root Codex and builder users/groups. The BL coordinator and compiled worker must run as root from root-owned compiled application code. The development checkout must be owned by Codex and physically outside `/root/production`; use a traversable location such as `/srv/virelle-dev`. Provision subscription authentication separately under Codex's HOME; no BL credentials are passed to the CLI.
+Use dedicated, distinct non-root Codex and builder users/groups. The BL coordinator and compiled worker must run as root from root-owned compiled application code. The development checkout must be owned by Codex and physically outside `/root/production`; use a traversable location such as `/srv/bytelight-dev`. Provision subscription authentication separately under Codex's HOME; no BL credentials are passed to the CLI.
 
 Configure these BL service environment settings:
 
@@ -18,13 +18,13 @@ Configure these BL service environment settings:
 | --- | --- |
 | `BYTELIGHT_CODE_DELEGATION_ENABLED=true` | Enable coding delegation |
 | `BYTELIGHT_CODE_DEPLOYMENT_ENABLED=true` | Owner kill switch for starting guarded deployment; status remains readable |
-| `BYTELIGHT_CODE_WORKSPACE` | Absolute canonical development checkout; delegate default `/srv/virelle-dev`; required explicitly for deploy |
+| `BYTELIGHT_CODE_WORKSPACE` | Absolute canonical development checkout; delegate default `/srv/bytelight-dev`; required explicitly for deploy |
 | `BYTELIGHT_CODEX_UID`, `BYTELIGHT_CODEX_GID` | Positive numeric non-root Codex identity |
 | `BYTELIGHT_CODEX_HOME` | Absolute canonical mode-0700 Codex HOME, owned by the configured Codex UID/GID and disjoint from privileged deployment paths |
 | `BYTELIGHT_BUILD_UID`, `BYTELIGHT_BUILD_GID` | Separate positive numeric non-root builder identity |
 | `BYTELIGHT_CODE_PRODUCTION` | Absolute canonical production checkout |
-| `BYTELIGHT_CODE_STATE_DIR` | Root-owned mode 0700 durable state, default `/var/lib/virelle-code` |
-| `BYTELIGHT_CODE_STAGING_DIR` | Root-owned staging parent, traversable by builder, e.g. `/var/lib/virelle-staging` mode 0755 |
+| `BYTELIGHT_CODE_STATE_DIR` | Root-owned mode 0700 durable state, default `/var/lib/bytelight-code` |
+| `BYTELIGHT_CODE_STAGING_DIR` | Root-owned staging parent, traversable by builder, e.g. `/var/lib/bytelight-staging` mode 0755 |
 | `BYTELIGHT_CODE_BACKUP_DIR` | Root-owned backup parent, preferably mode 0700 |
 | `BYTELIGHT_CODE_SQLITE_PATH` | Fixed absolute production SQLite database path within production |
 | `BYTELIGHT_CODE_HEALTH_URL` | Fixed `http://127.0.0.1:PORT/api/health` endpoint |

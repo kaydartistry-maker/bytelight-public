@@ -469,6 +469,32 @@ switch (cmd) {
     break;
   }
 
+  case 'bookbridge': {
+    // Native BOOX companion window. The server, rather than the prompt,
+    // enforces Live vs One Chapter Ahead.
+    const sub = args[0];
+    if (sub === 'status') {
+      await post('book-bridge', { action: 'status' });
+    } else if (sub === 'read') {
+      const body = { action: 'read' };
+      if (args[1]) body.bookId = Number(args[1]);
+      if (args[2]) body.chapter = Number(args[2]);
+      await post('book-bridge', body);
+    } else if (sub === 'note') {
+      if (!args[1] || !args[2] || !args[3] || !args[4]) {
+        console.log('Usage: sc bookbridge note <bookId> <chapter> "<exact quote>" "<your note>" --as <slug>');
+        break;
+      }
+      await post('book-bridge', {
+        action: 'note', bookId: Number(args[1]), chapter: Number(args[2]),
+        quote: args[3], note: args[4], author: flagValue(args, '--as') || '',
+      });
+    } else {
+      console.log('Usage: sc bookbridge status | read [bookId] [chapter] | note <bookId> <chapter> "<quote>" "<note>" --as <slug>');
+    }
+    break;
+  }
+
   case 'battleship': {
     // The Fleet Room. One shot per turn for the whole table.
     const sub = args[0];

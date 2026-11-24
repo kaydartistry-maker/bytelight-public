@@ -8,7 +8,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkBreaks from 'remark-breaks';
 import { CodeBlock } from './CodeBlock';
-import { Check, CheckCheck, Star, Heart, Smile, ThumbsUp, MoreHorizontal, Trash2, Play, Square, Loader2, Mic, FileText, Download, Pencil, RefreshCw, Copy, Reply, X, Volume2, Plus } from 'lucide-react';
+import { Check, CheckCheck, Star, Heart, Smile, ThumbsUp, MoreHorizontal, Trash2, Play, Square, Loader2, Mic, FileText, Download, Pencil, RefreshCw, Copy, Reply, X, Volume2, Plus, ChevronDown } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { MessageSegments } from './MessageSegments';
 import { SpeakerBubbles, SpeakerSegmentStack } from './SpeakerBubbles';
@@ -22,7 +22,8 @@ import { STANDARD_EMOJIS as EXTRA_EMOJIS } from '../lib/emoji';
 import type { VoiceCompanion } from '../lib/voices';
 import { saveToDevice } from '../lib/download';
 import { thumbSrc } from '../lib/thumb';
-import { prepareChatText } from '../lib/chat-text';
+import { prepareChatText, stickerSizeClass, stickerSrc } from '../lib/chat-text';
+import { BubblePaintLayers } from './AppearanceRuntime';
 
 /**
  * A link in a message that points at something this house is serving. Nothing
@@ -211,6 +212,9 @@ export function MessageBubble({ message, onReact, onBookmark, onDelete, onEdit, 
   // Falling back to their initial keeps a broken image out of the rail.
   const [avatarFailed, setAvatarFailed] = useState(false);
   const [isPlaying, setIsPlaying] = useState(false);
+  // Voice notes show only the player; the words stay folded until the reader
+  // taps to read them.
+  const [showTranscript, setShowTranscript] = useState(false);
   const [showRerollConfirm, setShowRerollConfirm] = useState(false);
   const [isLoadingAudio, setIsLoadingAudio] = useState(false);
   const [audioElement, setAudioElement] = useState<HTMLAudioElement | null>(null);
@@ -313,7 +317,6 @@ export function MessageBubble({ message, onReact, onBookmark, onDelete, onEdit, 
 
   const preparedText = prepareChatText({ text: textContent, resolveSticker: resolveStickerRef, customEmojis });
   textContent = preparedText.markdown;
-  const stickerSharesText = preparedText.stickerSharesText;
   const emoteSizeClass = preparedText.emoteOnly ? '!h-12' : '!h-[1.75em]';
   let voiceSpeaker = '';
   let textToSpeak = '';
@@ -604,9 +607,13 @@ export function MessageBubble({ message, onReact, onBookmark, onDelete, onEdit, 
     (segTextRows.length > 1 ||
       (segTextRows.length === 1 && segTextRows[0].kind === 'text' && segTextRows[0].speaker !== 'fallback'));
   const isSplit = (!!speakerRows && (speakerRows.length > 1 || (!!wholeSpeaker && speakerRows.length === 1))) || isSegSplit;
+  const appearanceSpeaker = !isPrivateTab && !isSystem && !isSplit
+    ? isUser ? 'user' : voice?.slug ?? 'fallback' : undefined;
 
   return (
     <div
+      data-appearance-message={appearanceSpeaker ? '' : undefined}
+      data-speaker={appearanceSpeaker}
       className={cn(
         "flex w-full group relative",
         isGroupLast ? "mb-6" : "mb-1.5",
@@ -651,11 +658,13 @@ export function MessageBubble({ message, onReact, onBookmark, onDelete, onEdit, 
               loading="lazy"
               decoding="async"
               className="w-9 h-9 rounded-full object-cover border-2"
+              data-appearance-avatar=""
               style={{ borderColor: voice.color || 'transparent' }}
             />
           ) : (
             <div
               className="w-9 h-9 rounded-full flex items-center justify-center text-base border-2"
+              data-appearance-avatar=""
               style={{ borderColor: voice.color || 'transparent', background: 'rgba(127,127,127,0.15)' }}
             >
               {voice.emoji || voice.display_name.charAt(0)}
@@ -663,20 +672,23 @@ export function MessageBubble({ message, onReact, onBookmark, onDelete, onEdit, 
           )}
         </div>
       )}
-      <div className={cn(
+      <div data-appearance-column={appearanceSpeaker ? '' : undefined} className={cn(
         "flex flex-col max-w-[85%] sm:max-w-[75%]",
         (isPrivateTab || isSystem) ? "items-center" : (isUser && !centered) ? "items-end" : "items-start",
         // Indent meta-only preamble bubbles by the avatar-rail width so
         // their left edge lines up with the voice bubbles below them.
         centered && !isPrivateTab && !isSystem && "ml-[38px]"
       )}>
+        {appearanceSpeaker && !isGuest && <div data-appearance-name="" className="hidden mb-1 text-[11px] font-bold">
+          {isUser ? 'You' : voice?.display_name ?? message.sender ?? ''}
+        </div>}
         {/* Guest name label — who is speaking through the bridge.
             Bare text here sat straight on her wallpaper and had to compete with
             it, so the name wears the same skin as the bubble under it and the
             platform wears the accent tag her OWN bridged messages already carry.
             One visual language for anything that arrived over a bridge. */}
         {!isUser && !isPrivateTab && message.sender && message.via && isGroupFirst && (
-          <div className="mb-1 flex items-center gap-1.5">
+          <div data-appearance-name="" className="mb-1 flex items-center gap-1.5">
             <span
               className={cn(
                 "text-[11px] font-bold px-1.5 py-0.5 border rounded-[var(--shape-chip)]",
@@ -701,6 +713,8 @@ export function MessageBubble({ message, onReact, onBookmark, onDelete, onEdit, 
           <div
             onClick={() => { if (isEditing) return; setShowActions(!showActions); }}
             data-user={isUser ? 'true' : 'false'}
+            data-appearance-bubble={appearanceSpeaker ? '' : undefined}
+            data-speaker={appearanceSpeaker}
             data-split={isSplit ? 'true' : undefined}
             className={cn(
               "bytelight-message-bubble transition-all duration-500 cursor-pointer rounded-[var(--shape-bubble)]",
@@ -735,6 +749,7 @@ export function MessageBubble({ message, onReact, onBookmark, onDelete, onEdit, 
               ? { color: (colors as any).noteText || (themeMode === 'light' ? '#000000' : '#ffffff') }
               : undefined}
           >
+            {appearanceSpeaker && <BubblePaintLayers />}
             {message.replyToPreview && !isEditing && isGroupFirst && (
               <button
                 type="button"
@@ -867,9 +882,22 @@ export function MessageBubble({ message, onReact, onBookmark, onDelete, onEdit, 
                   )}
                 </div>
                 {message.transcript && (
-                  <div className={cn("text-[13px] italic opacity-80 mb-2 px-1 select-text", textColorClass)}>
-                    {message.transcript}
-                  </div>
+                  <>
+                    <button
+                      type="button"
+                      onClick={(e) => { e.stopPropagation(); setShowTranscript((v) => !v); }}
+                      aria-expanded={showTranscript}
+                      className={cn("flex items-center gap-1 text-[11px] opacity-60 hover:opacity-90 transition-opacity mb-2 px-1", textColorClass)}
+                    >
+                      <ChevronDown size={12} className={cn("transition-transform duration-200", showTranscript && "rotate-180")} />
+                      {showTranscript ? 'Hide words' : 'Read it'}
+                    </button>
+                    {showTranscript && (
+                      <div className={cn("text-[13px] italic opacity-80 mb-2 px-1 select-text", textColorClass)}>
+                        {message.transcript}
+                      </div>
+                    )}
+                  </>
                 )}
               </>
             )}
@@ -910,7 +938,7 @@ export function MessageBubble({ message, onReact, onBookmark, onDelete, onEdit, 
                 // 'anywhere' lets the browser break at any character if
                 // there's no other opportunity, so the bubble never gets
                 // clipped horizontally.
-                "prose prose-sm max-w-none prose-p:leading-relaxed prose-p:my-0 prose-pre:bg-black/30 prose-img:inline prose-img:m-0 select-text [overflow-wrap:anywhere] min-w-0",
+                "prose prose-sm max-w-none prose-p:leading-relaxed prose-pre:bg-black/30 prose-img:inline prose-img:m-0 select-text [overflow-wrap:anywhere] min-w-0",
                 isLightText ? "prose-invert" : "",
                 isUser && isLightText ? "prose-code:text-white/80" : "",
                 isUser && !isLightText ? "prose-code:text-black/80" : "",
@@ -954,7 +982,7 @@ export function MessageBubble({ message, onReact, onBookmark, onDelete, onEdit, 
                     <ReactMarkdown
                       remarkPlugins={[remarkGfm, remarkBreaks]}
                       components={{
-                        p: ({ children }) => <span className="block">{children}</span>,
+                        p: ({ children }) => <p className="mb-3 last:mb-0">{children}</p>,
                         // Discord-style "-# whisper" subtext (preprocessed to h6 above)
                         h6: ({ children }) => <span className="block text-[11px] leading-snug opacity-60 italic">{children}</span>,
                         pre: ({ children }) => <CodeBlock>{children}</CodeBlock>,
@@ -1006,13 +1034,11 @@ export function MessageBubble({ message, onReact, onBookmark, onDelete, onEdit, 
                           if (alt?.startsWith('sticker:') && src) {
                             return (
                               <img
-                                src={src}
+                                src={stickerSrc(src)}
                                 alt={alt.slice('sticker:'.length)}
                                 className={cn(
                                   '!inline-block !w-auto object-contain',
-                                  stickerSharesText
-                                    ? '!h-[1.75em] !max-h-[1.75em] !my-0 mx-0.5 align-text-bottom'
-                                    : 'max-h-32 align-bottom',
+                                  stickerSizeClass(src),
                                 )}
                                 referrerPolicy="no-referrer"
                               />
@@ -1500,6 +1526,7 @@ export function MessageBubble({ message, onReact, onBookmark, onDelete, onEdit, 
             </span>
           )}
           <span
+            data-appearance-timestamp=""
             className={cn(
               "bytelight-message-time",
               isUser && !isPrivateTab ? "bytelight-theme-user-bubble" : "bytelight-theme-comp-bubble",

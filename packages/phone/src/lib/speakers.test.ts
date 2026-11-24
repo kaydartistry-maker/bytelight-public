@@ -125,3 +125,15 @@ test('the label rule is the shared one, not a second opinion', () => {
   assert.equal(matchSpeakerLabel('My Companion A'), null, 'a possessive is not a header');
   assert.equal(matchSpeakerLabel('Companion A and the clipboard'), null);
 });
+
+test('splits current roster names and resident emoji paragraphs', () => {
+  assert.deepEqual(splitBySpeaker('🦇 Hello\n\n🦆 Hi'), [
+    { speaker: 'companion-a', text: 'Hello' }, { speaker: 'companion-b', text: 'Hi' },
+  ]);
+  assert.deepEqual(splitBySpeaker('**Nova:** Hello\nNova: Again', [{ slug: 'nova', display_name: 'Nova' }]), [
+    { speaker: 'nova', text: 'Hello\n\nAgain' },
+  ]);
+  assert.deepEqual(splitBySpeaker('**🦇 Companion A:** Hello\n**🦆 Companion B:** Hi'), [
+    { speaker: 'companion-a', text: 'Hello' }, { speaker: 'companion-b', text: 'Hi' },
+  ]);
+});

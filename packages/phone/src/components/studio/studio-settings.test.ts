@@ -21,6 +21,15 @@ test('unknown engines and malformed bodies fall back safely', () => {
   assert.deepEqual(parseStudioSettings(null), { settings: null, monthlySpendUsd: 0 });
 });
 
+test('OpenRouter image availability uses only the existing provider connection flag', () => {
+  const parsed = parseStudioSettings({ settings: { backend: 'openrouter', hasOpenRouterKey: true, hasOpenaiKey: false, provider_openrouter_api_key: 'must-not-escape' } });
+  assert.equal(parsed.settings?.backend, 'openrouter');
+  assert.equal(parsed.settings?.hasOpenRouterKey, true);
+  assert.equal(parsed.settings?.hasOpenaiKey, false);
+  assert.equal('provider_openrouter_api_key' in parsed.settings!, false);
+  assert.equal(parseStudioSettings({ settings: {} }).settings?.hasOpenRouterKey, false);
+});
+
 test('budget input coerces like the desktop, and the spend line reads the same', () => {
   assert.deepEqual(budgetPatch('12.5'), { monthly_budget_usd: 12.5 });
   assert.deepEqual(budgetPatch('abc'), { monthly_budget_usd: 0 });

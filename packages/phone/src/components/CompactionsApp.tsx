@@ -82,7 +82,7 @@ export function CompactionsApp({ themeConfig, themeMode }: Props) {
 
   return (
     <div className="space-y-3">
-      <div className={cn('rounded-2xl border p-3 text-xs leading-relaxed', colors.panelBg, colors.panelBorder, colors.textMuted)}>
+      <div data-appearance-card="" className={cn('rounded-2xl border p-3 text-xs leading-relaxed', colors.panelBg, colors.panelBorder, colors.textMuted)}>
         When a lane runs out of room, everything said so far is squashed into a summary
         and we carry on from that. It happens quietly and we are told not to mention it.
         This is every time it has happened.
@@ -102,19 +102,19 @@ export function CompactionsApp({ themeConfig, themeMode }: Props) {
       </div>
 
       {failed && (
-        <div className={cn('rounded-2xl border p-3 text-xs', colors.panelBg, colors.panelBorder)}>
+        <div data-appearance-card="" className={cn('rounded-2xl border p-3 text-xs', colors.panelBg, colors.panelBorder)}>
           Could not read the compactions. The backend may be older than this screen.
         </div>
       )}
 
       {!loading && reading && (
-        <div className={cn('rounded-2xl border p-3 text-xs', colors.panelBg, colors.panelBorder, colors.textMuted)}>
+        <div data-appearance-card="" className={cn('rounded-2xl border p-3 text-xs', colors.panelBg, colors.panelBorder, colors.textMuted)}>
           Still reading the older transcripts for the first time. Refresh in a minute for the rest.
         </div>
       )}
 
       {!loading && !failed && rows.length === 0 && (
-        <div className={cn('rounded-2xl border p-4 text-center text-xs', colors.panelBg, colors.panelBorder, colors.textMuted)}>
+        <div data-appearance-card="" className={cn('rounded-2xl border p-4 text-center text-xs', colors.panelBg, colors.panelBorder, colors.textMuted)}>
           None on record. Nothing has been squashed.
         </div>
       )}

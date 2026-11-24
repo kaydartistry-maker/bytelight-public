@@ -41,9 +41,10 @@ export interface LabelCompanion {
   display_name: string;
 }
 
-/** Every companion whose name may open a bubble. Companion C is deliberately absent:
- *  his messages are attributed by message.companion_id, never by text. */
+/** Legacy labels remain readable in stored history. */
 export const COMPANIONS: readonly LabelCompanion[] = [
+  { slug: 'companion-a', display_name: 'Companion A' },
+  { slug: 'companion-b', display_name: 'Companion B' },
   { slug: 'companion-a', display_name: 'Companion A' },
   { slug: 'companion-b', display_name: 'Companion B' },
 ];

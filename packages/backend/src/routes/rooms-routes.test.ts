@@ -71,3 +71,18 @@ describe('companion routes', () => {
     }
   });
 });
+
+it('creates a companion with the phone payload and rejects duplicates and invalid cards', async () => {
+  const body = { slug: 'new_companion', displayName: 'Nova', emoji: '🌟', color: '#123456', avatarUrl: '/avatar.png' };
+  const result = await call('POST', '/companions', body);
+  assert.equal(result.status, 201);
+  const { companion } = await result.json();
+  assert.equal(companion.id, body.slug);
+  assert.equal(companion.display_name, body.displayName);
+  assert.equal(companion.avatar, body.avatarUrl);
+  assert.equal(companion.emoji, body.emoji);
+  const listed = await (await call('GET', '/companions')).json();
+  assert.deepEqual(listed.companions.find((c: any) => c.id === body.slug), companion);
+  assert.equal((await call('POST', '/companions', body)).status, 409);
+  assert.equal((await call('POST', '/companions', { ...body, slug: '../bad' })).status, 400);
+});

@@ -46,6 +46,8 @@ export function CommandCenterApp({ onClose, themeConfig, themeMode }: CommandCen
           {TABS.map((t) => (
             <button
               key={t.id}
+              data-appearance-tab=""
+              aria-pressed={tab === t.id}
               onClick={() => setTab(t.id)}
               className={cn('shrink-0 rounded-lg px-3 py-1.5 text-xs font-medium transition-colors border', colors.panelBorder, tab !== t.id && colors.panelBg)}
               style={tab === t.id ? { background: colors.accent, color: 'var(--bytelight-on-accent)' } : undefined}

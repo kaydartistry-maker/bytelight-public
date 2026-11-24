@@ -4,11 +4,12 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-// The job engine persists to data/studio-image-jobs.json under PROJECT_ROOT
-// and restores it at module load — so the fixture file must be staged before
-// the import, and any real jobs file is preserved and put back afterwards.
-const { PROJECT_ROOT } = await import('../config.js');
-const DATA_DIR = join(PROJECT_ROOT, 'data');
+// Stage a private jobs file before module load. Never borrow or overwrite the
+// application's jobs/gallery: other test processes and the app may be active.
+const tmpRoot = mkdtempSync(join(tmpdir(), 'image-gen-test-'));
+const priorDataDir = process.env.BYTELIGHT_STUDIO_DATA_DIR;
+const DATA_DIR = join(tmpRoot, 'studio');
+process.env.BYTELIGHT_STUDIO_DATA_DIR = DATA_DIR;
 const JOBS_FILE = join(DATA_DIR, 'studio-image-jobs.json');
 mkdirSync(DATA_DIR, { recursive: true });
 const realJobsFile = existsSync(JOBS_FILE) ? readFileSync(JOBS_FILE, 'utf8') : null;
@@ -24,7 +25,6 @@ writeFileSync(JOBS_FILE, JSON.stringify([
 
 // Real disk-backed DB, same pattern as secrets.test.ts — getImageGenSettings
 // reads config through getDb().
-const tmpRoot = mkdtempSync(join(tmpdir(), 'image-gen-test-'));
 const { initDb, setConfig } = await import('./db.js');
 initDb(join(tmpRoot, 'test.db'));
 
@@ -33,6 +33,8 @@ const { getJobStatus, listImageJobs, pruneFinishedJobs, startGenerateJob } = awa
 after(() => {
   if (realJobsFile === null) rmSync(JOBS_FILE, { force: true });
   else writeFileSync(JOBS_FILE, realJobsFile);
+  if (priorDataDir === undefined) delete process.env.BYTELIGHT_STUDIO_DATA_DIR;
+  else process.env.BYTELIGHT_STUDIO_DATA_DIR = priorDataDir;
   rmSync(tmpRoot, { recursive: true, force: true });
 });
 

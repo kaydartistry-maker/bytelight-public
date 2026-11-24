@@ -35,6 +35,8 @@ export const PROVIDER_ROWS: ProviderRow[] = [
   { id: 'claude', label: 'Claude' },
   { id: 'claude-cli', label: 'Claude CLI' },
   { id: 'codex-cli', label: 'Codex CLI' },
+  { id: 'gemini-cli', label: 'Gemini CLI' },
+  { id: 'zai', label: 'Z.ai Coding Plan' },
   { id: 'openai-codex', label: 'Codex' },
   { id: 'openai', label: 'OpenAI' },
   { id: 'openrouter', label: 'OpenRouter' },
@@ -51,6 +53,7 @@ export interface ProviderStatus {
   openrouter?: { configured: boolean };
   groq?: { configured: boolean };
   xai?: { configured: boolean };
+  zai?: { configured: boolean };
   'openai-codex'?: { available: boolean; reason?: string };
 }
 
@@ -63,13 +66,14 @@ export interface ModelOption {
 // offered; the BYOK/local lanes need a key or a running server, and the
 // api-router lanes are refused while routing is SDK-only.
 export function providerEnabled(id: ProviderId, status: ProviderStatus | null): { enabled: boolean; hint?: string } {
-  if (id === 'claude' || id === 'claude-cli' || id === 'codex-cli') return { enabled: true };
+  if (id === 'claude' || id === 'claude-cli' || id === 'codex-cli' || id === 'gemini-cli') return { enabled: true };
   if (!status) return { enabled: false, hint: 'checking…' };
   const sdkOnly = status.routing === 'sdk';
   if (id === 'openai-codex') {
     const codex = status['openai-codex'];
     return codex?.available ? { enabled: true } : { enabled: false, hint: 'connect in Providers' };
   }
+  if (id === 'zai') return status.zai?.configured ? { enabled: true } : { enabled: false, hint: 'add Coding Plan key' };
   if (sdkOnly) return { enabled: false, hint: 'routing is SDK-only' };
   if (id === 'ollama') return status.ollama?.configured && status.ollama.enabled ? { enabled: true } : { enabled: false, hint: 'disabled' };
   if (id === 'openai') return status.openai?.configured && status.openai.enabled ? { enabled: true } : { enabled: false, hint: 'add key' };
@@ -113,7 +117,6 @@ export const CODEX_CLI_FALLBACK: ModelOption[] = [
   { id: 'gpt-5.6-sol', name: 'GPT-5.6 Sol' },
   { id: 'gpt-5.6-terra', name: 'GPT-5.6 Terra' },
   { id: 'gpt-5.6-luna', name: 'GPT-5.6 Luna' },
-  { id: 'gpt-5.5', name: 'GPT-5.5' },
 ];
 
 export type Catalogs = Partial<Record<ProviderId, ModelOption[] | 'error'>>;

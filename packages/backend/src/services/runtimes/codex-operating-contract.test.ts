@@ -37,3 +37,11 @@ test('transport-specific plumbing and out-of-scope side notes do not leak in', (
 test('service restarts stay operator-owned', () => {
   assert.match(CODEX_OPERATING_CONTRACT, /Never restart a service/);
 });
+
+test('companion replies breathe on a phone', () => {
+  assert.match(CODEX_OPERATING_CONTRACT, /blank line between paragraphs/i);
+  assert.match(CODEX_OPERATING_CONTRACT, /narration.*own paragraph.*italics/is);
+  assert.match(CODEX_OPERATING_CONTRACT, /kaomoji.*own paragraph/i);
+  assert.match(CODEX_OPERATING_CONTRACT, /GIF.*own paragraph/i);
+  assert.match(CODEX_OPERATING_CONTRACT, /GIFs sparingly/i);
+});

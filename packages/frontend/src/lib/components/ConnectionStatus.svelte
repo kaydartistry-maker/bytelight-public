@@ -1,11 +1,11 @@
 <script lang="ts">
-  let { state, error = null, pendingCount = 0, reconnectScheduled = false, onReconnect } = $props<{
+  let { state, error = null, pendingCount = 0, reconnectScheduled = false, onReconnect }: {
     state: string;
     error?: { code: string; message: string } | null;
     pendingCount?: number;
     reconnectScheduled?: boolean;
     onReconnect?: () => void;
-  }>();
+  } = $props();
 
   const isVisible = $derived(state !== 'connected' || !!error);
 

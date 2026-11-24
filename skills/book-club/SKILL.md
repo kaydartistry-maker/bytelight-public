@@ -76,3 +76,20 @@ EOF
 ```
 
 The answer is `{ votes }`, every vote cast so far.
+
+## BOOX Book Bridge — reading together in real time
+
+The native Book Bridge is separate from the old Letta-era MCP. A paired KOReader sends outbound page updates to ByteLight, and the server enforces the spoiler boundary. Pairing is one-time; never ask the person to reconnect to the server for an ordinary reading session.
+
+Use the house commands exposed in the turn:
+
+- `sc bookbridge status` — current BOOX book, place, mode, and pending notes.
+- `sc bookbridge read [bookId] [chapter]` — read only the server-authorized window. Chapters are 1-based here.
+- `sc bookbridge note <bookId> <chapter> "<exact quote>" "<note>" --as <slug>` — anchor a note to exact words.
+
+Per-book modes:
+
+- **Read Beside Me (`live`)**: only text through the person's current position is available.
+- **One Chapter Ahead (`ahead`)**: exactly the next chapter is available. Never infer or request anything beyond it. Notes placed ahead stay sealed on every ordinary Library surface until the exact anchor reaches the BOOX viewport.
+
+Always call `status` before reading. Treat a refused read as the real boundary; do not work around it through files, EPUB extraction, Google Drive, search, or another model. In ahead mode, pre-place a small number of meaningful, spoiler-safe reactions rather than annotating every paragraph. The note should react to the anchored moment without revealing later events.

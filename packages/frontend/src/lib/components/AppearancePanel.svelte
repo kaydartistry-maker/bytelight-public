@@ -304,11 +304,12 @@
     </div>
 
     <div class="slider-row">
-      <label class="slider-label">
+      <label class="slider-label" for="appearance-font-size">
         <span>Font Size</span>
         <span class="slider-value">{Math.round(custom.fontSize * 100)}%</span>
       </label>
       <input
+        id="appearance-font-size"
         type="range"
         class="slider"
         min="0.85"
@@ -320,11 +321,12 @@
     </div>
 
     <div class="slider-row">
-      <label class="slider-label">
+      <label class="slider-label" for="appearance-line-height">
         <span>Line Height</span>
         <span class="slider-value">{custom.lineHeight.toFixed(2)}</span>
       </label>
       <input
+        id="appearance-line-height"
         type="range"
         class="slider"
         min="1.3"
@@ -336,11 +338,12 @@
     </div>
 
     <div class="slider-row">
-      <label class="slider-label">
+      <label class="slider-label" for="appearance-letter-spacing">
         <span>Letter Spacing</span>
         <span class="slider-value">{custom.letterSpacing === 0 ? 'Normal' : `${custom.letterSpacing > 0 ? '+' : ''}${custom.letterSpacing.toFixed(3)}em`}</span>
       </label>
       <input
+        id="appearance-letter-spacing"
         type="range"
         class="slider"
         min="-0.02"
@@ -356,11 +359,12 @@
   <section class="section">
     <h3 class="section-label">Layout</h3>
     <div class="slider-row">
-      <label class="slider-label">
+      <label class="slider-label" for="appearance-roundness">
         <span>Roundness</span>
         <span class="slider-value">{custom.borderRadius === 0 ? 'Sharp' : custom.borderRadius >= 1.25 ? 'Pill' : 'Soft'}</span>
       </label>
       <input
+        id="appearance-roundness"
         type="range"
         class="slider"
         min="0"
@@ -377,11 +381,12 @@
     <h3 class="section-label">Effects</h3>
     <p class="section-hint">Aura &amp; Glow shape the Cosmos skin. 100% = default.</p>
     <div class="slider-row">
-      <label class="slider-label">
+      <label class="slider-label" for="appearance-aura">
         <span>Aura</span>
         <span class="slider-value">{Math.round(custom.auraIntensity * 100)}%</span>
       </label>
       <input
+        id="appearance-aura"
         type="range"
         class="slider"
         min="0"
@@ -392,11 +397,12 @@
       />
     </div>
     <div class="slider-row">
-      <label class="slider-label">
+      <label class="slider-label" for="appearance-glow">
         <span>Glow</span>
         <span class="slider-value">{Math.round(custom.glowIntensity * 100)}%</span>
       </label>
       <input
+        id="appearance-glow"
         type="range"
         class="slider"
         min="0"
@@ -407,11 +413,12 @@
       />
     </div>
     <div class="slider-row">
-      <label class="slider-label">
+      <label class="slider-label" for="appearance-motion">
         <span>Motion</span>
         <span class="slider-value">{custom.motionIntensity === 0 ? 'Off' : `${Math.round(custom.motionIntensity * 100)}%`}</span>
       </label>
       <input
+        id="appearance-motion"
         type="range"
         class="slider"
         min="0"

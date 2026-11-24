@@ -29,7 +29,14 @@ import {
 } from '../services/secrets.js';
 import { getPushService } from '../services/push.js';
 
+import { getBytelightConfig } from '../config.js';
 const router = Router();
+// The shared auth boundary permits passwordless deployments; credentials do not.
+router.use('/secrets', (_req, res, next) => {
+  res.setHeader('Cache-Control', 'no-store');
+  if (!getBytelightConfig().auth.password) return res.status(403).json({ error: 'Owner authentication required' });
+  next();
+});
 
 // Masked status of every managed key — hasValue booleans, no values.
 router.get('/secrets', (_req, res) => {

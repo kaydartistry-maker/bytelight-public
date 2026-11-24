@@ -168,7 +168,7 @@ export function ManagedMcpServers({ themeConfig, themeMode }: ManagedMcpServersP
   const card = cn('rounded-2xl border p-4 mb-3', colors.panelBg, colors.panelBorder);
 
   return (
-    <div className={card}>
+    <div data-appearance-card="" className={card}>
       <div className="flex items-center justify-between mb-2">
         <span className={cn('text-[11px] font-bold uppercase tracking-[0.12em]', colors.textMuted)}>
           Managed Servers (HTTP)

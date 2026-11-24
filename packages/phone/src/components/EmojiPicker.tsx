@@ -106,6 +106,8 @@ export function EmojiPicker({ onSelect, onClose, themeConfig, themeMode, customE
     return (
       <button
         key={id}
+        data-appearance-tab=""
+        aria-pressed={isActive}
         onClick={() => setTab(id)}
         className={cn(
           "shrink-0 flex items-center justify-center w-7 h-7 rounded-full text-base leading-none transition-colors",

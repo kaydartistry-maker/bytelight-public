@@ -6,12 +6,12 @@
     commands = [],
     onselect,
     onclose,
-  } = $props<{
+  }: {
     filter: string;
     commands: CommandRegistryEntry[];
     onselect: (command: CommandRegistryEntry) => void;
     onclose: () => void;
-  }>();
+  } = $props();
 
   let selectedIndex = $state(0);
   let listEl: HTMLDivElement;

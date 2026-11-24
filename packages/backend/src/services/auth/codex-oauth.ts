@@ -27,8 +27,10 @@
  */
 
 import { promises as fs } from 'fs';
-import { existsSync } from 'fs';
-import { dirname, resolve } from 'path';
+import { existsSync, readFileSync } from 'fs';
+import { homedir } from 'os';
+import { spawn } from 'child_process';
+import { dirname, join, resolve } from 'path';
 import { fileURLToPath } from 'url';
 import {
   loginOpenAICodex,
@@ -66,6 +68,11 @@ export interface CodexAuthSnapshot {
   loggedIn: boolean;
   expiresAt: number | null;
   refreshable: boolean;
+  /**
+   * Which login the house is standing on: its own (the Providers card), the
+   * Codex CLI's (`codex login`), or none. Never a path, never a token.
+   */
+  source: 'house' | 'cli' | null;
   loginSession: CodexLoginSnapshot;
 }
 
@@ -126,6 +133,133 @@ export function getCodexAuthPath(): string {
 // ─────────────────────────────────────────────────────────────────────────
 // Persistence
 // ─────────────────────────────────────────────────────────────────────────
+
+// ── The Codex CLI's login, borrowed read-only ───────────────────────────
+//
+// One ChatGPT account, one sign-in. A house that has run `codex login` (the
+// warm chat lane needs it) should not also need the Providers card before the
+// Archivist and the API lane can use Codex. So when the house has no login of
+// its own, it borrows the CLI's access token.
+//
+// The house never refreshes the CLI's token itself: OpenAI rotates the refresh
+// token on every refresh, so a refresh done here would strand the CLI's copy
+// and break the chat lane. When the borrowed token is stale, the house asks
+// the Codex CLI to refresh it instead (a short-lived \`codex app-server\`,
+// getAuthStatus with refreshToken), so the CLI's own auth manager rotates and
+// saves its own file, exactly as a second Codex window would.
+
+/** The CLI's auth file. Override with CODEX_CLI_AUTH_PATH (tests). */
+export function getCodexCliAuthPath(): string {
+  if (process.env.CODEX_CLI_AUTH_PATH) return resolve(process.env.CODEX_CLI_AUTH_PATH);
+  return join(process.env.CODEX_HOME || join(homedir(), '.codex'), 'auth.json');
+}
+
+interface CliToken { access: string; expires: number }
+
+function readCliToken(): CliToken | null {
+  try {
+    const path = getCodexCliAuthPath();
+    if (!existsSync(path)) return null;
+    const parsed = JSON.parse(readFileSync(path, 'utf8'));
+    const access = parsed?.tokens?.access_token;
+    if (typeof access !== 'string' || !access) return null;
+    const payload = access.split('.')[1];
+    if (!payload) return null;
+    const claims = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8'));
+    if (typeof claims?.exp !== 'number') return null;
+    return { access, expires: claims.exp * 1000 };
+  } catch {
+    return null;
+  }
+}
+
+/** A borrowed CLI token that is still good for at least a minute. */
+function liveCliToken(): CliToken | null {
+  const tok = readCliToken();
+  if (!tok || tok.expires - Date.now() < 60_000) return null;
+  return tok;
+}
+
+function tokenExpiry(access: string): number | null {
+  try {
+    const claims = JSON.parse(Buffer.from(access.split('.')[1] ?? '', 'base64url').toString('utf8'));
+    return typeof claims?.exp === 'number' ? claims.exp * 1000 : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Override for tests: (refresh) => token. */
+let cliRefresher: ((refresh: boolean) => Promise<string | null>) | null = null;
+export function __setCodexCliRefresherForTests(fn: typeof cliRefresher): void { cliRefresher = fn; }
+
+/**
+ * Ask the Codex CLI for its current access token, refreshing first when asked.
+ * One short-lived app-server over stdio: initialize, getAuthStatus, exit.
+ */
+function askCodexCliForToken(refresh: boolean): Promise<string | null> {
+  if (cliRefresher) return cliRefresher(refresh);
+  return new Promise((resolveToken) => {
+    let done = false;
+    let buf = '';
+    const child = spawn(process.env.CODEX_BIN || 'codex', ['app-server'], { stdio: ['pipe', 'pipe', 'ignore'] });
+    const finish = (tok: string | null) => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      try { child.kill(); } catch { /* gone */ }
+      resolveToken(tok);
+    };
+    const timer = setTimeout(() => finish(null), 20_000);
+    child.on('error', () => finish(null));
+    child.on('exit', () => finish(null));
+    child.stdout.setEncoding('utf8');
+    child.stdout.on('data', (chunk: string) => {
+      buf += chunk;
+      let nl: number;
+      while ((nl = buf.indexOf('\n')) >= 0) {
+        const line = buf.slice(0, nl).trim();
+        buf = buf.slice(nl + 1);
+        if (!line) continue;
+        let msg: any;
+        try { msg = JSON.parse(line); } catch { continue; }
+        if (msg.id === 1) {
+          child.stdin.write(JSON.stringify({ method: 'initialized' }) + '\n');
+          child.stdin.write(JSON.stringify({ id: 2, method: 'getAuthStatus', params: { includeToken: true, refreshToken: refresh } }) + '\n');
+        } else if (msg.id === 2) {
+          const tok = msg.result?.authToken;
+          finish(typeof tok === 'string' && tok ? tok : null);
+        }
+      }
+    });
+    child.stdin.write(JSON.stringify({ id: 1, method: 'initialize', params: { clientInfo: { name: 'byte-light', version: '1.0.0' } } }) + '\n');
+  });
+}
+
+let cliRefreshInFlight: Promise<CliToken | null> | null = null;
+
+/** A live borrowed token, asking the CLI to refresh its own login if needed. */
+async function freshCliToken(): Promise<CliToken | null> {
+  const live = liveCliToken();
+  if (live) return live;
+  if (!readCliToken()) return null;
+  if (cliRefreshInFlight) return cliRefreshInFlight;
+  cliRefreshInFlight = (async () => {
+    try {
+      const access = await askCodexCliForToken(true);
+      if (!access) return null;
+      const expires = tokenExpiry(access);
+      if (!expires || expires - Date.now() < 60_000) return null;
+      console.log('[CodexAuth] Codex CLI refreshed its login for the house; new expiry', new Date(expires).toISOString());
+      return { access, expires };
+    } catch {
+      return null;
+    } finally {
+      cliRefreshInFlight = null;
+    }
+  })();
+  return cliRefreshInFlight;
+}
 
 async function readCredentials(): Promise<OAuthCredentials | null> {
   const path = getCodexAuthPath();
@@ -241,7 +375,11 @@ async function refreshCredentials(current: OAuthCredentials): Promise<OAuthCrede
  */
 export async function getCodexCredentials(): Promise<OAuthCredentials | null> {
   const current = await readCredentials();
-  if (!current) return null;
+  if (!current) {
+    // No house login: borrow the CLI's; the CLI refreshes its own (see above).
+    const cli = await freshCliToken();
+    return cli ? { access: cli.access, refresh: '', expires: cli.expires } : null;
+  }
 
   const now = Date.now();
   if (current.expires - now > REFRESH_LEADTIME_MS) {
@@ -261,7 +399,9 @@ export async function getCodexAccessToken(): Promise<string> {
   const creds = await getCodexCredentials();
   if (!creds) {
     throw new CodexAuthRequiredError(
-      'Codex auth required. Log in via Settings → Provider Health.',
+      readCliToken()
+        ? 'The Codex CLI login could not be refreshed. Run `codex login` again, or log in under Providers.'
+        : 'Codex auth required. Log in under Providers, or run `codex login`.',
     );
   }
   return creds.access;
@@ -273,7 +413,7 @@ export async function getCodexAccessToken(): Promise<string> {
  * expiry — use {@link getCodexAuthSnapshot} for that.
  */
 export function isCodexLoggedIn(): boolean {
-  return existsSync(getCodexAuthPath());
+  return existsSync(getCodexAuthPath()) || readCliToken() !== null;
 }
 
 /**
@@ -290,10 +430,21 @@ export function isCodexLoggedIn(): boolean {
  */
 export async function getCodexAuthSnapshot(): Promise<CodexAuthSnapshot> {
   const creds = await readCredentials();
+  if (creds) {
+    return {
+      loggedIn: true,
+      expiresAt: creds.expires,
+      refreshable: !!creds.refresh,
+      source: 'house',
+      loginSession: getLoginSession(),
+    };
+  }
+  const cli = readCliToken();
   return {
-    loggedIn: !!creds,
-    expiresAt: creds?.expires ?? null,
-    refreshable: !!creds?.refresh,
+    loggedIn: !!cli,
+    expiresAt: cli?.expires ?? null,
+    refreshable: false,
+    source: cli ? 'cli' : null,
     loginSession: getLoginSession(),
   };
 }

@@ -67,6 +67,13 @@ not wrap on a phone. Use plain wrapped text.
 
 Describe what a change does for a person, not only which file it lives in.
 
+Leave one full blank line between paragraphs. Keep paragraphs short enough to
+scan on a phone instead of sending a dense wall of text. Put every piece of
+narration or physical action on its own paragraph and write it in *italics*, separate
+from spoken dialogue. Put each kaomoji on its own paragraph so it cannot be clipped
+at the edge of the screen. Put each GIF on its own paragraph too, and use GIFs sparingly—
+never as a routine garnish or several in quick succession.
+
 ## Standing service rules for any lane
 
 - Never restart a service yourself.

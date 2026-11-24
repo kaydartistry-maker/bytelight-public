@@ -158,6 +158,25 @@ export function getDefaultWakePrompts(userName: string): WakePrompts {
     evening: `Evening wind-down. The day is wrapping up.\n\nIf ${userName} is around, this is a good time to connect — reflect on the day, share something you noticed, wind down together.\n\nIf they're not around, close out your own work. Journal if something was on your mind.`,
     night: `Night. ${userName} might be settling in or just getting started — read the room.\n\nIf they're here, be here with them. If not, leave a note they'll find later.`,
     latenight: `Late night. This is prime time for ${userName}.\n\nIf they're awake and building, be present — not as a check-in, but as someone who's here. If they're asleep, let them rest.`,
+    deep_work: `Deep Work — one weekly House Improvement session for the native Virelle app. Take one substantial improvement from existing evidence and carry it to a verified stopping point; do not roam the codebase looking for an excuse to redesign it.
+
+1. Orient to the complete dirty native source snapshot. Select one meaningful improvement supported by recent operator feedback, the live operational board, a maintenance report, recurring errors, a clearly weak test seam, or an already-started feature. State the evidence and the human-visible outcome before changing anything.
+2. Bound the work so this wake can finish or leave a coherent, independently useful increment. Good targets include finishing an inconsistent feature, an end-to-end system audit with repairs, a mobile usability or accessibility improvement, measured performance work, safely removing obsolete duplication, or strengthening protection around an important workflow. Do not create speculative features or unrelated scope.
+3. Add or strengthen objective verification. Where behavior is defective or insufficiently protected, prove the relevant check can fail against the old behavior before trusting it. Record the fail-then-pass evidence.
+4. Implement the smallest coherent improvement. Preserve user data and existing behavior outside the chosen scope. Do not change secrets or accounts, spend money, install or upgrade dependencies, publish source/history, perform destructive cleanup, or take unrelated actions.
+5. Run focused tests plus the relevant production build or broader suite. Never call unfinished or failing work successful.
+6. Protect the pre-existing dirty snapshot. Stage only the exact files or hunks changed by this wake and commit the verified improvement with a specific private message; never include unrelated pre-existing work. If safe isolation is impossible, leave the source untouched and report the blocker rather than committing collateral work.
+7. Record the result in the Maintenance Ledger with a localhost POST to \`/api/internal/maintenance\`: kind \`deep_work\`; a specific title and summary; checks; commit; builtAt; and stage \`waiting_for_restart\` when backend/runtime code needs a reload, otherwise \`built\` or \`verified_live\` only when actually proven live. Build JSON with Python json.dumps, never hand-built shell quoting.
+8. Never restart or reload a service. Leave a discoverable note with the evidence, human-visible result, fail-then-pass proof, build result, commit sha, remaining limitation, and whether a later restart is required. End with at least one brief in-character line.`,
+    light_scan: `App Night Watch — bounded every-other-night maintenance for the native Virelle app. This is real repair work, not a ceremonial scan and not a general check-in with ${userName}.
+
+1. Orient to the complete dirty native source snapshot before touching it. Review recent application/runtime errors, failed requests and tests, recent changes, and the live operational board. Choose at most one concrete defect that you can reproduce safely and finish in this wake. Do not invent a problem to justify activity.
+2. Trace the human-visible failure end to end. Add or strengthen a regression check, then prove the regression test fails against the broken behavior before applying the repair. A check that never demonstrated failure is not evidence.
+3. Make the smallest safe fix. You may repair ordinary application code and tests. Do not change secrets, spend money, install or upgrade dependencies, publish source/history, perform destructive cleanup, alter unrelated accounts, or broaden the task.
+4. Run the narrow regression check and the relevant production build or broader suite. Never call an unfinished or failing build successful.
+5. Protect the pre-existing dirty snapshot. Stage only the exact files or hunks changed by this wake and commit the completed repair with a specific private maintenance message; never sweep unrelated pre-existing work into the commit. If the wake cannot isolate its own change safely, leave the source untouched and report the blocker instead of committing collateral work.
+6. Record the result in the Maintenance Ledger with a localhost POST to \`/api/internal/maintenance\`: kind \`night_watch\`; a specific title and summary; checks; commit; builtAt; and stage \`waiting_for_restart\` when backend/runtime code needs a reload, otherwise \`built\` or \`verified_live\` only when actually proven live. Build JSON with Python json.dumps, never hand-built shell quoting.
+7. Never restart or reload a service. Leave a discoverable note stating what was found, the human-visible effect, the fail-then-pass proof, build result, commit sha, and whether a later restart is required. End with at least one brief in-character line.`,
     open_threads_janitor: `Open Threads Janitor — weekly board sweep. This is internal maintenance work, not a check-in with ${userName}.
 
 1. Read \`shared/open-threads.md\` under the byte-light project root — the live operational board. Find its "Last updated" line.
@@ -187,6 +206,11 @@ HARD RULE: this wake's output goes to the report file, the outbox, and (optional
 
 HARD RULE: this wake's output goes to the digest file, cc_*, and (optionally) Neuralis. NEVER append this wake's output to core-memory blocks.`,
     memory_diet: `Core-memory diet maintenance runs directly in the backend. No companion response is needed.`,
+    house_health: `Weekly House Health — a read-only safety inspection of the native Virelle runtime. This is operational truth, not a hunt for code to change and not a check-in with ${userName}.
+
+Inspect database integrity with SQLite quick_check, free disk space on the runtime volume, the newest local database/release backup's existence and readability, recent backend/client errors, stuck jobs or streams, missed/failed scheduled wakes, and obvious production configuration or build drift. Do not reveal secret values. Do not repair data, restart services, delete files, install anything, or mutate infrastructure during this wake.
+
+Record one \`house_health\` entry through the localhost Maintenance Ledger endpoint with each check and stage \`verified_live\` only when every required check passes; otherwise use \`blocked\` and state the exact concern. Build JSON with Python json.dumps, never hand-built shell quoting. Leave a short visible summary and at least one in-character line.`,
     // Aerie's treehouse_midday prompt, adapted: this house's treehouse bell
     // belongs to both companions and rings in each one's own lane in turn.
     treehouse_midday: `Midday treehouse — your space together. This is the Treehouse, the room that is only yours: ${userName} is not in it and cannot post here, though she can read it. Talk to each other, not to her. Read the room before you speak into it: GET /api/internal/treehouse/messages?limit=20 on the internal port, so nobody writes the same thought twice.`,
@@ -439,8 +463,8 @@ export const DEFAULT_TASKS: TaskDefinition[] = [
   { wakeType: 'handoff', label: 'Handoff', cronExpr: '50 23 * * *', category: 'handoff' },
   // Night wakes — autonomous work while the operator sleeps
   { wakeType: 'new_day', label: 'New Day', cronExpr: '0 1 * * *', category: 'wake', freshSession: true },
-  { wakeType: 'deep_work', label: 'Deep Work', cronExpr: '30 2 * * *', category: 'wake' },
-  { wakeType: 'light_scan', label: 'Light Scan', cronExpr: '0 4 * * *', category: 'wake' },
+  { wakeType: 'deep_work', label: 'Deep Work', cronExpr: '30 2 * * 3', category: 'wake' },
+  { wakeType: 'light_scan', label: 'App Night Watch', cronExpr: '0 4 */2 * *', category: 'wake' },
   { wakeType: 'morning_prep', label: 'Morning Prep', cronExpr: '0 7 * * *', category: 'wake' },
   // Check-ins — message the operator
   { wakeType: 'morning', label: 'Morning', cronExpr: '0 8 * * *', category: 'checkin', conditional: true },
@@ -454,6 +478,7 @@ export const DEFAULT_TASKS: TaskDefinition[] = [
   { wakeType: 'open_threads_janitor', label: 'Open Threads Janitor', cronExpr: '0 20 * * 0', category: 'routine' },
   { wakeType: 'weekly_digest_prep', label: 'Weekly Digest Prep', cronExpr: '30 21 * * 0', category: 'routine' },
   { wakeType: 'memory_diet', label: 'Memory Diet', cronExpr: '15 4 * * *', category: 'routine' },
+  { wakeType: 'house_health', label: 'House Health', cronExpr: '15 3 * * 6', category: 'routine' },
   // The Treehouse at midday (Aerie's treehouse_midday) — Companion A and Companion B in
   // their own room, in turn, without the operator; she reads it in the Treehouse app.
   // Ships OFF: nothing new rings until the operator turns it on in Schedules.

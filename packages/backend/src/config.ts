@@ -24,6 +24,10 @@ export interface BytelightConfig {
   auth: {
     password: string;
   };
+  security: {
+    /** Absolute path only; key bytes never belong in YAML or environment. */
+    vault_key_file: string;
+  };
   agent: {
     cwd: string;
     claude_md_path: string;
@@ -175,6 +179,9 @@ const DEFAULTS: BytelightConfig = {
   auth: {
     password: '',
   },
+  security: {
+    vault_key_file: '',
+  },
   agent: {
     cwd: '.',
     claude_md_path: './CLAUDE.md',
@@ -258,6 +265,13 @@ function deepMerge(target: Record<string, unknown>, source: Record<string, unkno
 }
 
 let _config: BytelightConfig | null = null;
+let _loadedConfigPath: string | undefined;
+let _reloadHydrator: ((config: BytelightConfig) => void) | undefined;
+
+/** Native credential initialization supplies its reader without a config → DB import cycle. */
+export function setConfigReloadHydrator(hydrate: (config: BytelightConfig) => void): void {
+  _reloadHydrator = hydrate;
+}
 
 export function loadConfig(configPath?: string): BytelightConfig {
   if (_config) return _config;
@@ -289,6 +303,7 @@ export function loadConfig(configPath?: string): BytelightConfig {
     if (existsSync(p)) {
       const raw = readFileSync(p, 'utf-8');
       fileConfig = yaml.load(raw) as Record<string, unknown> || {};
+      _loadedConfigPath = p;
       console.log(`Loaded config from: ${p}`);
       break;
     }
@@ -362,8 +377,11 @@ export function getBytelightConfig(): BytelightConfig {
  * PM2 reload.
  */
 export function reloadConfig(): BytelightConfig {
+  const configPath = _loadedConfigPath;
   _config = null;
-  return loadConfig();
+  const config = loadConfig(configPath);
+  _reloadHydrator?.(config);
+  return config;
 }
 
 /**
@@ -372,6 +390,7 @@ export function reloadConfig(): BytelightConfig {
  * Returns null if no config file is on disk.
  */
 export function findBytelightConfigPath(): string | null {
+  if (_loadedConfigPath && existsSync(_loadedConfigPath)) return _loadedConfigPath;
   for (const name of ['bytelight.yaml', 'bytelight.yml']) {
     const p = join(PROJECT_ROOT, name);
     if (existsSync(p)) return p;

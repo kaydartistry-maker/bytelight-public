@@ -1,227 +1,29 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { Check, Loader2 } from 'lucide-react';
-import { apiFetch } from '../../bytelight';
+import { useEffect, useState } from 'react';
 import { cn } from '../../lib/utils';
-import type { ThemeColors } from '../../lib/theme';
-import { ACCENT_TEXT_COLOR_BY_THEME } from './constants';
-import {
-  ENGINE_HINTS, QUALITY_OPTS, SETTINGS_SIZE_OPTS, STUDIO_ENGINES,
-  budgetPatch, parseStudioSettings, spendLine,
-  type StudioEngine, type StudioSettings,
-} from './studio-settings';
-import type { ThemeMode } from './types';
+import { Button } from '../../ui';
+import type { StudioPanelProps } from './types';
+import { studioRequest, type ImageSettings } from './my-styles';
 
-interface StudioSettingsPanelProps {
-  colors: ThemeColors;
-  themeMode: ThemeMode;
-  /** Called after the default engine is saved, so Create can follow it. */
-  onEngineSwitched: (engine: StudioEngine) => void;
-}
-
-/**
- * The desktop Studio's Settings tab: image generation on/off, the default
- * engine, and — for the metered OpenAI engine — size, quality, API key and
- * monthly budget. All of it is GET/PUT /api/studio/settings.
- */
-export function StudioSettingsPanel({ colors, themeMode, onEngineSwitched }: StudioSettingsPanelProps) {
-  const [settings, setSettings] = useState<StudioSettings | null>(null);
-  const [monthlySpend, setMonthlySpend] = useState(0);
-  const [apiKeyInput, setApiKeyInput] = useState('');
-  const [budgetInput, setBudgetInput] = useState('');
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
-  const loadIdRef = useRef(0);
-
-  const loadSettings = useCallback(async () => {
-    const loadId = ++loadIdRef.current;
-    try {
-      const r = await apiFetch('/api/studio/settings');
-      if (!r.ok || loadId !== loadIdRef.current) {
-        if (!r.ok) setError(`Settings could not be loaded (${r.status})`);
-        return;
-      }
-      const parsed = parseStudioSettings(await r.json());
-      setSettings(parsed.settings);
-      setMonthlySpend(parsed.monthlySpendUsd);
-      setBudgetInput(String(parsed.settings?.monthlyBudgetUsd ?? 0));
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'Settings could not be loaded');
-    }
-  }, []);
-
-  useEffect(() => { void loadSettings(); }, [loadSettings]);
-
-  const putSettings = async (patch: Record<string, unknown>): Promise<boolean> => {
-    setSaving(true);
-    setError(null);
-    setNotice(null);
-    try {
-      const r = await apiFetch('/api/studio/settings', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(patch),
-      });
-      if (r.ok) {
-        const parsed = parseStudioSettings(await r.json());
-        if (parsed.settings) setSettings(parsed.settings);
-        return true;
-      }
-      const data = await r.json().catch(() => ({}));
-      setError(data.error || 'Could not save.');
-      return false;
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'Could not save.');
-      return false;
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const switchBackend = async (engine: StudioEngine) => {
-    if (await putSettings({ backend: engine })) {
-      onEngineSwitched(engine);
-      setNotice(`Image engine → ${engine}`);
-    }
-  };
-
-  const saveKey = () => {
-    if (!apiKeyInput.trim()) return;
-    void putSettings({ openai_api_key: apiKeyInput.trim() });
-    setApiKeyInput('');
-  };
-  const clearKey = () => { void putSettings({ openai_api_key: '' }); };
-  const saveBudget = () => { void putSettings(budgetPatch(budgetInput)); };
-
-  const label = cn('text-xs font-medium uppercase tracking-wide', colors.textMuted);
-  const block = cn('space-y-2 rounded-xl border p-4', colors.panelBg, colors.panelBorder);
-  const hint = cn('text-xs', colors.textMuted);
-  const field = cn('min-w-0 flex-1 rounded-lg border px-3 py-2 text-sm', colors.panelBg, colors.panelBorder, colors.textMain);
-  const softButton = cn('rounded-lg border px-3 py-2 text-xs font-semibold disabled:opacity-50', colors.panelBorder, colors.textMain);
-
-  return (
-    <div className="bytelight-app-body flex-1 space-y-4 overflow-y-auto p-4">
-      {error && <div className="rounded-xl border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-300">{error}</div>}
-      {notice && <div className={cn('rounded-xl border px-3 py-2 text-xs', colors.panelBorder, colors.textMain)}>{notice}</div>}
-
-      {!settings ? (
-        <p className={cn('py-8 text-center text-sm', colors.textMuted)}>{error ? 'Settings unavailable.' : 'Loading…'}</p>
-      ) : (
-        <>
-          <section className={block}>
-            <div className="flex items-center justify-between">
-              <span className={label}>Image generation</span>
-              <button
-                type="button"
-                role="switch"
-                aria-checked={settings.enabled}
-                aria-label="Toggle image generation"
-                disabled={saving}
-                onClick={() => void putSettings({ enabled: !settings.enabled })}
-                className={cn('relative h-6 w-11 rounded-full border transition-colors disabled:opacity-50', colors.panelBorder)}
-                style={settings.enabled ? { backgroundColor: colors.accent } : undefined}
-              >
-                <span className={cn('absolute top-0.5 h-4 w-4 rounded-full bg-white shadow transition-all', settings.enabled ? 'left-6' : 'left-0.5')} />
-              </button>
-            </div>
-            <p className={hint}>When on, we can draw straight into the chat.</p>
-          </section>
-
-          <section className={block}>
-            <span className={label}>Engine</span>
-            <div className="flex flex-wrap gap-1.5">
-              {STUDIO_ENGINES.map((engine) => {
-                const active = settings.backend === engine;
-                return (
-                  <button
-                    type="button"
-                    key={engine}
-                    disabled={saving}
-                    onClick={() => void switchBackend(engine)}
-                    aria-pressed={active}
-                    className={cn('rounded-full border px-3 py-1.5 text-xs font-medium disabled:opacity-50', colors.panelBorder, !active && colors.textMuted)}
-                    style={active ? { backgroundColor: colors.accent, borderColor: colors.accent, color: ACCENT_TEXT_COLOR_BY_THEME[themeMode] } : undefined}
-                  >
-                    {engine}
-                  </button>
-                );
-              })}
-            </div>
-            <p className={hint}>{ENGINE_HINTS[settings.backend]}</p>
-          </section>
-
-          {settings.backend === 'openai' && (
-            <>
-              <section className={block}>
-                <div className="flex items-center justify-between gap-3">
-                  <span className={label}>Size</span>
-                  <select
-                    value={settings.size}
-                    disabled={saving}
-                    onChange={(e) => void putSettings({ size: e.target.value })}
-                    className={cn('rounded-lg border px-2 py-1.5 text-xs', colors.panelBg, colors.panelBorder, colors.textMain)}
-                  >
-                    {SETTINGS_SIZE_OPTS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-                  </select>
-                </div>
-              </section>
-
-              <section className={block}>
-                <div className="flex items-center justify-between gap-3">
-                  <span className={label}>Quality</span>
-                  <select
-                    value={settings.quality}
-                    disabled={saving}
-                    onChange={(e) => void putSettings({ quality: e.target.value })}
-                    className={cn('rounded-lg border px-2 py-1.5 text-xs', colors.panelBg, colors.panelBorder, colors.textMain)}
-                  >
-                    {QUALITY_OPTS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-                  </select>
-                </div>
-                <p className={hint}>Auto lets the model choose. Higher costs more.</p>
-              </section>
-
-              <section className={block}>
-                <span className={label}>OpenAI API key</span>
-                {settings.hasOpenaiKey && (
-                  <div className="flex items-center gap-2">
-                    <span className={cn('flex flex-1 items-center gap-1 text-xs', colors.textMain)}><Check className="h-3.5 w-3.5" /> Key saved</span>
-                    <button type="button" disabled={saving} onClick={clearKey} className={softButton}>Remove</button>
-                  </div>
-                )}
-                <div className="flex gap-2">
-                  <input
-                    type="password"
-                    placeholder="sk-…"
-                    autoComplete="off"
-                    value={apiKeyInput}
-                    onChange={(e) => setApiKeyInput(e.target.value)}
-                    className={field}
-                  />
-                  <button type="button" disabled={saving || !apiKeyInput.trim()} onClick={saveKey} className={softButton}>Save</button>
-                </div>
-              </section>
-
-              <section className={block}>
-                <span className={label}>Monthly budget (USD)</span>
-                <div className="flex gap-2">
-                  <input
-                    type="text"
-                    inputMode="decimal"
-                    placeholder="0 = no cap"
-                    value={budgetInput}
-                    onChange={(e) => setBudgetInput(e.target.value)}
-                    className={field}
-                  />
-                  <button type="button" disabled={saving} onClick={saveBudget} className={softButton}>Set</button>
-                </div>
-                <p className={hint}>{spendLine(monthlySpend, settings.monthlyBudgetUsd)}</p>
-              </section>
-            </>
-          )}
-          {saving && <div className={cn('flex items-center justify-center gap-2 text-xs', colors.textMuted)}><Loader2 className="h-4 w-4 animate-spin" /> Saving</div>}
-        </>
-      )}
-    </div>
-  );
+export function StudioSettingsPanel({ colors, onSettingsChanged }: StudioPanelProps & { onSettingsChanged?: () => Promise<void> }) {
+  const [data, setData] = useState<ImageSettings | null>(null), [error, setError] = useState(''), [busy, setBusy] = useState(false), [budget, setBudget] = useState('');
+  const load = async () => { const value = await studioRequest<ImageSettings>('settings'); setData(value); setBudget(String(value.settings.monthlyBudgetUsd)); };
+  useEffect(() => { load().catch(e => setError(e.message)); }, []);
+  const save = async (patch: unknown) => { if (busy) return; setBusy(true); setError(''); try { await studioRequest('settings', 'PUT', patch); await load(); await onSettingsChanged?.(); } catch (e) { setError((e as Error).message); } finally { setBusy(false); } };
+  const panel = cn('rounded-2xl border p-4 space-y-3 backdrop-blur-md', colors.panelBg, colors.panelBorder);
+  const field = cn('w-full rounded-xl border p-3 text-sm', colors.panelBg, colors.panelBorder);
+  if (!data) return <div className={panel}>{error || 'Loading Studio settings…'}</div>;
+  return <div className="space-y-4">
+    <section className={panel}><h2 className="text-sm font-semibold">Image generation</h2><label className="flex items-center justify-between text-sm gap-3">Enable image generation<input type="checkbox" checked={data.settings.enabled} disabled={busy} onChange={e => save({ enabled: e.target.checked })} /></label><label className="block text-xs">Quality<select className={cn(field, 'mt-1')} value={data.settings.quality} disabled={busy} onChange={e => save({ quality: e.target.value })}>{['auto', 'low', 'medium', 'high'].map(q => <option key={q}>{q}</option>)}</select></label><p className={cn('text-xs', colors.textMuted)}>The ChatGPT subscription route stays available without enabling API billing. Its image model is selected by the connection, not a GPT text-model picker.</p></section>
+    <section className={panel}>
+      <h2 className="text-sm font-semibold">OpenAI image models through OpenRouter · paid</h2>
+      <p className={cn('text-xs leading-relaxed', colors.textMuted)}>Uses your existing OpenRouter connection and its credits. No separate OpenAI key is needed. This is separate from your ChatGPT subscription; enabling it does not generate an image or change your chat image model.</p>
+      <p className={cn('text-xs', colors.textMuted)}>OpenRouter connection: {data.settings.hasOpenRouterKey ? 'connected' : 'no key saved — connect OpenRouter in Integrations'}.</p>
+      <label className="flex items-center justify-between gap-3 text-sm">Allow paid OpenRouter image models<input type="checkbox" checked={data.allowMeteredImages} disabled={busy || (!data.settings.hasOpenRouterKey && !data.allowMeteredImages)} onChange={e => save({ allowMeteredImages: e.target.checked })} /></label>
+      <label className="block text-xs">Monthly image API budget in USD<input type="number" min="0" step="1" className={cn(field, 'mt-1')} value={budget} onChange={e => setBudget(e.target.value)} /></label>
+      <p className={cn('text-xs', colors.textMuted)}>Recorded spend (may include estimates): ${data.monthlySpendUsd.toFixed(2)}. 0 means no cap. This blocks new requests after recorded spend reaches the budget; it is not an account-wide hard spending limit.</p>
+      <Button colors={colors} disabled={busy || budget.trim() === '' || !Number.isFinite(Number(budget)) || Number(budget) < 0} onClick={() => save({ monthly_budget_usd: Number(budget) })}>Save budget</Button>
+    </section>
+    <section className={panel}><h2 className="text-sm font-semibold">Model for images generated in chat</h2><select aria-label="Chat image model" className={field} value={data.chatImageModel} disabled={busy} onChange={e => save({ chatImageModel: e.target.value })}>{data.models.map(m => <option key={m.id} value={m.id} disabled={m.metered && (!data.allowMeteredImages || !data.settings.hasOpenRouterKey)}>{m.label}{m.metered ? ' · paid via OpenRouter' : ''}</option>)}</select><p className={cn('text-xs', colors.textMuted)}>Image generation only; companion chat models are unchanged. Choose the default style with the star in My Styles.</p></section>
+    {error && <p role="alert" className={cn(panel, 'text-sm')}>{error}</p>}
+  </div>;
 }

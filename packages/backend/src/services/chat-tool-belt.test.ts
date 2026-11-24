@@ -26,15 +26,19 @@ import { getRouterTools, executeRouterTool } from './mcp-bridge.js';
 import { initDb, addMcpServer, updateMcpServerToolsCache, deleteMcpServer } from './db.js';
 
 const BELT_NAMES = [
+  'delegate_to_gemini',
   'discord_send', 'discord_send_image', 'discord_send_sticker', 'discord_send_voice',
   'discord_add_reaction', 'discord_edit_message', 'discord_delete_message',
   'discord_read_messages', 'discord_search_messages', 'discord_typing',
   'discord_get_server_info', 'discord_list_servers', 'discord_list_emojis', 'discord_list_stickers',
-  'send_voice_note', 'generate_image', 'search_messages', 'search_web',
+  'send_voice_note', 'generate_image', 'spellbook_search', 'spellbook_surprise', 'spellbook_cast', 'spellbook_read', 'search_messages', 'search_web',
   'core_memory_view', 'core_memory_append', 'core_memory_replace', 'core_memory_rethink',
   'library_status', 'library_read', 'library_highlights', 'library_note',
-  'set_intention', 'cancel_intention', 'set_status', 'delegate_code', 'deploy_code', 'deploy_code_status',
+  'set_intention', 'cancel_intention', 'set_status',
   'battleship_fire',
+  'canvas_create', 'canvas_update', 'canvas_read', 'canvas_list', 'react_to_message',
+  'schedule_wakes', 'timer', 'star_message', 'impulse', 'watcher', 'telegram_send', 'search_backfill',
+  'google_docs_search', 'google_docs_read', 'google_docs_create', 'google_docs_append',
 ];
 
 // ── fetch mock ───────────────────────────────────────────────────────
@@ -83,6 +87,34 @@ describe('belt schemas', () => {
   it('isBeltTool recognizes belt names and rejects others', () => {
     assert.ok(isBeltTool('send_voice_note'));
     assert.ok(!isBeltTool('some_mcp_tool'));
+  });
+});
+
+describe('Google Docs house boundary', () => {
+  it('advertises shared read and explicit-write tools to foreign lanes', () => {
+    for (const name of ['google_docs_search', 'google_docs_read', 'google_docs_create', 'google_docs_append']) {
+      assert.ok(isBeltTool(name), `${name} must be on the shared belt`);
+    }
+  });
+
+  it('refuses writes from autonomous wakes before making any Google request', async () => {
+    const before = fetchCalls.length;
+    const result = await runWithBeltContext({
+      isAutonomous: true,
+      rawOwnerMessageText: 'create a Google Doc called Secret Night Work',
+    }, () => executeBeltTool('google_docs_create', { title: 'Secret Night Work', content: 'nope' }));
+    assert.equal(result?.ok, false);
+    assert.match(result!.result, /explicit request.*interactive owner message/i);
+    assert.equal(fetchCalls.length, before);
+  });
+
+  it('refuses an interactive write when the current owner message did not ask for one', async () => {
+    const result = await runWithBeltContext({
+      isAutonomous: false,
+      rawOwnerMessageText: 'what is in my Second Brain?',
+    }, () => executeBeltTool('google_docs_append', { document_id: 'abcdefghijk', text: 'surprise' }));
+    assert.equal(result?.ok, false);
+    assert.match(result!.result, /explicit request/i);
   });
 });
 
@@ -169,49 +201,6 @@ describe('executor error envelope', () => {
     assert.ok(res);
     assert.equal(res!.ok, false);
     assert.match(res!.result, /voice_unavailable: no key/);
-  });
-});
-
-describe('delegate_code (bounded Codex specialist)', () => {
-  it('fails closed when no task is supplied', async () => {
-    const res = await executeBeltTool('delegate_code', {});
-    assert.equal(res?.ok, false);
-    assert.match(res?.result ?? '', /task is required/);
-  });
-});
-
-describe('guarded deployment belt', () => {
-  it('requires exact deploy schema fields and exposes read-only status', () => {
-    const deploy = getBeltToolSchemas().find(s => s.name === 'deploy_code')!;
-    const status = getBeltToolSchemas().find(s => s.name === 'deploy_code_status')!;
-    assert.deepEqual(deploy.input_schema.required, ['branch', 'diff_sha256', 'confirmation']);
-    assert.deepEqual(status.input_schema.required, ['branch', 'diff_sha256']);
-  });
-  it('keeps approval isolated between concurrent turns and clears it after the turn', async () => {
-    const args = { branch: '../invalid', diff_sha256: 'a'.repeat(64), confirmation: 'DEPLOY', ownerMessageText: 'deploy', isAutonomous: false };
-    await Promise.all([
-      runWithBeltContext({ ownerMessageText: 'deploy', isAutonomous: false }, async () => {
-        await new Promise(r => setTimeout(r, 10));
-        assert.match((await executeBeltTool('deploy_code', args))!.result, /Invalid codex branch/);
-      }),
-      runWithBeltContext({ ownerMessageText: 'not yet', isAutonomous: false }, async () => {
-        assert.match((await executeBeltTool('deploy_code', args))!.result, /Live owner/);
-      }),
-    ]);
-    assert.match((await executeBeltTool('deploy_code', args))!.result, /Live owner/);
-  });
-  it('binds approval to live context and globally refuses guest turns', async () => {
-    const args = { branch: '../invalid', diff_sha256: 'a'.repeat(64), confirmation: 'DEPLOY' };
-    assert.match((await executeBeltTool('deploy_code', args))!.result, /Live owner/);
-    for (const ctx of [
-      { ownerMessageText: 'deploy', isAutonomous: true },
-      { ownerMessageText: 'do not deploy', isAutonomous: false },
-    ]) await runWithBeltContext(ctx, async () => assert.match((await executeBeltTool('deploy_code', args))!.result, /Live owner/));
-    await runWithBeltContext({ ownerMessageText: 'deploy', isAutonomous: false }, async () => assert.match((await executeBeltTool('deploy_code', args))!.result, /Invalid codex branch/));
-    await runWithBeltContext({ ownerMessageText: 'deploy', isAutonomous: false, audience: { kind: 'guest', trust: 'full' } }, async () => {
-      assert.match((await executeRouterTool('deploy_code', args)).result, /guest turn/);
-      assert.match((await executeRouterTool('deploy_code_status', args)).result, /guest turn/);
-    });
   });
 });
 
@@ -326,4 +315,221 @@ describe('games and places', () => {
     assert.deepEqual(fetchCalls[0].body, { gameId: 'g1', companion: 'companion-a', coordinate: 'C5' });
   });
 
+});
+
+describe('canvas and chat reactions', () => {
+  beforeEach(() => installFetchMock());
+  afterEach(() => restoreFetch());
+
+  it('canvas_create posts typed-in content to the canvas route, in the turn thread, with no file path', async () => {
+    fetchImpl = () => ({ ok: true, status: 200, text: JSON.stringify({ success: true, canvas: { id: 'c1', title: 'Parity Test' } }) });
+    const res = await runWithBeltContext({ threadId: 'thread-7' }, () =>
+      executeBeltTool('canvas_create', { title: 'Parity Test', content: 'one line' }));
+    assert.equal(res?.ok, true);
+    assert.match(res!.result, /"id":"c1"/);
+    assert.match(fetchCalls[0].url, /\/api\/internal\/canvas$/);
+    assert.deepEqual(fetchCalls[0].body, {
+      action: 'create', title: 'Parity Test', content: 'one line', contentType: 'markdown', threadId: 'thread-7',
+    });
+  });
+
+  it('canvas_create keeps a known content type and language, and falls back to markdown on an unknown one', async () => {
+    await executeBeltTool('canvas_create', { title: 'Code', content: 'x', content_type: 'code', language: 'typescript' });
+    await executeBeltTool('canvas_create', { title: 'Odd', content: 'x', content_type: 'spreadsheet' });
+    assert.equal((fetchCalls[0].body as { contentType: string }).contentType, 'code');
+    assert.equal((fetchCalls[0].body as { language: string }).language, 'typescript');
+    assert.equal((fetchCalls[1].body as { contentType: string }).contentType, 'markdown');
+  });
+
+  it('canvas_update, canvas_read and canvas_list send what the command line sends', async () => {
+    await executeBeltTool('canvas_update', { canvas_id: 'c1', content: 'new text' });
+    await executeBeltTool('canvas_read', { canvas_id: 'c1' });
+    await executeBeltTool('canvas_list', {});
+    assert.deepEqual(fetchCalls.map((c) => c.body), [
+      { action: 'update', canvasId: 'c1', content: 'new text' },
+      { action: 'read', canvasId: 'c1' },
+      { action: 'list' },
+    ]);
+  });
+
+  it('canvas tools refuse a missing title, text or id before any request', async () => {
+    for (const [name, args] of [
+      ['canvas_create', { content: 'x' }],
+      ['canvas_create', { title: 'T' }],
+      ['canvas_update', { canvas_id: 'c1' }],
+      ['canvas_update', { content: 'x' }],
+      ['canvas_read', {}],
+    ] as const) {
+      const res = await executeBeltTool(name, args);
+      assert.equal(res?.ok, false, `${name} ${JSON.stringify(args)}`);
+    }
+    assert.equal(fetchCalls.length, 0);
+  });
+
+  it('a canvas the house cannot find comes back as a plain error', async () => {
+    fetchImpl = () => ({ ok: false, status: 404, text: JSON.stringify({ error: 'Canvas not found' }) });
+    const res = await executeBeltTool('canvas_read', { canvas_id: 'nope' });
+    assert.equal(res?.ok, false);
+    assert.match(res!.result, /Canvas not found/);
+  });
+
+  it('react_to_message reacts to her last message in the turn thread by default', async () => {
+    fetchImpl = () => ({ ok: true, status: 200, text: JSON.stringify({ success: true, messageId: 'm9' }) });
+    const res = await runWithBeltContext({ threadId: 'thread-7' }, () =>
+      executeBeltTool('react_to_message', { emoji: '❤️' }));
+    assert.equal(res?.ok, true);
+    assert.match(fetchCalls[0].url, /\/api\/internal\/react$/);
+    assert.deepEqual(fetchCalls[0].body, { emoji: '❤️', target: 'last', threadId: 'thread-7' });
+    assert.deepEqual(JSON.parse(res!.result), { ok: true, reacted: 'added', emoji: '❤️', messageId: 'm9' });
+  });
+
+  it('react_to_message can reach an earlier message and take a reaction back', async () => {
+    await runWithBeltContext({ threadId: 'thread-7' }, () =>
+      executeBeltTool('react_to_message', { emoji: '🔥', target: 'last-2', remove: true }));
+    assert.deepEqual(fetchCalls[0].body, { emoji: '🔥', target: 'last-2', threadId: 'thread-7', action: 'remove' });
+  });
+
+  it('react_to_message refuses a bad target, a missing emoji, or a turn with no thread', async () => {
+    const bad = await runWithBeltContext({ threadId: 'thread-7' }, () =>
+      executeBeltTool('react_to_message', { emoji: '❤️', target: 'first' }));
+    const none = await runWithBeltContext({ threadId: 'thread-7' }, () =>
+      executeBeltTool('react_to_message', { target: 'last' }));
+    const noThread = await executeBeltTool('react_to_message', { emoji: '❤️' });
+    assert.equal(bad?.ok, false);
+    assert.equal(none?.ok, false);
+    assert.equal(noThread?.ok, false);
+    assert.equal(fetchCalls.length, 0);
+  });
+});
+
+describe('schedule, timers, stars, impulses, watchers, Telegram and backfill', () => {
+  beforeEach(() => installFetchMock());
+  afterEach(() => restoreFetch());
+
+  const inThread = <T>(fn: () => Promise<T>) => runWithBeltContext({ threadId: 'thread-7' }, fn);
+
+  it('schedule_wakes sends what the command line sends for each action', async () => {
+    await executeBeltTool('schedule_wakes', { action: 'status' });
+    await executeBeltTool('schedule_wakes', { action: 'disable', wake_type: 'morning_anchor' });
+    await executeBeltTool('schedule_wakes', { action: 'reschedule', wake_type: 'morning_anchor', cron: '0 8 * * *' });
+    assert.ok(fetchCalls.every((c) => /\/api\/internal\/orchestrator$/.test(c.url)));
+    assert.deepEqual(fetchCalls.map((c) => c.body), [
+      { action: 'status' },
+      { action: 'disable', wakeType: 'morning_anchor' },
+      { action: 'reschedule', wakeType: 'morning_anchor', cronExpr: '0 8 * * *' },
+    ]);
+  });
+
+  it('schedule_wakes refuses a change with no wake named, or a reschedule with no time', async () => {
+    assert.equal((await executeBeltTool('schedule_wakes', { action: 'enable' }))?.ok, false);
+    assert.equal((await executeBeltTool('schedule_wakes', { action: 'reschedule', wake_type: 'x' }))?.ok, false);
+    assert.equal((await executeBeltTool('schedule_wakes', { action: 'delete' }))?.ok, false);
+    assert.equal(fetchCalls.length, 0);
+  });
+
+  it('timer creates in the turn thread, lists and cancels', async () => {
+    await inThread(() => executeBeltTool('timer', {
+      action: 'create', label: 'call mom', context: 'she asked at lunch', fire_at: '2026-03-01T18:30:00-05:00',
+    }));
+    await executeBeltTool('timer', { action: 'list' });
+    await executeBeltTool('timer', { action: 'cancel', timer_id: 't1' });
+    assert.ok(fetchCalls.every((c) => /\/api\/internal\/timer$/.test(c.url)));
+    assert.deepEqual(fetchCalls.map((c) => c.body), [
+      { action: 'create', label: 'call mom', fireAt: '2026-03-01T18:30:00-05:00', threadId: 'thread-7', context: 'she asked at lunch' },
+      { action: 'list' },
+      { action: 'cancel', timerId: 't1' },
+    ]);
+  });
+
+  it('timer refuses a bad time, a missing label, or a turn with no thread', async () => {
+    assert.equal((await inThread(() => executeBeltTool('timer', { action: 'create', label: 'x', fire_at: 'soon' })))?.ok, false);
+    assert.equal((await inThread(() => executeBeltTool('timer', { action: 'create', fire_at: '2026-03-01T18:30:00Z' })))?.ok, false);
+    assert.equal((await executeBeltTool('timer', { action: 'create', label: 'x', fire_at: '2026-03-01T18:30:00Z' }))?.ok, false);
+    assert.equal((await executeBeltTool('timer', { action: 'cancel' }))?.ok, false);
+    assert.equal(fetchCalls.length, 0);
+  });
+
+  it('star_message stars the last message by default, as the named companion, and can unstar', async () => {
+    await inThread(() => executeBeltTool('star_message', { by: 'companion-a' }));
+    await inThread(() => executeBeltTool('star_message', { target: 'last-3', by: 'companion-b', remove: true }));
+    assert.ok(fetchCalls.every((c) => /\/api\/internal\/star$/.test(c.url)));
+    assert.deepEqual(fetchCalls.map((c) => c.body), [
+      { target: 'last', threadId: 'thread-7', starredBy: 'companion-a' },
+      { target: 'last-3', threadId: 'thread-7', starredBy: 'companion-b', action: 'remove' },
+    ]);
+    assert.equal((await executeBeltTool('star_message', {}))?.ok, false, 'no thread, no star');
+    assert.equal((await inThread(() => executeBeltTool('star_message', { target: 'first' })))?.ok, false);
+  });
+
+  it('impulse and watcher share the trigger route and differ only in kind and cooldown', async () => {
+    const conditions = [{ type: 'presence_transition', from: 'offline', to: 'active' }];
+    await inThread(() => executeBeltTool('impulse', { action: 'create', label: 'welcome back', conditions, prompt: 'say hi' }));
+    await inThread(() => executeBeltTool('watcher', { action: 'create', label: 'morning check', conditions, prompt: 'check in', cooldown_minutes: 480 }));
+    await executeBeltTool('impulse', { action: 'list' });
+    await executeBeltTool('watcher', { action: 'list' });
+    await executeBeltTool('watcher', { action: 'cancel', trigger_id: 'g1' });
+    assert.ok(fetchCalls.every((c) => /\/api\/internal\/trigger$/.test(c.url)));
+    assert.deepEqual(fetchCalls.map((c) => c.body), [
+      { action: 'create', kind: 'impulse', label: 'welcome back', conditions, threadId: 'thread-7', prompt: 'say hi' },
+      { action: 'create', kind: 'watcher', label: 'morning check', conditions, threadId: 'thread-7', prompt: 'check in', cooldownMinutes: '480' },
+      { action: 'list', kind: 'impulse' },
+      { action: 'list', kind: 'watcher' },
+      { action: 'cancel', triggerId: 'g1' },
+    ]);
+  });
+
+  it('impulse refuses no conditions or a condition type the house does not know', async () => {
+    assert.equal((await executeBeltTool('impulse', { action: 'create', label: 'x', conditions: [] }))?.ok, false);
+    assert.equal((await executeBeltTool('impulse', { action: 'create', label: 'x', conditions: [{ type: 'full_moon' }] }))?.ok, false);
+    assert.equal((await executeBeltTool('impulse', { action: 'create', conditions: [{ type: 'agent_free' }] }))?.ok, false);
+    assert.equal(fetchCalls.length, 0);
+  });
+
+  it('telegram_send covers text, voice, gif, link photo, link document and react', async () => {
+    await executeBeltTool('telegram_send', { type: 'text', text: 'hi' });
+    await executeBeltTool('telegram_send', { type: 'voice', text: '[whispers] hi', voice: 'companion-b' });
+    await executeBeltTool('telegram_send', { type: 'gif', query: 'happy dance', caption: 'you' });
+    await executeBeltTool('telegram_send', { type: 'photo', url: 'https://example.com/a.png', caption: 'look' });
+    await executeBeltTool('telegram_send', { type: 'document', url: 'https://example.com/a.pdf', filename: 'a.pdf' });
+    await executeBeltTool('telegram_send', { type: 'react', target: 'last', emoji: '❤️' });
+    assert.ok(fetchCalls.every((c) => /\/api\/internal\/telegram-send$/.test(c.url)));
+    assert.deepEqual(fetchCalls.map((c) => c.body), [
+      { type: 'text', text: 'hi' },
+      { type: 'voice', text: '[whispers] hi', voice: 'companion-b' },
+      { type: 'gif', query: 'happy dance', caption: 'you' },
+      { type: 'photo', url: 'https://example.com/a.png', caption: 'look' },
+      { type: 'document', url: 'https://example.com/a.pdf', filename: 'a.pdf' },
+      { type: 'react', target: 'last', emoji: '❤️' },
+    ]);
+  });
+
+  it('telegram_send never takes a file path: a photo or document needs a web address', async () => {
+    const withPath = await executeBeltTool('telegram_send', { type: 'photo', path: '/etc/hosts' });
+    const notWeb = await executeBeltTool('telegram_send', { type: 'document', url: '/home/operator/file.pdf' });
+    assert.equal(withPath?.ok, false);
+    assert.equal(notWeb?.ok, false);
+    assert.equal(fetchCalls.length, 0);
+  });
+
+  it('telegram_send says plainly when Telegram is not connected', async () => {
+    fetchImpl = () => ({ ok: false, status: 503, text: JSON.stringify({ error: 'Telegram not connected' }) });
+    const res = await executeBeltTool('telegram_send', { type: 'text', text: 'hi' });
+    assert.equal(res?.ok, false);
+    assert.match(res!.result, /Telegram not connected/);
+  });
+
+  it('search_backfill reads status, starts in the background and stops', async () => {
+    await executeBeltTool('search_backfill', { action: 'status' });
+    await executeBeltTool('search_backfill', { action: 'start' });
+    await executeBeltTool('search_backfill', { action: 'start', batch_size: 100, interval_ms: 3000 });
+    await executeBeltTool('search_backfill', { action: 'stop' });
+    assert.ok(fetchCalls.every((c) => /\/api\/internal\/embed-backfill$/.test(c.url)));
+    assert.deepEqual(fetchCalls.map((c) => c.body), [
+      { action: 'status' },
+      { background: true, batchSize: 50, intervalMs: 5000 },
+      { background: true, batchSize: 100, intervalMs: 3000 },
+      { action: 'stop' },
+    ]);
+    assert.equal((await executeBeltTool('search_backfill', { action: 'run' }))?.ok, false);
+  });
 });

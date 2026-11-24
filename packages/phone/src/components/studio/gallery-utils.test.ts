@@ -39,3 +39,11 @@ test('gallery rows keep the chat message they came from, when there is one', () 
   assert.equal(loose.threadId, undefined);
   assert.equal(loose.messageId, undefined);
 });
+
+test('Reuse setup receives written people separately from the original scene and photo drawers', () => {
+  const subjectDescriptions = [{ slug: 'user', description: 'Pink hair, green sweater.' }];
+  const image = galleryItemToImage({ filename: 'mixed.png', sourcePrompt: 'At the pier', references: ['companion-a'], subjectDescriptions });
+  assert.equal(image.sourcePrompt, 'At the pier');
+  assert.deepEqual(image.referenceDrawers, ['companion-a']);
+  assert.deepEqual(image.subjectDescriptions, subjectDescriptions);
+});

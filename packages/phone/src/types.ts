@@ -1,5 +1,6 @@
 import { ThemeMode, ThemeId } from './lib/theme';
 import type { MessageSegment } from './bytelight/protocol';
+import type { ThemeAppearance } from '@bytelight/shared';
 
 export type { ThemeMode, ThemeId };
 
@@ -89,6 +90,9 @@ export interface SendMessageRequest {
 export interface AppTheme {
   mode: ThemeMode;
   id: ThemeId;
+  // Optional layered overrides. An absent/empty appearance preserves the
+  // installed palette, skin and existing per-mode colors without migration.
+  appearance?: ThemeAppearance;
   skin?: 'none' | 'cosmos'; // atmosphere layer over any palette (BL skins)
   fx?: { aura?: number; glow?: number; motion?: number }; // skin effect intensity, percent (100 = default)
   accentOverride?: string | null; // BL accent model: custom hex beats everything
@@ -128,17 +132,15 @@ export interface AppTheme {
   // corner), and what the message card may show.
   lockShortcuts?: [string | null, string | null];
   lockShow?: 'names' | 'first-line' | 'nothing';
-  // The Spotify card on the lock screen while a song is playing or paused.
-  // Unset is on; false is the owner's switch in Settings (lockSpotifyOf in
-  // lib/lock-spotify.ts).
-  lockSpotify?: boolean;
   // How the lock screen's cards look: dark, light (for a light wallpaper), or
   // auto, read off the wallpaper behind them. Unset is dark (lockCardsOf in
   // lib/lock-cards.ts).
   lockCards?: 'dark' | 'light' | 'auto';
+  /** Show the original BL playback controls on the lock screen. */
+  lockSpotify?: boolean;
   // The home widgets, and the quiet line on the dock (lib/home-widgets.ts).
   // Unset is none, so the home screen stays as it was.
-  homeWidgets?: ('companions' | 'note' | 'weather' | 'letter' | 'day' | 'status' | 'soundtrack')[];
+  homeWidgets?: ('companions' | 'note' | 'weather' | 'letter' | 'day' | 'status' | 'soundtrack' | 'life-wheel' | 'next-quest')[];
   // Where each widget sits on the four-wide grid once any has been moved: its
   // left column and its bottom row, row 0 nearest the dock. Unset is the way
   // the grid always packed them (layoutWidgets in lib/home-widgets.ts).
@@ -147,11 +149,12 @@ export interface AppTheme {
 }
 
 export interface ContactProfile {
+  /** Legacy contact display field, retained for original BL compatibility. */
+  phone?: string;
   name: string;
   image: string; // Base64 or URL
   bio: string;
   status: string;
-  phone: string;
   voiceId?: string;
 }
 
@@ -194,4 +197,19 @@ export interface AppSettings {
   // the companion voice avatars. Syncs with the rest of appSettings.
   userAvatar?: string;
   userAvatarColor?: string;
+  themePresets?: AppThemePreset[];
+}
+
+/** Appearance only: never capture contacts, credentials or companion models. */
+export interface AppThemePreset {
+  id: string;
+  name: string;
+  createdAt: string;
+  updatedAt: string;
+  theme: AppTheme;
+}
+
+export interface AppearanceSaveResult {
+  synced: boolean;
+  message?: string;
 }

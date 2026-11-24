@@ -284,7 +284,8 @@ export function NotesApp({ onClose, themeConfig, themeMode, stickyNoteColors, th
       >
         <button
           onClick={onClose}
-          className={cn("p-1.5 rounded-full transition-colors", colors.textMuted, "hover:bg-black/10 dark:hover:bg-white/10")}
+          aria-label="Back from Notes"
+          className={cn("bytelight-back-button p-1.5 rounded-full transition-colors", colors.textMuted, "hover:bg-black/10 dark:hover:bg-white/10")}
         >
           <ChevronLeft className="w-5 h-5" />
         </button>

@@ -272,7 +272,7 @@ export function DiscordApp({ onClose, themeConfig, themeMode, embedded }: Discor
       ) : (
         <>
           {/* Gateway toggle */}
-          <div className={card}>
+          <div data-appearance-card="" className={card}>
             <div className={sectionTitle}>Discord Gateway</div>
             {!status?.hasToken ? (
               <div className="flex flex-col gap-2">
@@ -348,7 +348,7 @@ export function DiscordApp({ onClose, themeConfig, themeMode, embedded }: Discor
 
           {/* Connection */}
           {enabled && status && (
-            <div className={card}>
+            <div data-appearance-card="" className={card}>
               <div className={sectionTitle}>Connection</div>
               <div className="flex items-center gap-2 mb-2">
                 <span
@@ -388,7 +388,7 @@ export function DiscordApp({ onClose, themeConfig, themeMode, embedded }: Discor
 
           {/* Pending pairings */}
           {pending.length > 0 && (
-            <div className={card}>
+            <div data-appearance-card="" className={card}>
               <div className={sectionTitle}>Pending Pairing Requests</div>
               {pending.map((p) => (
                 <div key={p.code} className="flex items-center justify-between gap-2 py-1.5">
@@ -413,7 +413,7 @@ export function DiscordApp({ onClose, themeConfig, themeMode, embedded }: Discor
 
           {/* Approved users */}
           {approved.length > 0 && (
-            <div className={card}>
+            <div data-appearance-card="" className={card}>
               <div className={sectionTitle}>Approved Users</div>
               {approved.map((p) => (
                 <div key={p.userId} className="flex items-center justify-between gap-2 py-1.5">
@@ -437,7 +437,7 @@ export function DiscordApp({ onClose, themeConfig, themeMode, embedded }: Discor
           )}
 
           {/* Gateway settings */}
-          <div className={card}>
+          <div data-appearance-card="" className={card}>
             <button
               onClick={() => {
                 const next = !showSettings;

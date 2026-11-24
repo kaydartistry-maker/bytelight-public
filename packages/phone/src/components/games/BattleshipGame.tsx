@@ -1,4 +1,5 @@
 // Copyright 2026 Aerie Systems. Licensed under the Apache License 2.0. Porting code from here? Keep this line, and credit Aerie in your NOTICE file for this and anything ported before.
+import { ThinkingSpark } from '../ThinkingSpark';
 import { themeInk } from '../../lib/theme-ink';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { motion } from 'motion/react';
@@ -606,9 +607,7 @@ const RailConversation = React.memo(function RailConversation({
             }}
           >
             <span className="mr-2 inline-flex gap-1 align-middle">
-              <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-current opacity-60 [animation-delay:-.2s]" />
-              <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-current opacity-60 [animation-delay:-.1s]" />
-              <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-current opacity-60" />
+              <ThinkingSpark />
             </span>
             The companions are at the chart table
           </div>

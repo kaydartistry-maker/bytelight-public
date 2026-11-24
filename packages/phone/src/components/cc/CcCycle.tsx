@@ -116,7 +116,7 @@ export function CcCycle({ themeConfig, themeMode }: CcSubPageProps) {
   return (
     <div className="space-y-3">
       {/* Status */}
-      <div className={card}>
+      <div data-appearance-card="" className={card}>
         <div className="flex items-center gap-4">
           <span
             className="flex min-h-[36px] shrink-0 items-center rounded-[22px] px-4 py-2 text-sm font-semibold capitalize"
@@ -157,7 +157,7 @@ export function CcCycle({ themeConfig, themeMode }: CcSubPageProps) {
 
       {/* Daily log form */}
       {showLog && (
-        <div className={card}>
+        <div data-appearance-card="" className={card}>
           <label className="flex items-center gap-3">
             <span className={cn('min-w-[4rem] shrink-0 text-sm', colors.textMuted)}>Flow</span>
             <select value={logFlow} onChange={(e) => setLogFlow(e.target.value)} className={input}>
@@ -199,7 +199,7 @@ export function CcCycle({ themeConfig, themeMode }: CcSubPageProps) {
 
       {/* Predictions */}
       {predict.nextPeriod && (
-        <div className={card}>
+        <div data-appearance-card="" className={card}>
           <span className={sectionTitle}>Predictions</span>
           <div className="grid grid-cols-2 gap-2">
             {[
@@ -219,7 +219,7 @@ export function CcCycle({ themeConfig, themeMode }: CcSubPageProps) {
 
       {/* History */}
       {history.length > 0 && (
-        <div className={card}>
+        <div data-appearance-card="" className={card}>
           <span className={sectionTitle}>History</span>
           {history.map((cycle, i) => (
             <div key={i} className={cn('flex justify-between border-b py-2 text-sm last:border-b-0', colors.panelBorder, colors.textMain)}>
@@ -236,7 +236,7 @@ export function CcCycle({ themeConfig, themeMode }: CcSubPageProps) {
 
       {/* Recent logs */}
       {status.recentLogs?.length > 0 && (
-        <div className={card}>
+        <div data-appearance-card="" className={card}>
           <span className={sectionTitle}>Recent logs</span>
           {status.recentLogs.map((log: any, i: number) => (
             <div key={i} className="flex items-center gap-3 py-2 text-sm">

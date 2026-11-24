@@ -4,6 +4,7 @@ import { resolveEffortForModel, normalizeModelRef, type ModelRef } from '@byteli
 import { createMessage, updateThreadSession, clearAllThreadSessions, getThread, updateThreadActivity, createSessionRecord, endSessionRecord, recordUsageEvent, getProviderSession, setProviderSession, clearProviderSessionsForThread, hasAnyProviderSessionForThread, getMostRecentProviderSession, getMessages, getConfig as getDbConfig, setConfig as setDbConfig } from './db.js';
 import { buildBridgeBlock, decideBridge, shouldRecycleCodexSession } from './agent-bridge.js';
 import { isTurnAudience, type TurnAudience } from './turn-audience.js';
+import { assertNativeThreadWritable } from './native-history.js';
 // Slice 3b seam: runtime doors + provider-key mapping + canonical-consumer helpers.
 import { resolveRuntimeForRef, getClaudeCliLaneRuntime, getCodexCliLaneRuntime } from './runtimes/index.js';
 import { shuffled, priorVoicesBlock, shouldFanOut } from './room-turns.js';
@@ -11,6 +12,7 @@ import { getThreadRoster } from './db/rooms.js';
 import { isHeartbeatLaneWarm } from './heartbeat/supervisor.js';
 import { laneTagFor } from './heartbeat/constants.js';
 import { roomBiosReady, laneIdentityFor, renderLaneSection } from './heartbeat/lane-identity.js';
+import { getSecret } from './secrets.js';
 
 /**
  * The Room's history freeze: leave out companion replies written since the
@@ -88,14 +90,15 @@ import { postCompactionHandoff } from './treehouse-triggers.js';
 import { isDeliberateSilence } from './silence.js';
 import { extractStatusTags, stripStatusTags } from '@bytelight/shared';
 import { applyStatusTagUpdates } from './db/statuses.js';
-import { createHooks, buildOrientationContext, summarizeInput, type HookContext, type ToolInsertion } from './hooks.js';
+import { createHooks, buildOrientationParts, joinOrientationParts, summarizeInput, type HookContext, type ToolInsertion } from './hooks.js';
 import type { MessageSegment, ThoughtKind } from '@bytelight/shared';
 import type { PushService } from './push.js';
 import { getBytelightConfig } from '../config.js';
 import crypto from 'crypto';
 import { existsSync, readFileSync, writeFileSync } from 'fs';
 import { join, dirname } from 'path';
-import { stickerRefsToImageBlocks, capImageBlocks, fileToImageBlock, isEmbeddableImage, normalizedImagesToImageBlocks, type ImageBlock } from './visual-blocks.js';
+import { capImageBlocks, fileToImageBlock, isEmbeddableImage, normalizedImagesToImageBlocks, MAX_IMAGES_PER_TURN, type ImageBlock } from './visual-blocks.js';
+import { describeInlineVisuals, houseInlineVisualLookups, inlineVisualImages, resolveInlineVisuals, type InlineVisual } from './inline-visuals.js';
 import { getFile } from './files.js';
 import { drainQueuedImages } from './pending-visuals.js';
 import { recordActivity } from './activity-ring.js';
@@ -103,6 +106,7 @@ import { recordActivity } from './activity-ring.js';
 // replay stream state to sockets that (re)connect mid-turn.
 import { registerActiveStream, unregisterActiveStream } from './active-streams.js';
 import { getMemoryMcpServer } from './memory-mcp.js';
+import { getGoogleDocsMcpServer } from './google-docs-mcp.js';
 import { errMessage } from '../util/errors.js';
 import { extractThinkingSummary } from './thinking-summary.js';
 
@@ -681,10 +685,13 @@ export function shouldDiscardEmptyTurn(input: {
   hasDurableArtifacts: boolean;
   /** The turn answered exactly [SILENT] (isDeliberateSilence). */
   deliberateSilence?: boolean;
+  /** The caller asked that a wordless turn leave nothing (processMessage opts). */
+  passLeavesNothing?: boolean;
 }): boolean {
   if (input.deliberateSilence) return true;
   if (input.fullResponse.trim()) return false;
   if (input.stoppedByUser || input.agentTimedOut) return true;
+  if (input.passLeavesNothing && input.endedSilently) return true;
   return input.endedSilently && !input.hasDurableArtifacts;
 }
 
@@ -921,6 +928,11 @@ export class AgentService {
     images?: NormalizedImage[];
     /** Slice 4A: dispatch turn id minted by the roster dispatcher (ws.ts). */
     turnId?: string;
+    /** A turn that ends without words is a pass and leaves nothing behind,
+     *  even if it used tools on the way (the Theater's couch: a quiet
+     *  beat must not save a blank bubble). Elsewhere a tool-only turn is
+     *  kept so its tool cards show. */
+    passLeavesNothing?: boolean;
     /** Living Room: who already answered earlier in this round (a remote
      *  brain like Companion C). The first local lane hears them exactly as a later
      *  lane hears its brother (priorVoicesBlock). */
@@ -933,6 +945,7 @@ export class AgentService {
      *  Telegram and the house's wakes leave it out and are the owner's. */
     audience?: TurnAudience;
   }): Promise<string> {
+    assertNativeThreadWritable(threadId);
     const platform = opts?.platform || 'web';
     const priority = queuePriorityFor(platform, opts?.audience);
 
@@ -973,7 +986,7 @@ export class AgentService {
   ): Promise<string> {
     const voices = opts?.roomVoices ?? [];
     const withVoices = voices.length ? content + priorVoicesBlock([...voices], roomUserName()) : content;
-    const reply = await this._processQuery(threadId, withVoices, false, threadMeta, { ...opts, ownerMessageText: content });
+    const reply = await this._processQuery(threadId, withVoices, false, threadMeta, opts);
     if (reply && reply.trim()) {
       opts?.onRoomVoice?.({ name: roomHouseName(), text: reply });
     }
@@ -1038,7 +1051,7 @@ export class AgentService {
       }
       const laneContent = spoken.length === 0 ? content : content + priorVoicesBlock(spoken, roomUserName());
       try {
-        const reply = await this._processQuery(threadId, laneContent, false, threadMeta, { ...opts, ownerMessageText: content, lane: { companionId: seat.id, historyBefore } });
+        const reply = await this._processQuery(threadId, laneContent, false, threadMeta, { ...opts, lane: { companionId: seat.id, historyBefore } });
         if (reply && reply.trim()) {
           spoken.push({ name: seat.name, text: reply });
           replies.push(reply);
@@ -1059,6 +1072,7 @@ export class AgentService {
    * Room is set to. See wakeLaneFor for which door.
    */
   async processAutonomous(threadId: string, prompt: string, ownerId?: string): Promise<string> {
+    assertNativeThreadWritable(threadId);
     return queryQueue.enqueue(PRIORITIES.autonomous, async () => {
       const lane = ownerId ? this.wakeLaneFor(ownerId) : null;
       return this._processQuery(threadId, prompt, true, undefined, lane ? { lane: { companionId: lane } } : undefined);
@@ -1091,7 +1105,6 @@ export class AgentService {
   }
 
   private async _processQuery(threadId: string, content: string, isAutonomous = false, threadMeta?: { name: string; type: 'daily' | 'named' | 'treehouse' }, platformOpts?: {
-    ownerMessageText?: string;
     platform?: 'web' | 'discord' | 'telegram' | 'api';
     platformContext?: string;
     withdrawn?: string;
@@ -1106,7 +1119,9 @@ export class AgentService {
      *  in its prompt (the sibling fork's codexHistoryBeforeTurn freeze). */
     lane?: { companionId: string; historyBefore?: string };
     audience?: TurnAudience;
+    passLeavesNothing?: boolean;
   }, _retryWithoutResume = false): Promise<string> {
+    assertNativeThreadWritable(threadId);
     ensureInit();
     // Read once and handed to every engine below: the SDK lane's PreToolUse
     // hook, the router/Codex tool bridge (via the belt context), and the
@@ -1277,6 +1292,9 @@ export class AgentService {
     // Empty mcp_servers table ⇒ allMcpServers === mcpServersFromConfig, byte-identical path.
     // Ported from the reference implementation's SDK-lane injection, Apache 2.0.
     const allMcpServers: Record<string, McpServerConfig> = { ...mcpServersFromConfig };
+    // Per-turn server: its write handlers close over this exact owner message
+    // and autonomy bit, so a wake cannot forge an interactive Docs write.
+    allMcpServers['google-docs'] = getGoogleDocsMcpServer({ isAutonomous, ownerMessage: content });
     for (const managed of getManagedServerConfigs()) {
       if (!allMcpServers[managed.name]) {
         const headers: Record<string, string> = {};
@@ -1318,6 +1336,33 @@ export class AgentService {
         }),
       }),
     };
+
+    // Z.ai's Coding Plan exposes GLM through an Anthropic-compatible endpoint.
+    // Keep its credential and endpoint turn-local so selecting GLM cannot alter
+    // the house's real Anthropic lane or leak the key into repository config.
+    if (resolvedModelRef.provider === 'zai') {
+      const zaiKey = getSecret('provider_zai_coding_plan_api_key');
+      if (!zaiKey) throw new Error('Z.ai Coding Plan key is not connected. Add it in Integrations → Providers.');
+      // Claude Code refuses --dangerously-skip-permissions when its process
+      // runs as root. Keep the same owner-authorized tool reach without that
+      // incompatible CLI flag: prompts are answered by the SDK host, while
+      // the existing PreToolUse hooks still enforce guest/autonomy policy.
+      options.permissionMode = 'default';
+      options.allowDangerouslySkipPermissions = false;
+      options.canUseTool = async (toolName, input) => ({
+        behavior: 'allow', updatedInput: input,
+      });
+      options.env = {
+        ...process.env,
+        ANTHROPIC_AUTH_TOKEN: zaiKey,
+        ANTHROPIC_API_KEY: undefined,
+        ANTHROPIC_BASE_URL: 'https://api.z.ai/api/anthropic',
+        CLAUDE_CODE_AUTO_COMPACT_WINDOW: '1000000',
+        CLAUDE_CODE_MAX_CONTEXT_TOKENS: '1000000',
+        CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
+        DISABLE_TELEMETRY: '1',
+      };
+    }
 
     // Per-(runtime, provider, model) session sidecar resume.
     //
@@ -1434,19 +1479,40 @@ export class AgentService {
       // Build orientation context (thread, time, gap, status, vault)
       // Prepended to prompt because SessionStart hooks don't fire in V1 query()
       // Static content (CHAT TOOLS, skills, vault path) only on first message of session
-      const baseOrientation = await buildOrientationContext(hookContext, isFirstMessage, content, resolvedModelRef.canonical);
+      const orientationParts = await buildOrientationParts(hookContext, isFirstMessage, content, resolvedModelRef.canonical);
+      const baseOrientation = joinOrientationParts(orientationParts);
       // Port f1e3727a/8beeee4e: all our lanes retain their session on reroll.
-      const orientation = baseOrientation + (platformOpts?.withdrawn
-        ? `\n[Screen change: ${platformOpts.withdrawn}]\n` : '');
+      const screenChange = platformOpts?.withdrawn
+        ? `\n[Screen change: ${platformOpts.withdrawn}]\n` : '';
+      const orientation = baseOrientation + screenChange;
+      // Same context minus the per-session manual. Only a warm lane that knows
+      // whether its session already holds the manual uses this (heartbeat).
+      const orientationLean = joinOrientationParts(orientationParts, true) + screenChange;
       const bridgeBlock = bridgePrior ? buildBridgeBlock(bridgePrior) : '';
       if (bridgePrior && bridgePrior.length > 0) {
         console.log(`[Agent] Bridge injected: ${bridgePrior.length} prior turns (model swap to ${model})`);
       }
       let enrichedPrompt = `${bridgeBlock}[Context]\n${orientation}\n[/Context]\n\n${content}`;
 
-      // Extract sticker images from user message so companions can SEE them
-      const stickerImages = stickerRefsToImageBlocks(content);
-      const attachmentImages = normalizedImagesToImageBlocks(platformOpts?.images ?? []);
+      // The front door for stickers and custom emoji: each one in the message
+      // becomes pictures here, once, before an engine is chosen, and rides the
+      // same bundle a photo attachment does (inline-visuals.ts). Both branches
+      // below read from it, so no engine is handed only the letters.
+      const turnAttachments = platformOpts?.images ?? [];
+      let inlineVisuals: InlineVisual[] = [];
+      try {
+        inlineVisuals = await resolveInlineVisuals(
+          content,
+          await houseInlineVisualLookups(),
+          MAX_IMAGES_PER_TURN - turnAttachments.length,
+        );
+      } catch (visualErr) {
+        console.warn('[Agent] Sticker/emoji pictures could not be prepared; sending text only:', (visualErr as Error).message);
+      }
+      const inlineVisualNote = describeInlineVisuals(inlineVisuals, turnAttachments.length);
+      if (inlineVisualNote) enrichedPrompt += `\n\n${inlineVisualNote}`;
+      const stickerImages = normalizedImagesToImageBlocks(inlineVisualImages(inlineVisuals));
+      const attachmentImages = normalizedImagesToImageBlocks(turnAttachments);
       // Our own freshly-generated images, queued by the image-gen route — shown
       // to us once so we actually SEE what we made and can react to it.
       const generatedImages: ImageBlock[] = [];
@@ -1582,7 +1648,21 @@ export class AgentService {
         }
         // Do this after any current-turn prompt rewrite so the images cannot
         // land on an older history row or be separated from the current user.
-        recent = attachImagesToLatestUserMessage(recent, platformOpts?.images ?? [], effectiveContent);
+        // Stickers and custom emoji ride with the attachments, and the line
+        // naming them joins the current message rather than a second copy.
+        let dispatchedContent = effectiveContent;
+        if (inlineVisualNote) {
+          dispatchedContent = `${effectiveContent}\n\n${inlineVisualNote}`;
+          const latestMessage = recent[recent.length - 1];
+          if (latestMessage?.role === 'user' && latestMessage.content === effectiveContent) {
+            recent[recent.length - 1] = { ...latestMessage, content: dispatchedContent };
+          }
+        }
+        recent = attachImagesToLatestUserMessage(
+          recent,
+          [...turnAttachments, ...inlineVisualImages(inlineVisuals)],
+          dispatchedContent,
+        );
         // H1 "hands": resolve the MCP tool surface for this foreign turn.
         // Lazy + foreign-path only — zero new work on the Claude lane
         // (it runs MCP servers natively). Map ToolSchema[] (mcp-bridge's
@@ -1638,6 +1718,7 @@ export class AgentService {
           platform,
           isAutonomous,
           orientation: foreignRecallBlock ? orientation + '\n' + foreignRecallBlock : orientation,
+          orientationLean: foreignRecallBlock ? orientationLean + '\n' + foreignRecallBlock : orientationLean,
           // A Codex lane is handed its identity (it walks no folders): the
           // shared CLAUDE.md plus his lane note and bio. A Claude CLI lane
           // gets the same layering from its session folder instead.
@@ -1649,6 +1730,15 @@ export class AgentService {
           abortSignal: activeAbortController?.signal,
           thinkingEffort: effort,
           tools: turnTools,
+          trustedBeltContext: {
+            threadId,
+            isAutonomous,
+            rawOwnerMessageText: content,
+            ...(turnAudience ? { audience: turnAudience } : {}),
+            discordChannelId: platformOpts?.discordChannelId,
+            discordGuildId: platformOpts?.discordGuildId,
+            discordMessageId: platformOpts?.discordMessageId,
+          },
         });
         // Sidecar resume: options.resume was set by the bridge block
         // above from THIS descriptor's sidecar row — same key.
@@ -1687,9 +1777,9 @@ export class AgentService {
         // construction with no per-turn context). See chat-tool-belt.ts.
         await runWithBeltContext({
           threadId,
-          ...(turnAudience ? { audience: turnAudience } : {}),
-          ownerMessageText: platformOpts?.ownerMessageText,
           isAutonomous,
+          rawOwnerMessageText: content,
+          ...(turnAudience ? { audience: turnAudience } : {}),
           discordChannelId: platformOpts?.discordChannelId,
           discordGuildId: platformOpts?.discordGuildId,
           discordMessageId: platformOpts?.discordMessageId,
@@ -2302,6 +2392,7 @@ export class AgentService {
       endedSilently,
       hasDurableArtifacts,
       deliberateSilence,
+      passLeavesNothing: platformOpts?.passLeavesNothing === true,
     });
 
     if (isEmptyStreamEnd) {

@@ -59,6 +59,28 @@ interface CodexUsage {
   limitReached: string | null;
 }
 
+interface GeminiUsage {
+  groups: Array<{
+    name: string;
+    description: string;
+    buckets: Array<{ id: string; label: string; window: string; usedPercent: number; remainingPercent: number; resetsAt: string | null }>;
+  }>;
+  capturedAt: string;
+}
+
+interface ZaiUsage {
+  provider: 'zai';
+  plan: string;
+  requestCount: number;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheCreationTokens: number;
+  lastTrackedAt: string | null;
+  quotaAvailable: false;
+  quotaNote: string;
+}
+
 interface SubscriptionUsageMetersProps {
   themeConfig: ThemeConfig;
   themeMode: 'light' | 'dark';
@@ -88,6 +110,10 @@ function severityColor(severity: string, accent: string): string {
   return accent;
 }
 
+function compactNumber(value: number): string {
+  return new Intl.NumberFormat([], { notation: 'compact', maximumFractionDigits: 1 }).format(value);
+}
+
 function parseCodexWindow(value: unknown): CodexWindow | null {
   if (!value || typeof value !== 'object') return null;
   const w = value as Record<string, unknown>;
@@ -115,9 +141,40 @@ export function SubscriptionUsageMeters({ themeConfig, themeMode }: Subscription
   const [claudeError, setClaudeError] = useState<string | null>(null);
   const [codex, setCodex] = useState<CodexUsage | null>(null);
   const [codexError, setCodexError] = useState<string | null>(null);
+  const [gemini, setGemini] = useState<GeminiUsage | null>(null);
+  const [geminiError, setGeminiError] = useState<string | null>(null);
+  const [zai, setZai] = useState<ZaiUsage | null>(null);
+  const [zaiError, setZaiError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
+    (async () => {
+      try {
+        const res = await apiFetch('/api/usage/zai');
+        const data = await res.json().catch(() => null) as (Partial<ZaiUsage> & { error?: unknown }) | null;
+        if (cancelled) return;
+        if (!res.ok) throw new Error(typeof data?.error === 'string' && data.error ? data.error : `load failed (${res.status})`);
+        if (data?.provider !== 'zai' || typeof data.requestCount !== 'number' || typeof data.inputTokens !== 'number' || typeof data.outputTokens !== 'number') {
+          setZaiError(WAITING_NOTE);
+          return;
+        }
+        setZai({
+          provider: 'zai',
+          plan: typeof data.plan === 'string' ? data.plan : 'GLM Coding Plan',
+          requestCount: data.requestCount,
+          inputTokens: data.inputTokens,
+          outputTokens: data.outputTokens,
+          cacheReadTokens: typeof data.cacheReadTokens === 'number' ? data.cacheReadTokens : 0,
+          cacheCreationTokens: typeof data.cacheCreationTokens === 'number' ? data.cacheCreationTokens : 0,
+          lastTrackedAt: typeof data.lastTrackedAt === 'string' ? data.lastTrackedAt : null,
+          quotaAvailable: false,
+          quotaNote: typeof data.quotaNote === 'string' ? data.quotaNote : 'Virelle receipts only.',
+        });
+        setZaiError(null);
+      } catch (err) {
+        if (!cancelled) setZaiError(err instanceof Error ? err.message : 'GLM usage unavailable.');
+      }
+    })();
     (async () => {
       try {
         const res = await apiFetch('/api/usage/claude');
@@ -185,6 +242,20 @@ export function SubscriptionUsageMeters({ themeConfig, themeMode }: Subscription
     })();
     (async () => {
       try {
+        const res = await apiFetch('/api/usage/gemini');
+        const data = await res.json().catch(() => null) as (Partial<GeminiUsage> & { error?: unknown }) | null;
+        if (cancelled) return;
+        if (!res.ok) throw new Error(typeof data?.error === 'string' && data.error ? data.error : `load failed (${res.status})`);
+        if (!Array.isArray(data?.groups)) { setGeminiError(WAITING_NOTE); return; }
+        const groups = data.groups.filter((group) => group && typeof group.name === 'string' && Array.isArray(group.buckets));
+        setGemini({ groups, capturedAt: typeof data.capturedAt === 'string' ? data.capturedAt : new Date().toISOString() });
+        setGeminiError(null);
+      } catch (err) {
+        if (!cancelled) setGeminiError(err instanceof Error ? err.message : 'Gemini usage unavailable.');
+      }
+    })();
+    (async () => {
+      try {
         const res = await apiFetch('/api/usage/codex');
         const data = await res.json().catch(() => null) as (Partial<CodexUsage> & { hasCredits?: unknown; creditsBalance?: unknown; creditsUnlimited?: unknown; error?: unknown }) | null;
         if (cancelled) return;
@@ -223,7 +294,56 @@ export function SubscriptionUsageMeters({ themeConfig, themeMode }: Subscription
 
   return (
     <>
-      <div className={cn('rounded-2xl border p-3 mb-3', colors.panelBg, colors.panelBorder)}>
+      <div data-appearance-card="" className={cn('rounded-2xl border p-3 mb-3', colors.panelBg, colors.panelBorder)}>
+        <div className={cn('text-[11px] font-bold uppercase tracking-[0.12em] mb-2', colors.textMuted)}>
+          GLM Coding Plan usage
+        </div>
+        {zai ? (
+          <>
+            <div className={cn('text-sm', colors.textMain)}>
+              {zai.requestCount} {zai.requestCount === 1 ? 'turn' : 'turns'} · {compactNumber(zai.inputTokens)} input · {compactNumber(zai.outputTokens)} output
+            </div>
+            {(zai.cacheReadTokens > 0 || zai.cacheCreationTokens > 0) ? (
+              <div className={cn('text-[11px] mt-1', colors.textMain)}>
+                cache {compactNumber(zai.cacheReadTokens)} read · {compactNumber(zai.cacheCreationTokens)} written
+              </div>
+            ) : null}
+            <div className={cn('text-[10px] mt-1', colors.textMuted)}>
+              Tracked locally by Virelle{zai.lastTrackedAt ? ` · last turn ${formatReset(zai.lastTrackedAt)}` : ''}
+            </div>
+            <div className={cn('text-[10px] mt-0.5 italic', colors.textMuted)}>{zai.quotaNote}</div>
+          </>
+        ) : <p className={cn('text-[10px] italic', colors.textMuted)}>{zaiError || 'Loading…'}</p>}
+      </div>
+      <div data-appearance-card="" className={cn('rounded-2xl border p-3 mb-3', colors.panelBg, colors.panelBorder)}>
+        <div className={cn('text-[11px] font-bold uppercase tracking-[0.12em] mb-2', colors.textMuted)}>
+          Gemini · Antigravity usage
+        </div>
+        {gemini ? (
+          <div className="space-y-3">
+            {gemini.groups.map((group) => (
+              <div key={group.name}>
+                <div className={cn('text-xs font-semibold mb-1.5', colors.textMain)}>{group.name}</div>
+                <div className="space-y-2">
+                  {group.buckets.map((bucket) => (
+                    <div key={bucket.id}>
+                      <div className={cn('h-1.5 rounded-full overflow-hidden mb-1', barTrack)}>
+                        <div className="h-full rounded-full transition-all" style={{ width: `${Math.max(2, bucket.usedPercent)}%`, backgroundColor: colors.accent }} />
+                      </div>
+                      <div className={cn('text-[11px]', colors.textMain)}>
+                        {bucket.label} · {Math.round(bucket.remainingPercent)}% remaining
+                        {bucket.resetsAt ? <span className={cn('ml-1', colors.textMuted)}>· resets {formatReset(bucket.resetsAt)}</span> : null}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))}
+            <div className={cn('text-[10px]', colors.textMuted)}>Subscription quota · zero tokens used to refresh</div>
+          </div>
+        ) : <p className={cn('text-[10px] italic', colors.textMuted)}>{geminiError || 'Loading…'}</p>}
+      </div>
+      <div data-appearance-card="" className={cn('rounded-2xl border p-3 mb-3', colors.panelBg, colors.panelBorder)}>
         <div className={cn('text-[11px] font-bold uppercase tracking-[0.12em] mb-2', colors.textMuted)}>
           Claude usage
         </div>
@@ -310,7 +430,7 @@ export function SubscriptionUsageMeters({ themeConfig, themeMode }: Subscription
         )}
       </div>
 
-      <div className={cn('rounded-2xl border p-3 mb-3', colors.panelBg, colors.panelBorder)}>
+      <div data-appearance-card="" className={cn('rounded-2xl border p-3 mb-3', colors.panelBg, colors.panelBorder)}>
         <div className={cn('text-[11px] font-bold uppercase tracking-[0.12em] mb-2', colors.textMuted)}>
           Codex usage
         </div>

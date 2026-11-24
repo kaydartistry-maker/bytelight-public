@@ -7,6 +7,7 @@ import { ThemeConfig } from '../lib/theme';
 import { cn } from '../lib/utils';
 import { apiFetch } from '../bytelight';
 import getCroppedImg from '../lib/cropImage';
+import { resizeDataUrl } from '../lib/image-resize';
 import { normalizeCompanionRows } from '../lib/companion-row';
 import { ModelPill } from './ModelPill';
 
@@ -306,8 +307,10 @@ export const ContactInfo: React.FC<ContactInfoProps> = ({ themeConfig, themeMode
                   Cancel
                 </button>
                 <button 
-                  onClick={() => {
-                    onUpdateContact(activeId, { image: cropImageSrc });
+                  onClick={async () => {
+                    if (!cropImageSrc) return;
+                    const fitted = await resizeDataUrl(cropImageSrc, 1024, 0.88).catch(() => cropImageSrc);
+                    onUpdateContact(activeId, { image: fitted });
                     setCropImageSrc(null);
                   }}
                   className="px-4 py-2 text-[10px] font-bold uppercase tracking-widest border border-white/20 text-white rounded-full transition-all active:scale-95 hover:bg-white/10"
@@ -468,10 +471,10 @@ export const ContactInfo: React.FC<ContactInfoProps> = ({ themeConfig, themeMode
             )}>
               {isEditingPhone ? (
                 <div className="flex items-center gap-2 w-full">
-                  <input 
-                    type="text" 
-                    value={tempPhone} 
-                    onChange={(e) => setTempPhone(e.target.value)} 
+                  <input
+                    type="text"
+                    value={tempPhone}
+                    onChange={(e) => setTempPhone(e.target.value)}
                     className="text-lg font-mono tracking-wider bg-transparent outline-none w-full"
                     style={{ color: 'var(--bytelight-text)' }}
                     autoFocus
@@ -486,7 +489,7 @@ export const ContactInfo: React.FC<ContactInfoProps> = ({ themeConfig, themeMode
                     {current.phone}
                   </span>
                   <div className="flex items-center gap-2">
-                    <button 
+                    <button
                       onClick={startEditingPhone}
                       className="p-2 opacity-0 group-hover:opacity-100 transition-opacity hover:bg-white/10 rounded-full"
                       title="Edit Phone Number"

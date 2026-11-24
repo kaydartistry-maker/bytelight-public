@@ -24,7 +24,9 @@ test('every file in migrations/ is wired into db.ts', () => {
   // A directory that stopped being read would pass this test forever.
   assert.ok(migrationFiles.length >= 21, `only ${migrationFiles.length} .sql files found in migrations/ — the path has stopped resolving.`);
 
-  const dbSource = readFileSync(join(SRC_DIR, 'db', 'init.ts'), 'utf8');
+  // Feature stores own their additive schemas; they do not run at app startup.
+  const dbSource = ['init.ts', 'owner-pairing.ts', 'builder-jobs.ts']
+    .map(name => readFileSync(join(SRC_DIR, 'db', name), 'utf8')).join('\n');
 
   const unwired = migrationFiles.filter(name => !dbSource.includes(`migrations/${name}`));
 
@@ -39,7 +41,7 @@ test('every file in migrations/ is wired into db.ts', () => {
 
 test('migration numbers are unique and contiguous', () => {
   const numbers = readdirSync(MIGRATIONS_DIR)
-    .filter(name => name.endsWith('.sql'))
+    .filter(name => /^\d{3}_.*\.sql$/.test(name))
     .map(name => parseInt(name.slice(0, 3), 10))
     .sort((a, b) => a - b);
 
@@ -49,7 +51,8 @@ test('migration numbers are unique and contiguous', () => {
   // 028 was never committed on this house; the ports were numbered from 029.
   // 030-031, 033-034 and 040-041 belong to features this edition leaves out;
   // the numbers stay reserved so the ledger lines up with the full house.
-  const KNOWN_GAPS = new Set([29, 32, 35, 42]);
+  // 049 (intention follow-ups) has not come over yet, so 050 follows a gap.
+  const KNOWN_GAPS = new Set([29, 32, 35, 42, 50]);
   const gaps = numbers.filter((n, i) => i > 0 && n !== numbers[i - 1] + 1 && !KNOWN_GAPS.has(n));
   assert.deepEqual(
     gaps,

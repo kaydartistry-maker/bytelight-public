@@ -102,16 +102,16 @@ describe('shiver receipts', () => {
   });
 
   it('never lets a receipt failure break or delay recall', async () => {
-    // Point the receipt writer at a broken DB handle: close the real db so
-    // getDb() inside memoryReceipt throws. Recall must still return its block.
+    // Fail only receipt INSERTs. Closing the entire DB also prevents credential
+    // resolution, so it cannot isolate the promised receipt-failure behavior.
     reply = { status: 200, body: { result: 'still delivered' } };
-    getDb().close();
+    getDb().exec(`CREATE TEMP TRIGGER fixture_fail_receipt BEFORE INSERT ON memory_ledger
+      BEGIN SELECT RAISE(FAIL, 'synthetic receipt failure'); END`);
     try {
       const out = await ambientRecall('a resilient question', 'lane-c', false);
       assert.ok(out.block.includes('still delivered'), 'recall survives a ledger failure');
     } finally {
-      // Re-open for any later cases / teardown.
-      initDb(dbPath);
+      getDb().exec('DROP TRIGGER fixture_fail_receipt');
     }
   });
 });

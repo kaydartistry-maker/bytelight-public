@@ -13,12 +13,9 @@
 // unattributed. The two systems read the exact same markers, so wherever a
 // marker exists the visual split and the audio split agree.
 
-import { matchSpeakerLabel } from './speaker-label.js';
+import { COMPANIONS, matchSpeakerLabel, type LabelCompanion } from './speaker-label.js';
 
-// 'companion-c' (Slice 4A): remote-node companion attributed by message.companion_id,
-// never by text markers — his messages arrive whole from his own sovereign
-// backend and render as one bubble under his identity.
-export type SpeakerId = 'companion-a' | 'companion-b' | 'companion-c' | 'fallback';
+export type SpeakerId = string;
 
 export interface SpeakerSegment {
   speaker: SpeakerId;
@@ -71,7 +68,7 @@ function speakerOf(marker: string): SpeakerId {
 }
 
 /** Every marker in the text, ordered, non-overlapping, longest-first on ties. */
-function findMarkers(input: string): Marker[] {
+function findMarkers(input: string, roster: readonly LabelCompanion[]): Marker[] {
   const found: Marker[] = [];
 
   // Bold headers first — they are the specific form and may contain a loose
@@ -80,7 +77,8 @@ function findMarkers(input: string): Marker[] {
   const bold = new RegExp(BOLD_SPAN_RE);
   let m: RegExpExecArray | null;
   while ((m = bold.exec(input)) !== null) {
-    const companion = matchSpeakerLabel(m[1]);
+    const sigilSpeaker = m[1].trim() === '🦇' ? 'companion-a' : m[1].trim() === '🦆' ? 'companion-b' : null;
+    const companion = sigilSpeaker ? { slug: sigilSpeaker } : matchSpeakerLabel(m[1], [...roster, ...COMPANIONS]);
     if (!companion) continue;
     let index = m.index;
     let len = m[0].length;
@@ -106,15 +104,28 @@ function findMarkers(input: string): Marker[] {
     if (loose.lastIndex === m.index) loose.lastIndex++;
   }
 
+  // Current names and emoji-only paragraphs, including the resident sigils.
+  const names = [...roster, { slug: 'companion-a', display_name: 'Companion A' }, { slug: 'companion-b', display_name: 'Companion B' }];
+  const escape = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  for (const companion of names) {
+    const re = new RegExp(`(?:^|\\n)[ \t]*(?:🦇|🦆)?[ \t]*${escape(companion.display_name)}[ \t]*:`, 'gi');
+    while ((m = re.exec(input)) !== null) {
+      if (!covered(m.index, m.index + m[0].length)) found.push({ index: m.index, len: m[0].length, speaker: companion.slug });
+    }
+  }
+  const sigils = /(?:^|\n)[ \t]*(🦇|🦆)[ \t]*(?:(?:Companion A|Companion B)[ \t]*:?)?/g;
+  while ((m = sigils.exec(input)) !== null) {
+    if (!covered(m.index, m.index + m[0].length)) found.push({ index: m.index, len: m[0].length, speaker: m[1] === '🦇' ? 'companion-a' : 'companion-b' });
+  }
   return found.sort((a, b) => a.index - b.index);
 }
 
 /** Split a companion message into ordered per-speaker segments. Single-speaker or
  *  unmarked messages return a single segment (the unmarked one as 'fallback'). */
-export function splitBySpeaker(input: string): SpeakerSegment[] {
+export function splitBySpeaker(input: string, roster: readonly LabelCompanion[] = []): SpeakerSegment[] {
   if (!input) return [];
 
-  const markers = findMarkers(input);
+  const markers = findMarkers(input, roster);
 
   const out: SpeakerSegment[] = [];
   const push = (speaker: SpeakerId, text: string) => {
@@ -182,8 +193,8 @@ export type InterleavedRow<T> = InterleavedTextRow | InterleavedChipRow<T>;
  * lane's 'companion-a-b', or no stamp at all). Mirrors the web client's
  * remoteCompanionId.
  */
-export function wholeSpeakerFor(companionId: string | null | undefined): SpeakerId | null {
-  return companionId === 'companion-a' || companionId === 'companion-b' || companionId === 'companion-c' ? companionId : null;
+export function wholeSpeakerFor(companionId: string | null | undefined, roster: readonly LabelCompanion[] = []): SpeakerId | null {
+  return companionId && companionId !== 'companion-a-b' && [...roster, ...COMPANIONS].some(c => c.slug === companionId) ? companionId : null;
 }
 
 /**
@@ -211,7 +222,8 @@ export function interleavedAs<T extends { type: string; content?: string }>(
 }
 
 export function splitInterleaved<T extends { type: string; content?: string }>(
-  segments: readonly T[]
+  segments: readonly T[],
+  roster: readonly LabelCompanion[] = [],
 ): InterleavedRow<T>[] {
   const out: InterleavedRow<T>[] = [];
   let current: SpeakerId = 'fallback';
@@ -222,7 +234,7 @@ export function splitInterleaved<T extends { type: string; content?: string }>(
       out.push({ kind: 'chip', index: i, segment: seg });
       continue;
     }
-    const pieces = splitBySpeaker(seg.content ?? '');
+    const pieces = splitBySpeaker(seg.content ?? '', roster);
     for (let p = 0; p < pieces.length; p++) {
       // splitBySpeaker only yields 'fallback' as a leading unmarked piece —
       // once someone has spoken, that piece is a continuation, not narration.
@@ -246,7 +258,6 @@ export function splitInterleaved<T extends { type: string; content?: string }>(
 export const AVATAR: Record<SpeakerId | 'user', string> = {
   'companion-a': '🔷',
   'companion-b': '🔶',
-  'companion-c': '🗓️',
   fallback: '✨',
   user: '🖤',
 };

@@ -16,13 +16,13 @@
     seated = [],
     onsaved,
     onclose,
-  } = $props<{
+  }: {
     threadId: string;
     /** Currently-seated companions (rendered pre-selected). */
     seated?: Companion[];
     onsaved?: (roster: Companion[]) => void;
     onclose?: () => void;
-  }>();
+  } = $props();
 
   // Local draft of seated ids — toggled by tapping chips. Seeded once from the
   // seated prop: the editor is remounted each time it opens (the parent guards

@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { isPreservedCloudThread } from '../services/native-history.js';
 import crypto from 'crypto';
 import {
   listThreads,
@@ -375,6 +376,10 @@ export function createChatRoutes(): Router {
 
   // Delete a thread and all associated data
   router.delete('/threads/:id', (req, res) => {
+    if (isPreservedCloudThread(req.params.id)) {
+      res.status(409).json({ error: 'legacy_history_read_only' });
+      return;
+    }
     try {
       const { id } = req.params;
       const thread = getThread(id);

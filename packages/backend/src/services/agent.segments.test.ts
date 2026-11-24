@@ -246,6 +246,13 @@ describe('silent turn persistence', () => {
     }), false);
   });
 
+  test('a caller that asks for it (the Theater couch) keeps nothing from a wordless pass, tools or not', () => {
+    const quiet = { fullResponse: '', stoppedByUser: false, agentTimedOut: false, endedSilently: true, hasDurableArtifacts: true };
+    assert.equal(shouldDiscardEmptyTurn({ ...quiet, passLeavesNothing: true }), true);
+    assert.equal(shouldDiscardEmptyTurn({ ...quiet, passLeavesNothing: false }), false, 'elsewhere the tool cards stay');
+    assert.equal(shouldDiscardEmptyTurn({ ...quiet, fullResponse: 'Chloe noticed.', passLeavesNothing: true }), false, 'words are always kept');
+  });
+
   test('discards a truly empty silent clean stop', () => {
     assert.equal(shouldDiscardEmptyTurn({
       fullResponse: '',

@@ -421,6 +421,22 @@ export function initDb(dbPath: string): Database.Database {
     }
   }
 
+  // Restore native Spellbook tables without altering existing Studio or bridge data.
+  runMigration(db, 'migrations/050_spellbook.sql', { required: true });
+  const looksFavoritesSQL = migrationSql('migrations/051_looks_favorites.sql');
+  if (looksFavoritesSQL !== null) {
+    const statements = looksFavoritesSQL.split('\n')
+      .filter((line) => !line.trim().startsWith('--')).join('\n')
+      .split(';').map((stmt) => stmt.trim()).filter(Boolean);
+    for (const stmt of statements) {
+      try { db.exec(stmt); }
+      catch (err: unknown) {
+        const msg = errMessage(err);
+        if (!msg.includes('duplicate column')) throw err;
+      }
+    }
+  }
+
   // 001 wrote push_subscriptions with a type list of web_push and apns, which
   // predates Android push, so an FCM device token from the app would be
   // refused by the CHECK constraint. SQLite cannot alter a constraint in

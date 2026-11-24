@@ -160,6 +160,7 @@ export type MessageSegment =
   | { type: 'thinking'; content: string; summary: string; kind?: ThoughtKind };
 
 export interface ThreadSummary {
+  lettaOwned?: boolean;
   id: string;
   name: string;
   type: 'daily' | 'named' | 'treehouse';

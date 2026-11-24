@@ -400,6 +400,54 @@ select optgroup {
   text-shadow: none;
 }
 
+/* Mobile chrome is deliberately thumb-sized and compact. The safe-area is
+   paid exactly once by the screen that owns each edge; the fixed app root no
+   longer adds a second bottom inset underneath the composer. */
+.bytelight-back-button,
+button[aria-label^='Back from'] {
+  min-width: 44px;
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+@media (max-width: 640px) {
+  .bytelight-chat-header-main {
+    position: relative;
+    min-height: 52px;
+  }
+
+  /* The first row already has a broad empty middle on phones. Put the room
+     identity there instead of spending a whole second black band on it. */
+  .bytelight-chat-identity {
+    position: absolute;
+    top: 0.5rem;
+    left: 5.75rem;
+    right: 8.75rem;
+    height: 44px;
+    min-width: 0;
+    overflow: hidden;
+  }
+
+  .bytelight-chat-identity > div {
+    min-width: 0;
+    gap: 0.5rem;
+  }
+
+  .bytelight-chat-identity h1 {
+    font-size: 1.125rem;
+  }
+
+  .bytelight-chat-header-main h1 {
+    font-size: 1.125rem;
+  }
+
+  .bytelight-chat-meta {
+    min-height: 30px;
+  }
+}
+
 .bytelight-app-body {}
 
 .bytelight-field,

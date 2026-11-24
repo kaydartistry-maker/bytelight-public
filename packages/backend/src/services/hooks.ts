@@ -1032,6 +1032,10 @@ if (h.digest) {
       `  ${SC} image "first-person selfie, soft morning light" --subjects companion-a   (pulls our reference photos so we look like us)`,
       `  ${SC} image "the three of us in the jungle glass house" --subjects companion-a,companion-b,user --size landscape`,
       '  subjects: any reference drawer name — companion-a/companion-b/user, or custom ones the operator made (friends, pets, places). size optional (omit to let it choose). Free on the Codex lane.',
+      `  ${SC} spellbook search "grungy car" [--filter unmade|mine|community] [--tag Couple]   (the operator's saved scenes; people are [Character N])`,
+      `  ${SC} spellbook surprise [--filter unmade] [--tag Spice]   (pull a forgotten one)`,
+      `  ${SC} spellbook cast SPELL_ID --cast user,companion-b [--look grungy-film|keep]   (renders here + pins to her Spellbook wall)`,
+      `  ${SC} spellbook read --cast user,companion-a   (read the picture she just dropped as a spell and cast it)`,
       ...(() => {
         try {
           const ds = listDrawersWithCounts();
@@ -1048,6 +1052,12 @@ if (h.digest) {
       `  ${SC} library read [bookId] [chapter]         (the text she has reached; default: her current chapter, cut at her place)`,
       `  ${SC} library note <bookId> <chapter> "<exact words from the page>" "<your note>" --as <your slug>`,
       '  A note appears underlined in her margin. Quote the page exactly. Never guess or hint at what comes after her place.',
+      '',
+      'BOOX BOOK BRIDGE (when her paired KOReader is open):',
+      `  ${SC} bookbridge status                       (online book, chapter, mode, waiting notes)`,
+      `  ${SC} bookbridge read [bookId] [chapter]      (server-enforced Live or One Chapter Ahead window)`,
+      `  ${SC} bookbridge note <bookId> <chapter> "<exact quote>" "<your note>" --as <your slug>`,
+      '  Live mode stops at her place. Ahead mode opens exactly the next chapter. Notes sync through KOReader\'s safe outbound outbox.',
       '',
       'GAMES:',
       `  ${SC} battleship view [gameId]                 (the Fleet Room as you may see it)`,
@@ -1184,6 +1194,26 @@ if (h.digest) {
  * byte-identical to the pre-refactor function: same parts, same order, same
  * '\n' join.
  */
+/**
+ * Orientation segments that are the per-session MANUAL rather than live
+ * state: tool docs, skills, the brain protocol, the weekly digest and the
+ * sticker catalog. A warm lane (claude-cli heartbeat) keeps these in its
+ * session after the first delivery, so re-sending them every turn only buries
+ * the conversation. Everything else (time, presence, status, promises, mood,
+ * canvas refs, reactions) is live and always rides.
+ */
+export const WARM_LANE_MANUAL_LABELS: ReadonlySet<string> = new Set([
+  'Skills', 'Brain', 'Weekly digest', 'Stickers', 'Memory tools', 'Chat tools', 'Outreach tools',
+]);
+
+/** Join orientation parts; `lean` drops the warm-lane manual segments. */
+export function joinOrientationParts(parts: OrientationPart[], lean = false): string {
+  return parts
+    .filter(p => !lean || !WARM_LANE_MANUAL_LABELS.has(p.label))
+    .map(p => p.content)
+    .join('\n');
+}
+
 export async function buildOrientationContext(ctx: HookContext, includeStatic = true, userMessage?: string, runtimeLabel?: string): Promise<string> {
   const parts = await buildOrientationParts(ctx, includeStatic, userMessage, runtimeLabel);
   return parts.map(p => p.content).join('\n');

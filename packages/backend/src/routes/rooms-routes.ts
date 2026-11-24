@@ -27,6 +27,7 @@ import { getThread } from '../services/db.js';
 import { getOwnerSlug, ownerDisplayName } from '../services/db/owner-name.js';
 import {
   listCompanions,
+  createCompanion,
   deleteCompanion,
   ProtectedCompanionError,
   getThreadRoster,
@@ -65,6 +66,32 @@ export function createRoomsRoutes(): Router {
     } catch (err) {
       console.error('Failed to list companions:', err);
       res.status(500).json({ error: 'Failed to list companions' });
+    }
+  });
+
+  router.post('/companions', (req, res) => {
+    const body = req.body ?? {};
+    if (typeof body.slug !== 'string' || !/^[a-z0-9][a-z0-9_-]{0,79}$/.test(body.slug) ||
+        typeof body.displayName !== 'string' || !body.displayName.trim() || body.displayName.trim().length > 80) {
+      res.status(400).json({ error: 'Valid slug and displayName are required' });
+      return;
+    }
+    for (const [key, max] of Object.entries({ emoji: 16, color: 32, avatarUrl: 8_000_000 })) {
+      if (body[key] !== undefined && (typeof body[key] !== 'string' || body[key].length > max)) {
+        res.status(400).json({ error: `Invalid ${key}` });
+        return;
+      }
+    }
+    try {
+      const companion = createCompanion({ ...body, displayName: body.displayName.trim() });
+      res.status(201).json({ companion });
+    } catch (err) {
+      if ((err as { code?: string }).code === 'SQLITE_CONSTRAINT_PRIMARYKEY') {
+        res.status(409).json({ error: 'Companion slug already exists' });
+        return;
+      }
+      console.error('Failed to create companion:', err);
+      res.status(500).json({ error: 'Failed to create companion' });
     }
   });
 

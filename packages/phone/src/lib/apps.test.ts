@@ -1,35 +1,23 @@
-import assert from 'node:assert/strict';
 import test from 'node:test';
-import { migrateAppIds, APPS } from './apps';
+import assert from 'node:assert/strict';
+import { APPS, applyAppLayout, migrateAppIds, loadAppLayout } from './apps';
 
-test('memory fold: three legacy tiles collapse into ONE memory tile', () => {
-  assert.deepEqual(
-    migrateAppIds(['messages', 'cortex', 'memoryblocks', 'selfknowledge', 'journal']),
-    ['messages', 'memory', 'journal'],
-  );
+const original = ['messages', 'status', 'integrations', 'agent', 'packs', 'commandcenter', 'canvas', 'companions', 'memory', 'journal', 'letters', 'library', 'theater', 'fieldnotes', 'spotify', 'treehouse', 'studio', 'files', 'inbox', 'weather', 'artifacts', 'xray', 'settings', 'notes', 'games'];
+
+test('canonical launcher restores original BL plus independent custom Questing and art tools', () => {
+  assert.deepEqual(APPS.map(app => app.id).sort(), [...original, 'questing', 'gif', 'cutout'].sort());
+  assert.equal(new Set(APPS.map(app => app.id)).size, APPS.length);
+  assert.equal(APPS.find(app => app.id === 'companions')?.name, 'Companion Editor');
 });
 
-test('legacy memory tile drops when a canonical memory tile already exists', () => {
-  assert.deepEqual(migrateAppIds(['memory', 'cortex', 'journal']), ['memory', 'journal']);
+test('legacy hub aliases resolve without duplicates and unknown ids stay harmless', () => {
+  assert.deepEqual(migrateAppIds(['messages', 'cortex', 'memoryblocks', 'memory', 'unknown', 'selfknowledge', 'studio', 'messages']), ['messages', 'memory', 'studio']);
 });
 
-test('every alias target and registry screen is a real registered app', () => {
-  const ids = new Set(APPS.map((a) => a.id));
-  for (const target of migrateAppIds(['gif', 'cortex', 'memoryblocks', 'selfknowledge'])) {
-    assert.ok(ids.has(target), `alias target ${target} missing from APPS`);
-  }
-});
-
-test('the retired standalone tiles are gone from the registry', () => {
-  const ids = new Set(APPS.map((a) => a.id));
-  for (const retired of ['cortex', 'memoryblocks', 'selfknowledge', 'gif']) {
-    assert.ok(!ids.has(retired), `retired tile ${retired} still in APPS`);
-  }
-});
-
-test('X-Ray stays its own Apps-drawer tile and keeps its saved place', () => {
-  const xray = APPS.find((a) => a.id === 'xray');
-  assert.ok(xray, 'X-Ray is in the registry');
-  assert.ok(!xray.dock, 'X-Ray is not on the home-screen dock');
-  assert.deepEqual(migrateAppIds(['messages', 'xray', 'agent']), ['messages', 'xray', 'agent'], 'a saved xray slot is not rewritten');
+test('saved sparse layouts preserve restored features and append all unplaced apps', () => {
+  const storage = new Map([['bytelight_app_layout_v1', JSON.stringify(['messages', 'canvas', null, 'spotify', 'unknown', 'studio'])]]);
+  Object.defineProperty(globalThis, 'localStorage', { configurable: true, value: { getItem: (key: string) => storage.get(key) ?? null, setItem: (key: string, value: string) => storage.set(key, value) } });
+  const slots = loadAppLayout()!;
+  assert.deepEqual(slots, ['messages', 'canvas', null, 'spotify', null, 'studio']);
+  assert.deepEqual(applyAppLayout(APPS, slots).filter(Boolean).map(app => app!.id).sort(), APPS.map(app => app.id).sort());
 });

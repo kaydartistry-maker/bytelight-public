@@ -22,10 +22,10 @@ import {
 const opus: TierEngine = { provider: 'claude-cli', model: 'claude-opus-4-7', effort: 'high' };
 const codex: TierEngine = { provider: 'codex-cli', model: 'gpt-6-sol', effort: 'medium' };
 
-test('all nine lanes are offered', () => {
+test('all eleven lanes are offered', () => {
   assert.deepEqual(
     PROVIDER_ROWS.map((r) => r.id),
-    ['claude', 'claude-cli', 'codex-cli', 'openai-codex', 'openai', 'openrouter', 'groq', 'xai', 'ollama'],
+    ['claude', 'claude-cli', 'codex-cli', 'gemini-cli', 'zai', 'openai-codex', 'openai', 'openrouter', 'groq', 'xai', 'ollama'],
   );
 });
 
@@ -68,6 +68,8 @@ test('availability gate matches the classic panel', () => {
   assert.equal(providerEnabled('groq', { routing: 'sdk', groq: { configured: true } }).enabled, false);
   assert.equal(providerEnabled('groq', { routing: 'hybrid', groq: { configured: true } }).enabled, true);
   assert.equal(providerEnabled('openai-codex', { routing: 'sdk', 'openai-codex': { available: true } }).enabled, true);
+  assert.equal(providerEnabled('zai', { routing: 'sdk', zai: { configured: true } }).enabled, true);
+  assert.equal(providerEnabled('zai', { routing: 'sdk', zai: { configured: false } }).enabled, false);
   assert.equal(providerEnabled('ollama', { routing: 'hybrid', ollama: { configured: true, enabled: false } }).enabled, false);
   assert.ok(providerEnabled('openai', { routing: 'hybrid', openai: { configured: false } }).hint);
 });

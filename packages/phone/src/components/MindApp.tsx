@@ -113,13 +113,13 @@ export function MindApp({ themeConfig, themeMode }: MindAppProps) {
       </div>
 
       {error && (
-        <div className={cn(card, 'text-xs')} style={{ color: '#e05252' }}>
+        <div data-appearance-card="" className={cn(card, 'text-xs')} style={{ color: '#e05252' }}>
           {error} — check mind_api_url / mind_api_key in Secrets.
         </div>
       )}
 
       {section === 'overview' && (
-        <div className={card}>
+        <div data-appearance-card="" className={card}>
           <span className={label}>Mind health</span>
           <pre className={cn('mt-2 max-h-[28rem] overflow-y-auto whitespace-pre-wrap font-mono text-[11px] leading-relaxed', colors.textMain)}>
             {healthRaw || 'No health report.'}
@@ -136,7 +136,7 @@ export function MindApp({ themeConfig, themeMode }: MindAppProps) {
             const open = expandedEntity === id;
             const detail = entityDetails[id];
             return (
-              <div key={id} className={card}>
+              <div key={id} data-appearance-card="" className={card}>
                 <button onClick={() => toggleEntity(id)} className="flex w-full items-center justify-between text-left">
                   <div>
                     <div className={cn('text-sm font-semibold', colors.textMain)}>{e.name || e.label || id}</div>
@@ -162,7 +162,7 @@ export function MindApp({ themeConfig, themeMode }: MindAppProps) {
           <div className={cn('py-8 text-center text-xs', colors.textMuted)}>No recent observations.</div>
         ) : (
           recentObs.map((o: any, i: number) => (
-            <div key={o.id ?? i} className={card}>
+            <div key={o.id ?? i} data-appearance-card="" className={card}>
               <div className="flex flex-wrap items-center gap-2">
                 {o.emotion && <span className={cn('rounded-full border px-2 py-0.5 text-[10px]', colors.panelBorder, colors.textMuted)}>{o.emotion}</span>}
                 {o.weight && <span className={cn('text-[10px] uppercase', colors.textMuted)}>{o.weight}</span>}

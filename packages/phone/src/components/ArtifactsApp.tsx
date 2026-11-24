@@ -371,7 +371,8 @@ export function ArtifactsApp({ onClose, themeConfig, themeMode }: ArtifactsAppPr
               onClose();
             }
           }}
-          className={cn("p-2 -ml-2 rounded-full transition-colors hover:bg-black/10 dark:hover:bg-white/10", colors.textMuted)}
+          aria-label="Back from Artifacts"
+          className={cn("bytelight-back-button p-2 -ml-2 rounded-full transition-colors hover:bg-black/10 dark:hover:bg-white/10", colors.textMuted)}
         >
           <ChevronLeft className="h-5 w-5" />
         </button>
@@ -420,6 +421,7 @@ export function ArtifactsApp({ onClose, themeConfig, themeMode }: ArtifactsAppPr
               artifactsPage.visible.map(artifact => (
                 <button
                   key={artifact.id}
+                  data-appearance-card=""
                   onClick={() => loadArtifact(artifact.id)}
                   className={cn(
                     "w-full p-4 rounded-xl text-left transition-colors",

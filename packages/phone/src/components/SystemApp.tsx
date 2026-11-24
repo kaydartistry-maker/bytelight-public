@@ -88,7 +88,7 @@ export function SystemApp({ onClose, themeConfig, themeMode, embedded }: SystemA
       }
     >
       {/* Connection */}
-      <div className={card}>
+      <div data-appearance-card="" className={card}>
         <div className="flex items-center gap-2 mb-2">
           {connected ? <Wifi size={15} style={{ color: colors.accent }} /> : <WifiOff size={15} style={{ color: colors.accent, opacity: 0.5 }} />}
           <span className={label}>Connection</span>
@@ -101,7 +101,7 @@ export function SystemApp({ onClose, themeConfig, themeMode, embedded }: SystemA
 
       {/* Context usage */}
       {contextUsage && (
-        <div className={card}>
+        <div data-appearance-card="" className={card}>
           <div className="flex items-center gap-2 mb-2">
             <Cpu size={15} className={colors.textMuted} />
             <span className={label}>Context</span>
@@ -124,7 +124,7 @@ export function SystemApp({ onClose, themeConfig, themeMode, embedded }: SystemA
 
       {/* Rate limit */}
       {rateLimit && (
-        <div className={card} style={{ borderColor: '#f59e0b' }}>
+        <div data-appearance-card="" className={card} style={{ borderColor: '#f59e0b' }}>
           <div className="flex items-center gap-2 mb-1">
             <AlertTriangle size={15} style={{ color: '#f59e0b' }} />
             <span className={label}>Rate Limit</span>
@@ -136,7 +136,7 @@ export function SystemApp({ onClose, themeConfig, themeMode, embedded }: SystemA
 
       {/* Runtime */}
       {status && (
-        <div className={card}>
+        <div data-appearance-card="" className={card}>
           <div className="flex items-center gap-2 mb-2">
             <Clock size={15} className={colors.textMuted} />
             <span className={label}>Runtime</span>
@@ -151,7 +151,7 @@ export function SystemApp({ onClose, themeConfig, themeMode, embedded }: SystemA
 
 
       {lastError && (
-        <div className={card} style={{ borderColor: colors.accent }}>
+        <div data-appearance-card="" className={card} style={{ borderColor: colors.accent }}>
           <div className="flex items-center gap-2 mb-1">
             <AlertTriangle size={15} style={{ color: colors.accent }} />
             <span className={label}>Last Error</span>

@@ -3,11 +3,11 @@
     percentage = 0,
     tokensUsed = 0,
     contextWindow = 0,
-  } = $props<{
+  }: {
     percentage: number;
     tokensUsed: number;
     contextWindow: number;
-  }>();
+  } = $props();
 
   const barColor = $derived(() => {
     if (percentage >= 95) return 'var(--context-critical, var(--color-error))';

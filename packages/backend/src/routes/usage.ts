@@ -6,11 +6,13 @@ import {
   getUsageEventByMessageId,
   getUsageAggregate,
   getToolCallAggregate,
+  getProviderUsageSummary,
 } from '../services/db.js';
 import { authMiddleware } from '../middleware/auth.js';
 import {
   getClaudeUsage,
   getCodexUsage,
+  getGeminiUsage,
   listPersistedUsageWindows,
 } from '../services/subscription-usage.js';
 import {
@@ -102,6 +104,27 @@ router.get('/usage/codex', authMiddleware, async (_req, res) => {
   }
 });
 
+router.get('/usage/gemini', authMiddleware, async (_req, res) => {
+  try {
+    res.json(await getGeminiUsage());
+  } catch (error) {
+    res.status(502).json({ error: error instanceof Error ? error.message : 'Gemini usage unavailable' });
+  }
+});
+
+router.get('/usage/zai', authMiddleware, (_req, res) => {
+  try {
+    res.json({
+      ...getProviderUsageSummary('zai'),
+      plan: 'GLM Coding Plan',
+      quotaAvailable: false,
+      quotaNote: 'Z.ai does not publish plan quota remaining through the API-key interface; these are Virelle receipts.',
+    });
+  } catch (error) {
+    res.status(500).json({ error: error instanceof Error ? error.message : 'GLM usage unavailable' });
+  }
+});
+
 router.get('/usage/windows', authMiddleware, (req, res) => {
   try {
     const lane = typeof req.query.lane === 'string' ? req.query.lane : undefined;
@@ -123,7 +146,9 @@ router.get('/voice/status', authMiddleware, (req, res) => {
   res.json({
     canTranscribe: voiceService.canTranscribe,
     canTTS: voiceService.canTTS,
-    canAnalyzeProsody: voiceService.canAnalyzeProsody,
+    // The phone asks this before offering the tone switch on a call, and a
+    // call's tone is the live EVI path, not the retired batch API.
+    canAnalyzeProsody: voiceService.canAnalyzeRealtimeProsody,
   });
 });
 

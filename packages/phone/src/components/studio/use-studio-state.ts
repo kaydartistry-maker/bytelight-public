@@ -3,7 +3,7 @@ import { useState, useRef, useEffect, useCallback, type ChangeEvent, type MouseE
 import { apiFetch } from '../../bytelight';
 import { DRAW_CANVAS_BACKGROUND_BY_THEME, ANTIGRAVITY_DEFAULT_MODEL, clampDimension } from './constants';
 import { galleryItemToImage } from './gallery-utils';
-import { saveHref } from '../../lib/download';
+import { createStudioFileSaver, downloadStudioFile, shareNativeStudioFile } from './save-image';
 import type { ViewMode, Backend, AspectRatioValue, DrawTool, GeneratedImage, StudioFolder, RefDrawer, UseStudioStateParams } from './types';
 import { MAX_ONE_OFF_REFS, oneOffUploadError, parseOneOffRef, type OneOffRef } from './one-off-refs';
 
@@ -64,6 +64,25 @@ export function useStudioState({
 
   // Results state
   const [currentImage, setCurrentImage] = useState<GeneratedImage | null>(null);
+  const fileSaverRef = useRef<ReturnType<typeof createStudioFileSaver> | null>(null);
+  const savingFileRef = useRef(false);
+  if (!fileSaverRef.current) {
+    const native = (window as typeof window & { Capacitor?: { isNativePlatform?: () => boolean } }).Capacitor?.isNativePlatform?.() === true;
+    fileSaverRef.current = createStudioFileSaver({
+      baseUrl: window.location.href,
+      fetchFile: (url, init) => apiFetch(url, init),
+      canShare: typeof navigator.canShare === 'function' ? data => navigator.canShare(data) : undefined,
+      share: typeof navigator.share === 'function' ? data => navigator.share(data) : undefined,
+      hasActivation: () => navigator.userActivation?.isActive ?? true,
+      ...(native ? { nativeShare: shareNativeStudioFile } : {}),
+      download: file => downloadStudioFile(file),
+    });
+  }
+  useEffect(() => {
+    // Prepare just the displayed result, never the entire private gallery.
+    if (currentImage?.src) void fileSaverRef.current!.prepare(currentImage.src).catch(() => {});
+  }, [currentImage?.src]);
+  useEffect(() => () => fileSaverRef.current?.clear(), []);
   const [history, setHistory] = useState<GeneratedImage[]>([]);
   const [folders, setFolders] = useState<StudioFolder[]>([]);
   const [currentFolderId, setCurrentFolderId] = useState<string | null>(null);
@@ -148,8 +167,10 @@ export function useStudioState({
     const check = async () => {
       try {
         const r = await apiFetch('/api/studio/jobs');
-        if (!r.ok || !alive) return;
+        if (!alive) return;
+        if (!r.ok) throw new Error(`Job poll failed: ${r.status}`);
         const data = await r.json();
+        if (!alive) return;
         const jobs = data.jobs || [];
 
         // Find active jobs to set generating state and display queue
@@ -163,6 +184,7 @@ export function useStudioState({
         for (const job of jobs) {
           if (job.status === 'completed' && job.url && !processedJobsRef.current.has(job.id)) {
             processedJobsRef.current.add(job.id);
+            if (typeof job.accountingWarning === 'string' && job.accountingWarning) setError(job.accountingWarning);
             const newImage: GeneratedImage = {
               id: job.filename || job.id,
               src: job.url,
@@ -174,6 +196,7 @@ export function useStudioState({
               timestamp: job.completedAt || Date.now(),
               sourcePrompt: job.sourcePrompt || undefined,
               styleId: job.styleId || undefined,
+              imageModelId: job.imageModelId || 'subscription-auto',
               references: job.referenceDrawers || [],
               referenceDrawers: job.referenceDrawers || [],
               aspectRatio: job.aspectRatio || undefined,
@@ -198,7 +221,9 @@ export function useStudioState({
           // Slower poll when idle to catch new jobs
           timer = window.setTimeout(check, 2000);
         }
-      } catch { /* the global tray will retry too */ }
+      } catch {
+        if (alive) timer = window.setTimeout(check, 2000);
+      }
     };
     void check();
     return () => { alive = false; if (timer) window.clearTimeout(timer); };
@@ -316,6 +341,15 @@ export function useStudioState({
     }
   };
 
+  const saveDescription = async (slug: string, description: string) => {
+    const response = await apiFetch(`/api/studio/drawers/${encodeURIComponent(slug)}/description`, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ description }),
+    });
+    const result = await response.json();
+    if (!response.ok || typeof result.description !== 'string') throw new Error(result.error || 'Description could not be saved.');
+    setDrawers(drawers => drawers.map(drawer => drawer.slug === slug ? { ...drawer, description: result.description } : drawer));
+  };
+
   const uploadRefImage = async (slug: string, file: File) => {
     const maxBytes = 25 * 1024 * 1024;
     if (file.size > maxBytes) {
@@ -388,11 +422,11 @@ export function useStudioState({
     }
   };
 
-  // Rename a custom drawer: PATCH /api/studio/drawers/:slug with { label, emoji }.
-  // The backend refuses the default drawers; the panel only offers custom ones.
+  // Rename display metadata only; built-in and custom subject IDs and photos stay put.
   const renameDrawer = async (slug: string, label: string, emoji?: string): Promise<boolean> => {
+    setError(null);
     try {
-      const r = await apiFetch(`/api/studio/drawers/${slug}`, {
+      const r = await apiFetch(`/api/studio/drawers/${encodeURIComponent(slug)}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ label, emoji }),
@@ -539,14 +573,13 @@ export function useStudioState({
     }
   };
 
-  const handleDownload = (img: GeneratedImage) => {
-    const a = document.createElement('a');
-    // Ask for the file, not the view — the native shell only saves what the
-    // server marks as an attachment (it ignores the download attribute).
-    a.href = saveHref(img.src);
+  const handleDownload = async (img: GeneratedImage) => {
+    if (savingFileRef.current) return;
+    savingFileRef.current = true;
+    setError(null);
     // Get backend type from model name for the prefix
     let backendPrefix = 'studio';
-    const modelLower = img.model.toLowerCase();
+    const modelLower = String(img.model || '').toLowerCase();
     if (modelLower.includes('gemini')) backendPrefix = 'gemini';
     else if (modelLower.includes('codex')) backendPrefix = 'codex';
     else if (modelLower.includes('nano')) backendPrefix = 'nano';
@@ -555,17 +588,24 @@ export function useStudioState({
     let counter = 1;
     try {
       const stored = localStorage.getItem(counterKey);
-      if (stored) counter = parseInt(stored, 10) + 1;
+      const previous = Number(stored);
+      if (Number.isSafeInteger(previous) && previous > 0 && previous < Number.MAX_SAFE_INTEGER) counter = previous + 1;
       localStorage.setItem(counterKey, String(counter));
     } catch {}
     // Clean filename: backend-NNNN.png (no prompt, no double extension)
     const ext = img.mediaType === 'video' ? '.mp4' : '.png';
-    a.download = `${backendPrefix}-${String(counter).padStart(4, '0')}${ext}`;
-    a.click();
+    try {
+      const result = await fileSaverRef.current!.save(img.src, `${backendPrefix}-${String(counter).padStart(4, '0')}${ext}`);
+      if (result === 'ready') setError('Image ready. Tap Download again to open the save/share sheet, then choose Save Image.');
+    } catch (error) {
+      setError((error as Error).message || 'Could not save the image. Please try again.');
+    } finally { savingFileRef.current = false; }
   };
 
   const selectFromHistory = (img: GeneratedImage) => {
     setCurrentImage(img);
+    setPrompt(img.sourcePrompt ?? img.prompt ?? '');
+    setSelectedStyle(img.sourcePrompt !== undefined ? (img.styleId ?? '') : '');
     // Load the image's settings into the pickers
     if (img.aspectRatio) {
       const validSizes: AspectRatioValue[] = ['square', 'portrait', 'landscape', '16:9', '9:16', '21:9', '2:3', '3:2', '4:5', '5:4', '3:4', '4:3', 'custom'];
@@ -894,7 +934,7 @@ export function useStudioState({
     creatingDrawer, setCreatingDrawer,
     refInputRefs,
     toggleSubject,
-    loadDrawers,
+    loadDrawers, saveDescription,
     uploadRefImage,
     deleteRefImage,
     createDrawer,

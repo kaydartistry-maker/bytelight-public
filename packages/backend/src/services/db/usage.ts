@@ -142,6 +142,44 @@ export function getUsageAggregate(params: {
   return stmt.all(...args) as UsageBucket[];
 }
 
+export interface ProviderUsageSummary {
+  provider: string;
+  requestCount: number;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheCreationTokens: number;
+  firstTrackedAt: string | null;
+  lastTrackedAt: string | null;
+}
+
+/** Local receipts only. This deliberately does not claim to represent a
+ * provider subscription quota: some subscription APIs do not expose quota
+ * remaining to API-key clients. */
+export function getProviderUsageSummary(provider: string): ProviderUsageSummary {
+  const row = getDb().prepare(`
+    SELECT COUNT(*) AS request_count,
+      COALESCE(SUM(input_tokens), 0) AS input_tokens,
+      COALESCE(SUM(output_tokens), 0) AS output_tokens,
+      COALESCE(SUM(cache_read_tokens), 0) AS cache_read_tokens,
+      COALESCE(SUM(cache_creation_tokens), 0) AS cache_creation_tokens,
+      MIN(created_at) AS first_tracked_at,
+      MAX(created_at) AS last_tracked_at
+    FROM usage_events
+    WHERE provider = ?
+  `).get(provider) as Record<string, unknown>;
+  return {
+    provider,
+    requestCount: Number(row.request_count) || 0,
+    inputTokens: Number(row.input_tokens) || 0,
+    outputTokens: Number(row.output_tokens) || 0,
+    cacheReadTokens: Number(row.cache_read_tokens) || 0,
+    cacheCreationTokens: Number(row.cache_creation_tokens) || 0,
+    firstTrackedAt: typeof row.first_tracked_at === 'string' ? row.first_tracked_at : null,
+    lastTrackedAt: typeof row.last_tracked_at === 'string' ? row.last_tracked_at : null,
+  };
+}
+
 export function getToolCallAggregate(params: {
   since?: string;
   until?: string;

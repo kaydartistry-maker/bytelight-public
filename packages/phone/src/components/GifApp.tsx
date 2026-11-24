@@ -1542,7 +1542,7 @@ export function GifApp({ onClose, themeConfig, themeMode, embedded = false, acti
           className={cn("bytelight-shell-header flex items-center gap-3 px-4 pb-3", colors.pageBg)}
           style={{ paddingTop: 'calc(var(--sat) + 0.75rem)' }}
         >
-          <button onClick={onClose} className={cn("p-1.5 rounded-full transition-colors", colors.textMuted)}>
+          <button onClick={onClose} aria-label="Back from GIF Lab" className={cn("bytelight-back-button p-1.5 rounded-full transition-colors", colors.textMuted)}>
             <ChevronLeft className="w-5 h-5" />
           </button>
           <h1 className={cn("text-lg font-semibold flex-1", colors.textMain)}>GIF Lab</h1>

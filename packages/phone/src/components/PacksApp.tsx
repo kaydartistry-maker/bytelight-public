@@ -7,6 +7,7 @@ import { cn } from '../lib/utils';
 import { apiFetch } from '../bytelight';
 import type { Sticker, StickerPack } from '@bytelight/shared';
 import { checkStickerBytes, stickerExtension } from '../lib/sticker-upload';
+import { extensionForMime, fitImageToLimits, ImageFitError, sniffImageBytes } from '../lib/image-resize';
 
 interface PacksAppProps {
   onClose: () => void;
@@ -30,6 +31,9 @@ const ROUTES: Record<Kind, { packs: string; items: string }> = {
   emojis: { packs: '/api/emojis/packs', items: '/api/emojis' },
 };
 const EMOJI_MAX_PX = 192;
+const EMOJI_MAX_BYTES = 1024 * 1024;
+const STICKER_RESIZE_MAX_BYTES = Math.floor(1.9 * 1024 * 1024);
+const STICKER_RESIZE_MAX_PX = 1280;
 
 export function PacksApp({ onClose, themeConfig, themeMode, onEmojisChanged }: PacksAppProps) {
   const colors = themeConfig[themeMode];
@@ -155,39 +159,88 @@ export function PacksApp({ onClose, themeConfig, themeMode, onEmojisChanged }: P
     for (const file of picked) {
       const base = file.name.replace(/\.[^.]+$/, '').replace(/[^a-z0-9]/gi, '').toLowerCase();
       try {
+        const bytes = new Uint8Array(await file.arrayBuffer());
+        const sniffed = sniffImageBytes(bytes);
+
         if (kind === 'emojis') {
-          // Emojis (full-sweep): PNG, WebP or GIF; stills are shrunk to
-          // 192px on the way in, GIFs pass through so they keep moving.
-          if (!['image/png', 'image/webp', 'image/gif'].includes(file.type)) {
-            wrongType.push(base || file.name);
+          // Animated GIFs keep their original bytes so they stay moving.
+          if (sniffed?.mime === 'image/gif' && sniffed.animated) {
+            if (bytes.length > EMOJI_MAX_BYTES) {
+              tooBig.push(base || file.name);
+              continue;
+            }
+            const blob = new Blob([bytes], { type: 'image/gif' });
+            setStaged((prev) => [...prev, { blob, ext: '.gif', defaultName: base, draftName: base, previewUrl: URL.createObjectURL(blob) }]);
             continue;
           }
-          const blob = await resizeImage(file, EMOJI_MAX_PX);
-          const ext = blob.type === 'image/gif' ? '.gif' : blob.type === 'image/png' ? '.png' : '.webp';
-          setStaged((prev) => [...prev, { blob, ext, defaultName: base, draftName: base, previewUrl: URL.createObjectURL(blob) }]);
+          // Static images (PNG, WebP, JPEG, static GIF, etc.) auto-resize to 192px and < 1 MB.
+          const fitted = await fitImageToLimits(new Blob([bytes], { type: sniffed?.mime || file.type || 'image/png' }), {
+            maxBytes: Math.floor(0.95 * EMOJI_MAX_BYTES),
+            maxDimension: EMOJI_MAX_PX,
+            allowedMimes: ['image/png', 'image/webp'],
+            preferredMime: 'image/webp',
+            preserveOriginalIfWithinLimits: false,
+            fileName: file.name,
+          });
+          setStaged((prev) => [...prev, {
+            blob: fitted.blob,
+            ext: extensionForMime(fitted.mime),
+            defaultName: base,
+            draftName: base,
+            previewUrl: URL.createObjectURL(fitted.blob),
+          }]);
           continue;
         }
-        const bytes = new Uint8Array(await file.arrayBuffer());
+
+        // Stickers: keep valid PNG/WebP already under 2 MB untouched (preserves animated APNG/WebP).
         const verdict = checkStickerBytes(bytes);
-        if ('reason' in verdict) {
-          (verdict.reason === 'type' ? wrongType : tooBig).push(base || file.name);
+        if (verdict.ok) {
+          const blob = new Blob([bytes], { type: verdict.mime });
+          setStaged((prev) => [...prev, {
+            blob,
+            ext: stickerExtension(verdict.mime),
+            defaultName: base,
+            draftName: base,
+            previewUrl: URL.createObjectURL(blob),
+          }]);
           continue;
         }
-        const blob = new Blob([bytes], { type: verdict.mime });
+
+        // Oversized or non-PNG/WebP static images (e.g. > 2 MB PNG/WebP or JPEG) auto-resize to fit.
+        if (sniffed?.animated) {
+          tooBig.push(base || file.name);
+          continue;
+        }
+        const fitted = await fitImageToLimits(new Blob([bytes], { type: sniffed?.mime || file.type || 'image/png' }), {
+          maxBytes: STICKER_RESIZE_MAX_BYTES,
+          maxDimension: STICKER_RESIZE_MAX_PX,
+          allowedMimes: ['image/png', 'image/webp'],
+          preferredMime: 'image/webp',
+          preserveOriginalIfWithinLimits: false,
+          fileName: file.name,
+        });
         setStaged((prev) => [...prev, {
-          blob,
-          ext: stickerExtension(verdict.mime),
+          blob: fitted.blob,
+          ext: extensionForMime(fitted.mime),
           defaultName: base,
           draftName: base,
-          previewUrl: URL.createObjectURL(blob),
+          previewUrl: URL.createObjectURL(fitted.blob),
         }]);
-      } catch {
-        unreadable.push(base || file.name);
+      } catch (err) {
+        if (err instanceof ImageFitError) {
+          if (err.reason === 'animated_too_large' || err.reason === 'too_large') {
+            tooBig.push(base || file.name);
+          } else {
+            wrongType.push(base || file.name);
+          }
+        } else {
+          unreadable.push(base || file.name);
+        }
       }
     }
     const notes: string[] = [];
-    if (wrongType.length) notes.push(summarizeNames(kind === 'emojis' ? 'Only PNG, WebP and GIF files allowed. Skipped' : 'Only PNG and WebP files allowed. Skipped', wrongType));
-    if (tooBig.length) notes.push(summarizeNames('Over the 2 MB limit. Skipped', tooBig));
+    if (wrongType.length) notes.push(summarizeNames('Unsupported image format. Skipped', wrongType));
+    if (tooBig.length) notes.push(summarizeNames(kind === 'emojis' ? 'Animated GIF over the 1 MB limit. Skipped' : 'Animated sticker over the 2 MB limit. Skipped', tooBig));
     if (unreadable.length) notes.push(summarizeNames('Could not read', unreadable, 'try picking them again'));
     if (notes.length) setError(notes.join(' · '));
   }
@@ -200,47 +253,6 @@ export function PacksApp({ onClose, themeConfig, themeMode, onEmojisChanged }: P
     const rest = names.length - 3;
     const body = rest > 0 ? `${shown} and ${rest} more` : shown;
     return `${prefix} ${names.length === 1 ? '' : `${names.length} `}${names.length === 1 ? 'file' : 'files'}: ${body}${advice ? ` — ${advice}` : ''}`;
-  }
-
-  // Emojis only (ported whole from full-sweep).
-  // Resize on the client before upload to stay under the backend's per-
-  // file caps and so users don't have to think about source resolution.
-  // GIFs pass through untouched — canvas re-encoding would freeze them.
-  async function resizeImage(file: File, maxSize: number): Promise<Blob> {
-    if (file.type === 'image/gif') return file;
-    return new Promise((resolve, reject) => {
-      const img = new Image();
-      // Seventy-six of these in one batch is seventy-six live object URLs if
-      // nobody hands them back.
-      const src = URL.createObjectURL(file);
-      const done = <T,>(fn: (v: T) => void) => (v: T) => { URL.revokeObjectURL(src); fn(v); };
-      const settle = { resolve: done(resolve), reject: done(reject) };
-      img.onload = () => {
-        const canvas = document.createElement('canvas');
-        let { width, height } = img;
-        if (width > maxSize || height > maxSize) {
-          if (width > height) {
-            height = (height / width) * maxSize;
-            width = maxSize;
-          } else {
-            width = (width / height) * maxSize;
-            height = maxSize;
-          }
-        }
-        canvas.width = width;
-        canvas.height = height;
-        const ctx = canvas.getContext('2d');
-        if (!ctx) return settle.reject(new Error('Canvas context unavailable'));
-        ctx.drawImage(img, 0, 0, width, height);
-        canvas.toBlob(
-          (blob) => (blob ? settle.resolve(blob) : settle.reject(new Error('Resize failed'))),
-          'image/webp',
-          0.9,
-        );
-      };
-      img.onerror = () => settle.reject(new Error('Image load failed'));
-      img.src = src;
-    });
   }
 
   function updateStagedName(idx: number, value: string) {
@@ -502,7 +514,7 @@ export function PacksApp({ onClose, themeConfig, themeMode, onEmojisChanged }: P
               <input
                 ref={fileInput}
                 type="file"
-                accept={kind === 'emojis' ? ".png,.webp,.gif,image/png,image/webp,image/gif" : ".png,.webp,image/png,image/webp"}
+                accept="image/*"
                 multiple
                 hidden
                 onChange={(e) => e.target.files && stageFiles(e.target.files)}

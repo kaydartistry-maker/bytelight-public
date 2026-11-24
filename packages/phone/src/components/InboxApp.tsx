@@ -134,6 +134,7 @@ export function InboxApp({ onClose, themeConfig, themeMode, embedded }: InboxApp
       themeMode={themeMode}
     >
       <div
+        data-appearance-card=""
         onDragOver={(e) => {
           e.preventDefault();
           setDragging(true);
@@ -171,6 +172,7 @@ export function InboxApp({ onClose, themeConfig, themeMode, embedded }: InboxApp
           {dropsPage.visible.map((d) => (
             <div
               key={d.id}
+              data-appearance-card=""
               className={cn('rounded-xl border p-3', colors.panelBg, colors.panelBorder)}
             >
               <div className="flex items-center gap-2">

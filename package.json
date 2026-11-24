@@ -18,8 +18,9 @@
     "start": "npm run start --workspace=packages/backend",
     "check:prepare": "npm run build --workspace=packages/shared",
     "check": "npm run check:prepare && npm run check --workspaces --if-present",
-    "test": "npm run test --workspaces --if-present",
-    "dev:phone": "npm run dev --workspace=packages/phone"
+    "test": "npm run test:activation && npm run test --workspaces --if-present",
+    "dev:phone": "npm run dev --workspace=packages/phone",
+    "test:activation": "node --test scripts/boss-activation.test.mjs"
   },
   "engines": {
     "node": ">=22.19.0 <25.0.0"
@@ -36,11 +37,11 @@
   },
   "allowScripts": {
     "better-sqlite3@11.10.0": true,
-    "esbuild@0.28.1": true,
+    "esbuild@0.28.2": true,
     "onnxruntime-node@1.21.0": true,
     "sharp@0.34.5": true,
     "@google/genai": false,
     "protobufjs": false,
-    "koffi@3.3.3": true
+    "koffi@3.3.7": true
   }
 }

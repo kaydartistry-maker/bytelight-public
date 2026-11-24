@@ -1,3 +1,5 @@
+import { pairingPage, takeInitialPairingToken } from './lib/pairing-bootstrap';
+import { PairDevice } from './components/PairDevice';
 import {StrictMode} from 'react';
 import {createRoot} from 'react-dom/client';
 import App from './App.tsx';
@@ -5,6 +7,9 @@ import {ErrorBoundary} from './components/ErrorBoundary';
 import {BytelightProvider} from './bytelight';
 import './index.css';
 import {registerPhoneWorker} from './bytelight/push';
+
+const pairingSecret = { current: takeInitialPairingToken() };
+const pairingView = pairingPage ? <PairDevice secret={pairingSecret} /> : null;
 
 // Excalidraw is lazy-loaded by The Press. Set its self-hosted font root before
 // that chunk can evaluate so no editor asset ever falls back to a CDN.
@@ -20,10 +25,10 @@ if (!(window as typeof window & {Capacitor?: {isNativePlatform?: () => boolean}}
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <BytelightProvider>
+    {pairingPage ? pairingView : <BytelightProvider>
       <ErrorBoundary fullScreen>
         <App />
       </ErrorBoundary>
-    </BytelightProvider>
+    </BytelightProvider>}
   </StrictMode>,
 );

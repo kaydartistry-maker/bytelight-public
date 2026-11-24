@@ -1,11 +1,19 @@
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { generateKeyPairSync, createVerify } from 'node:crypto';
+import { chmodSync, mkdtempSync, rmSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 import { initDb } from './db.js';
 import { getDb } from './db/init.js';
 import { addFcmSubscription, listFcmSubscriptions } from './db/push.js';
 import { setSecret, deleteSecret } from './secrets.js';
 import { PushService } from './push.js';
+import { provisionVaultKey } from './credential-vault.js';
+
+const vaultDir = mkdtempSync(join(homedir(), '.virelle-push-vault-test-'));
+chmodSync(vaultDir, 0o700);
+const vaultKeyPath = join(vaultDir, 'vault.key');
 
 const { privateKey, publicKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
 const account = {
@@ -19,6 +27,8 @@ const realFetch = globalThis.fetch;
 let calls: Array<{ url: string; body: string; auth?: string }> = [];
 
 before(() => {
+  provisionVaultKey(vaultKeyPath);
+  process.env.VIRELLE_VAULT_KEY_FILE = vaultKeyPath;
   initDb(':memory:');
   globalThis.fetch = (async (url: string, init: { body?: unknown; headers?: Record<string, string> }) => {
     const body = String(init.body ?? '');
@@ -35,6 +45,8 @@ before(() => {
 
 after(() => {
   globalThis.fetch = realFetch;
+  delete process.env.VIRELLE_VAULT_KEY_FILE;
+  rmSync(vaultDir, { recursive: true, force: true });
 });
 
 describe('Android app push (FCM)', () => {

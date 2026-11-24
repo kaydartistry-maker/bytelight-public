@@ -50,7 +50,7 @@ const VALID_EFFORT: readonly ThinkingEffort[] = [
 // went live in the picker (H3b-1) but were missing here, so a direct pick of
 // either provider 400'd on the thread route. Both are now valid everywhere.
 const VALID_PROVIDERS: readonly ProviderId[] = [
-  'claude', 'claude-cli', 'codex-cli', 'openai', 'openai-codex', 'openrouter', 'groq', 'xai', 'ollama',
+  'claude', 'claude-cli', 'codex-cli', 'gemini-cli', 'zai', 'openai', 'openai-codex', 'openrouter', 'groq', 'xai', 'ollama',
 ] as const;
 
 // Tier allow-list for the resolver path. Writes are interactive-only; the

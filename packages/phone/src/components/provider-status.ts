@@ -21,6 +21,7 @@ export interface ModelsStatus {
   xai?: { configured: boolean };
   openai?: { configured: boolean; enabled?: boolean; url?: string };
   huggingface?: { configured: boolean };
+  zai?: { configured: boolean };
 }
 
 /** Live catalog reach for a lane: null = not known yet. */

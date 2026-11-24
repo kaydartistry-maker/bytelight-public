@@ -123,14 +123,14 @@ export function FieldNotesApp({ onClose, themeConfig, themeMode, embedded }: Fie
       }
     >
       {loading && notes.length === 0 ? (
-        <div className={cn('rounded-2xl border py-6 text-center text-xs', colors.panelBg, colors.panelBorder, colors.textMuted)}>Loading…</div>
+        <div data-appearance-card="" className={cn('rounded-2xl border py-6 text-center text-xs', colors.panelBg, colors.panelBorder, colors.textMuted)}>Loading…</div>
       ) : notes.length === 0 ? (
-        <div className={cn('rounded-2xl border px-4 py-6 text-center text-xs', colors.panelBg, colors.panelBorder, colors.textMuted)}>
+        <div data-appearance-card="" className={cn('rounded-2xl border px-4 py-6 text-center text-xs', colors.panelBg, colors.panelBorder, colors.textMuted)}>
           Nothing yet. Notes land here when a companion writes one.
         </div>
       ) : (
         byDay(notes).map(([day, dayNotes]) => (
-          <div key={day} className={cn('mb-3 rounded-2xl border px-3 pb-1 pt-2.5', colors.panelBg, colors.panelBorder)}>
+          <div key={day} data-appearance-card="" className={cn('mb-3 rounded-2xl border px-3 pb-1 pt-2.5', colors.panelBg, colors.panelBorder)}>
             <div className={cn('text-[11px] font-semibold uppercase tracking-wider', colors.textMuted)}>{formatDay(day)}</div>
             {dayNotes.map(noteRow)}
           </div>

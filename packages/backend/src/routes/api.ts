@@ -1,4 +1,7 @@
 import { Router } from 'express';
+import { createAppSettingsRoutes } from './app-settings-routes.js';
+import { createThemeAssetsRoutes } from './theme-assets-routes.js';
+import { createBuilderRoutes } from './builder-routes.js';
 
 // Middleware
 import { authMiddleware } from '../middleware/auth.js';
@@ -48,13 +51,22 @@ import starredRouter from './starred.js';
 import libraryRouter from './library.js';
 import storyShelfRouter from './story-shelf.js';
 import bookClubRouter from './library-book-club.js';
+import theaterRouter from './theater.js';
+import { createEarRoutes } from './theater-ear.js';
 import emojiRouter from './emojis.js';
 import studioRouter from './studio.js';
+import spellbookRouter from './spellbook.js';
 import gifRouter from './gif.js';
 import mcpServersRouter from './mcp-servers.js';
 import secretsRouter from './secrets.js';
 import cardsRouter from './cards.js';
 import battleshipRouter from './battleship.js';
+import lifeQuestsRouter from './life-quests.js';
+import doublesDiceRouter from './doubles-dice.js';
+import maintenanceRouter from './maintenance.js';
+import googleDriveRouter, { googleDriveCallbackRouter } from './google-drive.js';
+import { createBookBridgeDeviceRoutes } from './book-bridge-device.js';
+import libraryBookBridgeRouter from './library-book-bridge.js';
 
 // ============================================================================
 // API Router Composition
@@ -66,6 +78,9 @@ const router = Router();
 // 1. Public routes (no auth required)
 // ----------------------------------------------------------------------------
 router.use(createPublicRoutes());
+// OAuth returns in the system browser without the app WebView's session
+// cookie. Its short-lived, single-use state token is checked by the handler.
+router.use(googleDriveCallbackRouter);
 
 // ----------------------------------------------------------------------------
 // 2. Internal routes (localhost-only, no auth)
@@ -73,9 +88,24 @@ router.use(createPublicRoutes());
 router.use(createInternalRoutes());
 
 // ----------------------------------------------------------------------------
+// 2b. The Theater's Ear (browser extension): no cookie session, its own
+// bearer token instead (routes/theater-ear.ts). Only status, heard lines,
+// clock reports, a probe, and the one-time pairing claim.
+// ----------------------------------------------------------------------------
+router.use('/theater-ear', createEarRoutes());
+// BOOX/KOReader has no browser session. It gets one narrow bearer-token door;
+// pairing and mode controls remain behind the owner session below.
+router.use('/book-bridge', createBookBridgeDeviceRoutes());
+
+// ----------------------------------------------------------------------------
 // 3. Auth boundary (all routes below require authentication)
 // ----------------------------------------------------------------------------
 router.use(authMiddleware);
+// Retained Virelle customization and guarded local build controls. These are
+// independent of the retired Cloud chat adapter.
+router.use(createAppSettingsRoutes());
+router.use(createThemeAssetsRoutes());
+router.use(createBuilderRoutes());
 
 // ----------------------------------------------------------------------------
 // 4. Command Center (feature-flagged)
@@ -185,6 +215,7 @@ router.use('/compactions', compactionsRouter);
 // The Book Club — rounds of pitches and votes inside the Library. Her door;
 // the companions pitch and vote through /api/internal/library/book-club.
 router.use('/library/book-club', bookClubRouter);
+router.use('/library/book-bridge', libraryBookBridgeRouter);
 router.use('/library', libraryRouter);
 // The Story Shelf — choose-your-own-path books the companions write and run
 // (ported from Aerie, where server.ts mounted it at /api/story-shelf). The
@@ -193,16 +224,24 @@ router.use('/library', libraryRouter);
 // router also carries its own, as Aerie's does). Page turns reach
 // req.app.locals.agentService, set in server.ts.
 router.use('/story-shelf', storyShelfRouter);
+// The Theater — your companions on the couch while she watches something on
+// her TV: nights, subtitles, the clock, couch talk. Her door only; the
+// companions read the clock through /api/internal/theater.
+router.use('/theater', theaterRouter);
 router.use(createXrayRoutes());
 router.use(createStickerRoutes());
 // Custom emojis and emoji packs (ported from full-sweep). /api/emojis.
 router.use('/emojis', emojiRouter);
 router.use(usageRouter);
+router.use(maintenanceRouter);
+router.use(googleDriveRouter);
 router.use(starredRouter);
 
 // Studio — image-generation settings, reference drawers, and gallery
 // (ported from Thornvale/Sidney). Authed via authMiddleware above.
 router.use(studioRouter);
+// Spellbook — drop a picture, cast yourselves into it.
+router.use(spellbookRouter);
 
 // GIF Studio — authenticated ffmpeg editing pipeline.
 router.use(gifRouter);
@@ -237,6 +276,8 @@ router.use('/games/cards', cardsRouter);
 // server.ts mounted it at /api/games/battleship). After authMiddleware above;
 // the companions' sealed fire lane is /api/internal/games/battleship.
 router.use('/games/battleship', battleshipRouter);
+router.use('/questing/life', lifeQuestsRouter);
+router.use('/questing/doubles', doublesDiceRouter);
 
 // Unknown /api paths answer a JSON 404. Without this they fell through to the
 // Svelte SPA fallback (server.ts app.get('*')) and came back 200 + index.html,

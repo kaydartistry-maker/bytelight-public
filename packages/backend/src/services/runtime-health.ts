@@ -37,13 +37,14 @@ import { getConfig as getDbConfig } from './db.js';
  * them to surface "restart required" warnings.
  */
 
-const SDK_PACKAGE_JSON_PATH = join(
-  PROJECT_ROOT,
-  'node_modules',
-  '@anthropic-ai',
-  'claude-agent-sdk',
-  'package.json',
-);
+// npm can hoist the SDK to the repo root OR keep it inside the backend
+// workspace (`packages/backend/node_modules`) — the live house has it in the
+// workspace, so reading only the root path returned null and the card showed
+// "Unknown" with dashes. Check both, root first.
+const SDK_PACKAGE_JSON_CANDIDATES = [
+  join(PROJECT_ROOT, 'node_modules', '@anthropic-ai', 'claude-agent-sdk', 'package.json'),
+  join(PROJECT_ROOT, 'packages', 'backend', 'node_modules', '@anthropic-ai', 'claude-agent-sdk', 'package.json'),
+];
 
 // ---------------------------------------------------------------------------
 // MODEL_MIN_CC — light-path inline map (see file header).
@@ -72,17 +73,21 @@ export const MODEL_MIN_CC: ReadonlyMap<string, string> = new Map<string, string>
  * from the SDK version.
  */
 export function readClaudeCodeVersionFromSdk(
-  path: string = SDK_PACKAGE_JSON_PATH,
+  path: string | readonly string[] = SDK_PACKAGE_JSON_CANDIDATES,
 ): string | null {
-  try {
-    const pkg = JSON.parse(readFileSync(path, 'utf-8')) as {
-      version?: string;
-      claudeCodeVersion?: string;
-    };
-    return pkg.claudeCodeVersion ?? null;
-  } catch {
-    return null;
+  const paths = typeof path === 'string' ? [path] : path;
+  for (const p of paths) {
+    try {
+      const pkg = JSON.parse(readFileSync(p, 'utf-8')) as {
+        version?: string;
+        claudeCodeVersion?: string;
+      };
+      if (pkg.claudeCodeVersion) return pkg.claudeCodeVersion;
+    } catch {
+      /* try the next location */
+    }
   }
+  return null;
 }
 
 // Captured once at module load — represents what the running process
@@ -219,6 +224,13 @@ export interface RuntimeHealth {
   systemCcVersion: string | null;
   minRequired: MinRequirement | null;
   restartRequired: boolean;
+  /**
+   * True when the Claude CLI lane (the warm interactive `claude` session on
+   * the subscription) is switched on. That lane runs the system Claude Code
+   * (`systemCcVersion`), not the SDK's bundled runtime, so the card can say
+   * which one is actually answering.
+   */
+  cliLaneEnabled: boolean;
 }
 
 /**
@@ -240,5 +252,7 @@ export function getRuntimeHealth(): RuntimeHealth {
     systemCcVersion: system,
     minRequired,
     restartRequired,
+    // Same literal check the CLI lane gates itself on (heartbeat/runtime.ts).
+    cliLaneEnabled: process.env.CLAUDE_CLI_HEARTBEAT_ENABLED === 'true',
   };
 }

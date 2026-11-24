@@ -859,6 +859,23 @@ export function readNotes(bookId: number, root = libraryDir()): MarginNote[] {
   }
 }
 
+/**
+ * Margin notes whose anchor words she has actually reached. Ahead-mode notes
+ * are written into the same durable notebook, but remain sealed from every
+ * ordinary Library surface until the bookmark reaches their quote.
+ */
+export function reachedNotes(bookId: number, root = libraryDir()): MarginNote[] {
+  const entry = readShelf(root).find((e) => e.id === bookId);
+  const book = readBook(bookId, root);
+  if (!entry?.progress || !book || entry.source === 'kindle') return [];
+  const progress = entry.progress;
+  return readNotes(bookId, root).filter((note) => {
+    if (note.chapter < 0 || note.chapter >= book.chapters.length || note.chapter > progress.chapter) return false;
+    const visible = reachedParagraphs(book, note.chapter, progress).visible;
+    return squash(visible.join('\n')).includes(squash(note.quote));
+  });
+}
+
 function writeNotes(bookId: number, notes: MarginNote[], root: string): void {
   mkdirSync(join(root, 'notes'), { recursive: true });
   writeJson(notesPath(bookId, root), notes);
@@ -872,7 +889,7 @@ const squash = (s: string) => s.replace(/\s+/g, ' ').trim();
  * point ahead of her or at text that isn't there.
  */
 export function addNote(
-  input: { bookId: number; chapter: number; quote: string; note: string; author: string },
+  input: { bookId: number; chapter: number; quote: string; note: string; author: string; allowThroughChapter?: number },
   root = libraryDir(),
 ): MarginNote {
   const quote = squash(input.quote);
@@ -881,12 +898,25 @@ export function addNote(
   if (quote.length < 3) throw new LibraryError('Quote at least a few words from the page.');
   if (!note) throw new LibraryError('The note is empty.');
   if (!/^[a-z0-9_-]{1,32}$/.test(author)) throw new LibraryError('Sign the note with your slug (e.g. companion-a, companion-b).');
-  const reach = readAlong(input.bookId, input.chapter, root);
-  const paragraph = reach.paragraphs.findIndex((p) => squash(p).includes(quote));
+  let chapter = input.chapter;
+  let paragraphs: string[];
+  if (input.allowThroughChapter !== undefined) {
+    const book = readBook(input.bookId, root);
+    if (!book) throw new LibraryError('That book is not on her shelf.');
+    if (!Number.isInteger(chapter) || chapter < 0 || chapter >= book.chapters.length || chapter > input.allowThroughChapter) {
+      throw new LibraryError('That chapter is outside the permitted reading window.');
+    }
+    paragraphs = paragraphsOf(book.chapters[chapter].text);
+  } else {
+    const reach = readAlong(input.bookId, chapter, root);
+    chapter = reach.chapter;
+    paragraphs = reach.paragraphs;
+  }
+  const paragraph = paragraphs.findIndex((p) => squash(p).includes(quote));
   if (paragraph === -1) throw new LibraryError('Those words are not on a page she has reached in that chapter — quote them exactly.');
   const entry: MarginNote = {
     id: `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`,
-    chapter: reach.chapter,
+    chapter,
     quote,
     paragraph,
     note: note.slice(0, 2000),

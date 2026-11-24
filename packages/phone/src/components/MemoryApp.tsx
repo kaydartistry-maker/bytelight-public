@@ -1,7 +1,6 @@
 import React, { useState } from 'react';
 import { Brain } from 'lucide-react';
 import { AppShell } from './AppShell';
-import { CortexApp } from './CortexApp';
 import { MindApp } from './MindApp';
 import { MemoryBlocksApp } from './MemoryBlocksApp';
 import { SelfKnowledgeApp } from './SelfKnowledgeApp';
@@ -16,18 +15,17 @@ interface MemoryAppProps {
   themeMode: 'light' | 'dark';
 }
 
-type Tab = 'mind' | 'cortex' | 'blocks' | 'selfknowledge' | 'receipts' | 'compactions';
+type Tab = 'mind' | 'blocks' | 'selfknowledge' | 'receipts' | 'compactions';
 const TABS: { id: Tab; label: string }[] = [
   { id: 'mind', label: 'Mind' },
-  { id: 'cortex', label: 'Cortex' },
   { id: 'blocks', label: 'Blocks' },
   { id: 'selfknowledge', label: 'Self-Knowledge' },
   { id: 'receipts', label: 'Receipts' },
   { id: 'compactions', label: 'Compactions' },
 ];
 
-// One roof over everything the house remembers: Cortex (the searchable
-// archive, its own tabs intact), the live core-memory Blocks, and the
+// One roof over everything the house remembers: the native Mind,
+// live core-memory Blocks, receipts, compactions, and the
 // Self-Knowledge drawers. Each keeps its full flow — this shell only holds
 // the doors. Journal deliberately stays its own app.
 export function MemoryApp({ onClose, themeConfig, themeMode }: MemoryAppProps) {
@@ -52,7 +50,6 @@ export function MemoryApp({ onClose, themeConfig, themeMode }: MemoryAppProps) {
       </div>
 
             {tab === 'mind' && <MindApp themeConfig={themeConfig} themeMode={themeMode} />}
-{tab === 'cortex' && <CortexApp embedded onClose={onClose} themeConfig={themeConfig} themeMode={themeMode} />}
       {tab === 'blocks' && <MemoryBlocksApp embedded onClose={onClose} themeConfig={themeConfig} themeMode={themeMode} />}
       {tab === 'receipts' && <ReceiptsApp themeConfig={themeConfig} themeMode={themeMode} />}
       {tab === 'selfknowledge' && <SelfKnowledgeApp embedded onClose={onClose} themeConfig={themeConfig} themeMode={themeMode} />}

@@ -7,6 +7,7 @@ import { McpApp } from './McpApp';
 import { SecretsManager } from './SecretsManager';
 import { IntegrationsToggles } from './IntegrationsToggles';
 import { RoutingPanel } from './RoutingPanel';
+import { GoogleDriveApp } from './GoogleDriveApp';
 import { ThemeConfig } from '../lib/theme';
 import { cn } from '../lib/utils';
 
@@ -16,9 +17,10 @@ interface IntegrationsAppProps {
   themeMode: 'light' | 'dark';
 }
 
-type Tab = 'providers' | 'discord' | 'routing' | 'mcp' | 'secrets';
+type Tab = 'providers' | 'google' | 'discord' | 'routing' | 'mcp' | 'secrets';
 const TABS: { id: Tab; label: string }[] = [
   { id: 'providers', label: 'Providers' },
+  { id: 'google', label: 'Google' },
   { id: 'discord', label: 'Discord' },
   { id: 'routing', label: 'Routing' },
   { id: 'mcp', label: 'MCP' },
@@ -52,6 +54,7 @@ export function IntegrationsApp({ onClose, themeConfig, themeMode }: Integration
       </div>
 
       {tab === 'providers' && <ProvidersApp embedded onClose={onClose} themeConfig={themeConfig} themeMode={themeMode} />}
+      {tab === 'google' && <GoogleDriveApp themeConfig={themeConfig} themeMode={themeMode} />}
       {tab === 'discord' && <DiscordApp embedded onClose={onClose} themeConfig={themeConfig} themeMode={themeMode} />}
       {tab === 'routing' && <RoutingPanel themeConfig={themeConfig} themeMode={themeMode} />}
       {tab === 'mcp' && <McpApp embedded onClose={onClose} themeConfig={themeConfig} themeMode={themeMode} />}

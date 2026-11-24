@@ -1,4 +1,5 @@
 import type { Thread } from '@bytelight/shared';
+import { assertNativeThreadWritable } from '../native-history.js';
 import { getBytelightConfig } from '../../config.js';
 import { getDb } from './init.js';
 
@@ -178,6 +179,7 @@ export function archiveThread(threadId: string, archivedAt: string | null): void
 }
 
 export function deleteThread(threadId: string): string[] {
+  assertNativeThreadWritable(threadId);
   const db = getDb();
 
   // Collect fileIds from message metadata before deleting

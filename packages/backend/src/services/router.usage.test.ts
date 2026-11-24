@@ -32,11 +32,13 @@ describe('OpenRouter provider-native usage', () => {
     globalThis.fetch = (async (_url, init) => {
       const body = JSON.parse(String(init?.body));
       assert.deepEqual(body.usage, { include: true });
+      assert.equal(body.max_tokens, 8192);
+      assert.equal(body.session_id, 'bl-cache-test');
       return new Response(sse, { status: 200, headers: { 'Content-Type': 'text/event-stream' } });
     }) as typeof globalThis.fetch;
 
     const events = await drain<StreamInferenceEvent>(
-      streamInference([{ role: 'user', content: 'hi' }], 'z-ai/glm-5.2', 'openrouter', CONFIG),
+      streamInference([{ role: 'user', content: 'hi' }], 'z-ai/glm-5.2', 'openrouter', CONFIG, false, 'bl-cache-test'),
     );
 
     assert.deepEqual(events, [
@@ -52,6 +54,7 @@ describe('OpenRouter provider-native usage', () => {
       call += 1;
       const body = JSON.parse(String(init?.body));
       assert.deepEqual(body.usage, { include: true });
+      assert.equal(body.session_id, 'bl-tools-cache-test');
       if (call <= 5) {
         return Response.json({
           choices: [{ message: { content: '', tool_calls: [{ id: `c${call}`, function: { name: 'lookup', arguments: '{}' } }] } }],
@@ -71,6 +74,9 @@ describe('OpenRouter provider-native usage', () => {
       CONFIG,
       [tool],
       async () => ({ result: 'ok', ok: true }),
+      false,
+      5, // Explicitly exercise the bounded final-nudge receipt path.
+      'bl-tools-cache-test',
     ));
 
     assert.equal(call, 6);

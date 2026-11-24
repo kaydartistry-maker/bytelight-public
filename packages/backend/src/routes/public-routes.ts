@@ -1,3 +1,4 @@
+import { createPairingRoutes } from './pairing.js';
 import { Router } from 'express';
 import {
   loginHandler,
@@ -13,6 +14,7 @@ import type { PushService } from '../services/push.js';
  */
 export function createPublicRoutes(): Router {
   const router = Router();
+  router.use(createPairingRoutes());
 
   // Health check (public — minimal response)
   router.get('/health', (req, res) => {

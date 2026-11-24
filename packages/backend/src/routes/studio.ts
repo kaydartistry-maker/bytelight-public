@@ -2,6 +2,7 @@
 // Covers: image-gen settings, reference drawers, and gallery.
 
 import { Router } from 'express';
+import { setSecret } from '../services/secrets.js';
 import multer from 'multer';
 import { basename, join } from 'path';
 import { existsSync } from 'fs';
@@ -14,6 +15,8 @@ import {
   listDrawers,
   createDrawer,
   renameDrawer,
+  getDrawerDescription,
+  saveDrawerDescription,
   deleteDrawer,
   isValidSubject,
   listReferences,
@@ -32,9 +35,18 @@ import {
   ImageGenError,
   REFS_DIR,
   GALLERY_DIR,
+  STUDIO_UPLOADS_DIR,
+  prepareStudioGeneration,
 } from '../services/image-gen.js';
+import { addStyleReference, deleteStyle, duplicateStyle, getStudioStyles, hasMJFlags, OPENAI_IMAGE_MODELS, requireStyle, resolveImageModel, saveStyle, setDefaultChatStyle, StudioStyleError, styleAssetPath } from '../services/studio-styles.js';
+import { parsePromptGame, promptWritingInstruction } from '../services/studio-prompts.js';
+import { prepareTransformationRequest } from '../services/studio-transformations.js';
+import { BOSS_BATTLES_PATH } from '@bytelight/shared';
+import { createBossBattleRoutes } from './boss-battles.js';
 
 const router = Router();
+// The bestiary uses Studio portrait jobs and saved styles, with its own owner check.
+router.use(BOSS_BATTLES_PATH.slice('/api'.length), createBossBattleRoutes());
 
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -51,7 +63,7 @@ router.get('/studio/settings', async (_req, res) => {
   try {
     const settings = getImageGenSettings();
     const monthlySpendUsd = await monthlyImageSpendUsd();
-    res.json({ settings, monthlySpendUsd });
+    res.json({ settings, monthlySpendUsd, models: OPENAI_IMAGE_MODELS, allowMeteredImages: getConfig('studio.allow_metered_images') === 'true', chatImageModel: getConfig('studio.chat_image_model') || 'subscription-auto' });
   } catch (error) {
     console.error('[studio] settings read error:', error);
     res.status(500).json({ error: 'Failed to read Studio settings' });
@@ -66,7 +78,7 @@ router.put('/studio/settings', (req, res) => {
     if ('enabled' in b) writes.push(['image_gen.enabled', b.enabled ? 'true' : 'false']);
     if ('backend' in b) {
       const v = String(b.backend);
-      if (!['codex', 'openai', 'cloudflare', 'antigravity', 'openart'].includes(v)) { res.status(400).json({ error: 'backend must be codex, openai, cloudflare, antigravity, or openart' }); return; }
+      if (!['codex', 'openai', 'openrouter'].includes(v)) { res.status(400).json({ error: 'Studio supports OpenAI image generation only.' }); return; }
       writes.push(['image_gen.backend', v]);
     }
     if ('size' in b) {
@@ -80,13 +92,22 @@ router.put('/studio/settings', (req, res) => {
       writes.push(['image_gen.quality', v]);
     }
     if ('openai_model' in b) writes.push(['image_gen.openai_model', String(b.openai_model)]);
-    if ('openai_api_key' in b) writes.push(['image_gen.openai_api_key', String(b.openai_api_key)]);
+    if ('openai_api_key' in b) setSecret('studio_openai_api_key', String(b.openai_api_key));
     if ('antigravity_model' in b) writes.push(['image_gen.antigravity_model', String(b.antigravity_model)]);
     if ('openart_model' in b) writes.push(['image_gen.openart_model', String(b.openart_model)]);
     if ('monthly_budget_usd' in b) {
       const n = Number(b.monthly_budget_usd);
       if (Number.isNaN(n) || n < 0) { res.status(400).json({ error: 'monthly_budget_usd must be a non-negative number' }); return; }
       writes.push(['image_gen.monthly_budget_usd', String(n)]);
+    }
+    if ('allowMeteredImages' in b) {
+      if (typeof b.allowMeteredImages !== 'boolean') { res.status(400).json({ error: 'Metered model permission must be true or false.' }); return; }
+      writes.push(['studio.allow_metered_images', String(b.allowMeteredImages)]);
+      if (!b.allowMeteredImages) writes.push(['studio.chat_image_model', 'subscription-auto']);
+    }
+    if ('chatImageModel' in b) {
+      const model = resolveImageModel(String(b.chatImageModel));
+      writes.push(['studio.chat_image_model', model.id]);
     }
 
     for (const [k, v] of writes) setConfig(k, v);
@@ -95,6 +116,40 @@ router.put('/studio/settings', (req, res) => {
     console.error('[studio] settings write error:', error);
     res.status(500).json({ error: 'Failed to update Studio settings' });
   }
+});
+
+// Saved styles use the same authenticated router as references and gallery.
+router.get('/studio/styles', (_req, res) => {
+  try { res.json(getStudioStyles()); } catch (e) { res.status(400).json({ error: (e as Error).message }); }
+});
+router.get('/studio/styles/assets/:filename', (req, res) => {
+  try { const path = styleAssetPath(req.params.filename); if (!existsSync(path)) { res.sendStatus(404); return; } res.sendFile(path); }
+  catch { res.sendStatus(404); }
+});
+router.put('/studio/styles/default-chat', (req, res) => {
+  try {
+    const id = req.body.styleId;
+    if (id !== null && typeof id !== 'string') throw new StudioStyleError('Choose a saved style or clear the default.');
+    res.json(setDefaultChatStyle(id));
+  } catch (e) { res.status(400).json({ error: (e as Error).message }); }
+});
+router.post('/studio/styles', (req, res) => {
+  try { res.json({ style: saveStyle(req.body) }); } catch (e) { res.status(400).json({ error: (e as Error).message }); }
+});
+router.patch('/studio/styles/:id', (req, res) => {
+  try { res.json({ style: saveStyle(req.body, req.params.id) }); } catch (e) { res.status(400).json({ error: (e as Error).message }); }
+});
+router.delete('/studio/styles/:id', (req, res) => {
+  try { deleteStyle(req.params.id); res.json({ success: true }); } catch (e) { res.status(400).json({ error: (e as Error).message }); }
+});
+router.post('/studio/styles/:id/duplicate', (req, res) => {
+  try { res.json({ style: duplicateStyle(req.params.id) }); } catch (e) { res.status(400).json({ error: (e as Error).message }); }
+});
+router.post('/studio/styles/:id/references', upload.single('file'), async (req, res) => {
+  try {
+    if (!req.file) throw new StudioStyleError('Choose a reference image.');
+    res.json({ style: await addStyleReference(String(req.params.id), req.file.buffer, req.file.originalname, Number(req.body.revision)) });
+  } catch (e) { res.status(400).json({ error: (e as Error).message }); }
 });
 
 // ─── Folders (for organizing gallery) ────────────────────────────────
@@ -177,6 +232,7 @@ router.get('/studio/refs', async (_req, res) => {
         label: d.label,
         isDefault: d.isDefault,
         emoji: d.emoji,
+        description: getDrawerDescription(d.slug),
         refs: (await listReferences(d.slug)).map((f) => ({ filename: f, url: refUrl(d.slug, f) })),
       })),
     );
@@ -208,6 +264,15 @@ router.patch('/studio/drawers/:slug', (req, res) => {
     if (error instanceof ImageGenError) { res.status(400).json({ error: error.message }); return; }
     console.error('[studio] drawer rename error:', error);
     res.status(500).json({ error: 'Failed to rename drawer' });
+  }
+});
+
+router.put('/studio/drawers/:slug/description', (req, res) => {
+  try {
+    res.json({ description: saveDrawerDescription(req.params.slug, req.body?.description) });
+  } catch (error) {
+    if (error instanceof ImageGenError) { res.status(400).json({ error: error.message }); return; }
+    res.status(500).json({ error: 'Could not save the drawer description.' });
   }
 });
 
@@ -280,6 +345,10 @@ router.get('/studio/gallery', async (_req, res) => {
         threadId: g.threadId ?? null,
         threadName: thread?.name ?? null,
         prompt: g.prompt ?? null,
+        sourcePrompt: g.sourcePrompt ?? null,
+        styleId: g.styleId ?? null,
+        imageModelId: g.imageModelId ?? null,
+        styleTitle: g.styleTitle ?? null,
         model: g.model ?? null,
         backend: g.backend ?? null,
         width: g.width ?? null,
@@ -357,10 +426,31 @@ router.get('/studio/gallery/:filename', (req, res) => {
 // ─── Generate (async job pattern) ────────────────────────────────────
 // Returns a job ID immediately; client polls /studio/jobs/:id for status.
 
+router.post('/studio/transform', async (req, res) => {
+  try {
+    const input = await prepareTransformationRequest(req.body, STUDIO_UPLOADS_DIR);
+    const jobId = startGenerateJob(input, async result => {
+      const { width, height } = galleryDimensions(input.size);
+      await recordGalleryMeta(result.filename, {
+        createdAt: new Date().toISOString(), prompt: input.prompt, sourcePrompt: input.prompt,
+        styleId: '', model: result.model, backend: result.backend,
+        width, height, aspectRatio: input.size || getImageGenSettings().size,
+      });
+    });
+    res.json({ jobId });
+  } catch (error) {
+    if (error instanceof ImageGenError || error instanceof StudioStyleError) { res.status(400).json({ error: error.message }); return; }
+    console.error('[studio] transformation error:', error);
+    res.status(500).json({ error: 'Transformation could not be started.' });
+  }
+});
+
 router.post('/studio/generate', async (req, res) => {
   try {
-    const { prompt, subjects, oneOffRefs, size, customWidth, customHeight, threadId, messageId, async: useAsync, backend: reqBackend, codexModel, openaiModel, cloudflareModel, agyModel, openartModel, openartMedia } = req.body as {
+    const { prompt, sourcePrompt, subjects, oneOffRefs, size, customWidth, customHeight, threadId, messageId, async: useAsync, backend: reqBackend, codexModel, openaiModel, cloudflareModel, agyModel, openartModel, openartMedia } = req.body as {
       prompt?: string;
+      sourcePrompt?: string;
+      styleId?: string;
       subjects?: string[];
       oneOffRefs?: string[];
       size?: string;
@@ -377,8 +467,11 @@ router.post('/studio/generate', async (req, res) => {
       openartModel?: string;
       openartMedia?: 'image' | 'video';
     };
+    const styleId = req.body.styleId ?? '';
+    const imageModelId = req.body.imageModelId ?? 'subscription-auto';
+    if (typeof imageModelId !== 'string' || (reqBackend && !['codex', 'openai', 'openrouter'].includes(reqBackend))) { res.status(400).json({ error: 'Choose an OpenAI image model.' }); return; }
 
-    if (!prompt) {
+    if (typeof prompt !== 'string' || !prompt.trim() || (sourcePrompt !== undefined && typeof sourcePrompt !== 'string') || (styleId !== undefined && typeof styleId !== 'string')) {
       res.status(400).json({ error: 'prompt is required' });
       return;
     }
@@ -389,9 +482,9 @@ router.post('/studio/generate', async (req, res) => {
 
     // Async mode: return job ID immediately
     if (useAsync !== false) {
-      const metadata = { threadId, messageId, prompt, size, customWidth, customHeight, subjects };
+      const metadata = { threadId, messageId, prompt, sourcePrompt, styleId, size, customWidth, customHeight, subjects };
       const jobId = startGenerateJob(
-        { prompt, subjects, oneOffRefs, size, customWidth, customHeight, backend: reqBackend, codexModel, openaiModel, cloudflareModel, agyModel, openartModel, openartMedia },
+        { usageOrigin: 'studio', prompt, sourcePrompt, styleId, imageModelId, subjects, descriptionSubjects: req.body.descriptionSubjects, subjectDescriptions: req.body.subjectDescriptions, oneOffRefs, size, customWidth, customHeight },
         async (result) => {
           const { width, height } = galleryDimensions(metadata.size, metadata.customWidth, metadata.customHeight);
           await recordGalleryMeta(result.filename, {
@@ -399,6 +492,8 @@ router.post('/studio/generate', async (req, res) => {
             messageId: metadata.messageId,
             createdAt: new Date().toISOString(),
             prompt: metadata.prompt,
+            sourcePrompt: metadata.sourcePrompt,
+            styleId: metadata.styleId,
             model: result.model,
             backend: result.backend,
             width,
@@ -408,12 +503,12 @@ router.post('/studio/generate', async (req, res) => {
           });
         },
       );
-      res.json({ jobId });
+      res.json({ jobId, sourcePrompt, styleId });
       return;
     }
 
     // Sync mode (legacy, for local/LAN use where timeout isn't an issue)
-    const result = await generateImage({ prompt, subjects, oneOffRefs, size, customWidth, customHeight, backend: reqBackend, codexModel, openaiModel, cloudflareModel, agyModel, openartModel, openartMedia });
+    const result = await generateImage({ usageOrigin: 'studio', prompt, sourcePrompt, styleId, imageModelId, subjects, descriptionSubjects: req.body.descriptionSubjects, subjectDescriptions: req.body.subjectDescriptions, oneOffRefs, size, customWidth, customHeight });
     const { width, height } = galleryDimensions(size, customWidth, customHeight);
 
     // Always record gallery meta with prompt
@@ -422,6 +517,8 @@ router.post('/studio/generate', async (req, res) => {
       messageId,
       createdAt: new Date().toISOString(),
       prompt,
+      sourcePrompt,
+      styleId,
       model: result.model,
       backend: result.backend,
       width,
@@ -432,15 +529,18 @@ router.post('/studio/generate', async (req, res) => {
 
     res.json({
       success: true,
+      sourcePrompt,
+      styleId,
       filename: result.filename,
       url: `/api/studio/gallery/${encodeURIComponent(result.filename)}`,
       backend: result.backend,
       model: result.model,
       durationMs: result.durationMs,
       costUsd: result.costUsd,
+      accountingWarning: result.accountingWarning ?? null,
     });
   } catch (error) {
-    if (error instanceof ImageGenError) {
+    if (error instanceof ImageGenError || error instanceof StudioStyleError) {
       res.status(400).json({ error: error.message });
       return;
     }
@@ -452,7 +552,7 @@ router.post('/studio/generate', async (req, res) => {
 // ─── Image jobs ─────────────────────────────────────────────────────
 
 
-function jobResponse(job: ReturnType<typeof getJobStatus>) {
+export function jobResponse(job: ReturnType<typeof getJobStatus>) {
   if (!job) return null;
   return {
     id: job.id,
@@ -461,13 +561,21 @@ function jobResponse(job: ReturnType<typeof getJobStatus>) {
     completedAt: job.completedAt ?? null,
     error: job.error ?? null,
     prompt: job.input.prompt,
+    sourcePrompt: job.input.sourcePrompt ?? null,
+    styleId: job.input.styleId ?? null,
+    imageModelId: job.input.imageModelId ?? 'subscription-auto',
+    aspectRatio: job.input.size ?? null,
+    referenceDrawers: job.input.subjects ?? [],
+    subjectDescriptions: job.input.subjectDescriptions,
+    ...galleryDimensions(job.input.size, job.input.customWidth, job.input.customHeight),
     backend: job.input.backend ?? null,
-    model: job.input.codexModel ?? job.input.agyModel ?? job.input.openartModel ?? null,
+    model: job.result?.model ?? job.input.codexModel ?? job.input.openaiModel ?? job.input.cloudflareModel ?? job.input.agyModel ?? job.input.openartModel ?? null,
     ...(job.result ? {
       filename: job.result.filename,
       url: `/api/studio/gallery/${encodeURIComponent(job.result.filename)}`,
       mediaType: job.result.mediaType ?? 'image',
       durationMs: job.result.durationMs,
+      accountingWarning: job.result.accountingWarning ?? null,
     } : {}),
   };
 }
@@ -512,12 +620,12 @@ function findCodexBin(): string | null {
 }
 
 // Run codex exec for prompt enhancement with a specific model
-async function codexEnhance(prompt: string, model: string): Promise<string> {
+async function codexEnhance(prompt: string, model: string, mode: 'game' | 'enhance' = 'enhance', stylePrompt = ''): Promise<string> {
   const codexBin = findCodexBin();
   if (!codexBin) throw new Error('Codex not installed');
 
-  const outputFile = join(tmpdir(), `byte-light-enhance-${Date.now()}.txt`);
-  const fullPrompt = `${ENHANCE_SYSTEM}\n\nExpand this prompt:\n${prompt}`;
+  const outputFile = join(tmpdir(), `byte-light-enhance-${crypto.randomUUID()}.txt`);
+  const fullPrompt = promptWritingInstruction(mode, prompt, stylePrompt);
 
   return new Promise((resolve, reject) => {
     const proc = spawn(codexBin, [
@@ -566,13 +674,34 @@ router.post('/studio/enhance', async (req, res) => {
       return;
     }
 
-    const model = codexModel || getDbConfig('image_gen.enhance_model') || 'gpt-5.4-mini';
-    const enhanced = await codexEnhance(prompt.trim(), model);
+    const model = getDbConfig('image_gen.enhance_model') || getDbConfig('image_gen.codex_model') || 'gpt-5.5';
+    const style = req.body.styleId ? requireStyle(String(req.body.styleId)) : undefined;
+    const enhanced = await codexEnhance(prompt.trim(), model, 'enhance', style?.prompt);
+    if (hasMJFlags(enhanced) || enhanced.length > 650) throw new StudioStyleError('The prompt writer returned an invalid suggestion. Your original prompt is unchanged.');
     res.json({ enhanced });
   } catch (error) {
     console.error('[studio] enhance error:', error);
     res.status(500).json({ error: 'Prompt enhancement failed' });
   }
+});
+
+router.post('/studio/prompt-game', async (req, res) => {
+  try {
+    if (typeof req.body.words !== 'string') throw new StudioStyleError('Enter the random words first.');
+    const style = req.body.styleId ? requireStyle(String(req.body.styleId)) : undefined;
+    const model = getDbConfig('image_gen.enhance_model') || getDbConfig('image_gen.codex_model') || 'gpt-5.5';
+    const prompts = parsePromptGame(await codexEnhance(req.body.words, model, 'game', style?.prompt));
+    res.json({ prompts });
+  } catch (e) { res.status(400).json({ error: (e as Error).message }); }
+});
+
+router.post('/studio/preview', async (req, res) => {
+  try {
+    const b = req.body;
+    if (typeof b.prompt !== 'string' || typeof b.styleId !== 'string' || typeof b.imageModelId !== 'string') throw new StudioStyleError('Choose a prompt, style and image model.');
+    const prepared = prepareStudioGeneration({ prompt: b.prompt, styleId: b.styleId, imageModelId: b.imageModelId, subjects: b.subjects, descriptionSubjects: b.descriptionSubjects, subjectDescriptions: b.subjectDescriptions });
+    res.json({ prompt: prepared.prompt, style: prepared.styleSnapshot ?? null, model: resolveImageModel(prepared.imageModelId) });
+  } catch (e) { res.status(400).json({ error: (e as Error).message }); }
 });
 
 export default router;

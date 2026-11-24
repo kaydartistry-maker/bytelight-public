@@ -51,6 +51,8 @@ export type ProviderId =
   | 'xai'            // xAI / Grok OpenAI-compatible API (wired through openai-compat runtime)
   | 'claude-cli'     // Claude via warm interactive `claude` CLI session (subscription/OAuth — heartbeat runtime)
   | 'codex-cli'      // OpenAI/ChatGPT via warm Codex app-server daemon (subscription/CLI-login — codex-daemon runtime, H2)
+  | 'gemini-cli'     // Google Gemini via authenticated Antigravity CLI
+  | 'zai'            // Z.ai GLM Coding Plan via its Anthropic-compatible endpoint
   | 'ollama';        // Local / Ollama Cloud (wired through ollama-native runtime)
 
 /** Runtime implementation that handles turns for a provider. */
@@ -58,6 +60,7 @@ export type RuntimeId =
   | 'claude-sdk'        // wraps @anthropic-ai/claude-agent-sdk
   | 'claude-cli'        // wraps a warm interactive `claude` CLI session (heartbeat runtime, subscription-billed)
   | 'codex-cli'         // wraps the warm Codex app-server daemon (subscription-billed, ~/.codex/auth.json CLI-login door, H2)
+  | 'gemini-cli'        // wraps Google Antigravity CLI print-mode streaming
   | 'codex'             // TYPE ONLY — wraps pi-ai openai-codex-responses (Step 6B, not wired)
   | 'openai-compat'     // generic OpenAI-compatible HTTP — wired (OpenAI direct + OpenRouter)
   | 'ollama-native';    // Ollama /api/chat NDJSON — wired (Ollama Cloud deployed 2026-06-04)
@@ -68,6 +71,8 @@ export function providerToRuntime(provider: ProviderId): RuntimeId {
     case 'claude':       return 'claude-sdk';
     case 'claude-cli':   return 'claude-cli';
     case 'codex-cli':    return 'codex-cli';
+    case 'gemini-cli':   return 'gemini-cli';
+    case 'zai':          return 'claude-sdk';
     case 'openai':       return 'openai-compat';
     case 'openai-codex': return 'codex';
     case 'openrouter':   return 'openai-compat';
@@ -144,6 +149,15 @@ const CLAUDE_SDK_CAPABILITIES: ModelCapabilities = {
 
 const CLAUDE_SDK_AUTH: ModelAuth = { type: 'claude-sdk' };
 
+function zaiEntry(id: string, label: string): ModelEntry {
+  return {
+    id, label, provider: 'zai', runtime: 'claude-sdk', ref: `zai/${id}`,
+    tierHints: ['interactive', 'autonomous', 'pulse', 'memory'],
+    capabilities: CLAUDE_SDK_CAPABILITIES,
+    auth: { type: 'api-key', envVars: ['ZAI_CODING_PLAN_API_KEY'] },
+  };
+}
+
 /** Build a Claude-SDK entry with provider/runtime/ref/capabilities filled in. */
 function claudeEntry(
   id: string,
@@ -191,7 +205,7 @@ const CODEX_OAUTH_CAPABILITIES_TEXT_ONLY: ModelCapabilities = {
 const CODEX_OAUTH_AUTH: ModelAuth = { type: 'codex-oauth' };
 
 /** Build a Codex (ChatGPT OAuth) entry. Defaults to vision-capable; pass
- *  `{ vision: false }` for text-only models (e.g. gpt-5.3-codex-spark). */
+ *  `{ vision: false }` for text-only models. */
 function codexEntry(
   id: string,
   label: string,
@@ -258,6 +272,15 @@ function codexCliEntry(
   };
 }
 
+const GEMINI_CLI_CAPABILITIES: ModelCapabilities = {
+  tools: false, vision: true, reasoning: true, mcp: false,
+  sessionResume: true, fileCheckpointing: false,
+};
+function geminiCliEntry(id: string, label: string): ModelEntry {
+  return { id, label, provider: 'gemini-cli', runtime: 'gemini-cli', ref: `gemini-cli/${id}`,
+    tierHints: ['interactive', 'autonomous'], capabilities: GEMINI_CLI_CAPABILITIES, auth: { type: 'none' } };
+}
+
 // ---------------------------------------------------------------------------
 // The manifest — Claude (SDK) + Codex (ChatGPT OAuth)
 // ---------------------------------------------------------------------------
@@ -270,6 +293,7 @@ function codexCliEntry(
  *    deferred to a later slice — Slice 1 ships catalog truth only.
  */
 export const MODELS: readonly ModelEntry[] = [
+  zaiEntry('glm-5.4[1m]', 'GLM-5.4 · 1M'),
   // Pinned versions
   claudeEntry('claude-fable-5-1', 'Fable 5.1', ['interactive', 'autonomous']),
   claudeEntry('claude-opus-5-5', 'Opus 5.5', ['interactive', 'autonomous']),
@@ -290,11 +314,8 @@ export const MODELS: readonly ModelEntry[] = [
   claudeEntry('sonnet', 'Sonnet (latest, auto-updates)', ['interactive', 'autonomous', 'memory']),
   claudeEntry('haiku', 'Haiku (latest, auto-updates)', ['interactive', 'autonomous', 'pulse', 'memory']),
   // Codex (ChatGPT OAuth) — mirrors pi-ai 0.80.6 `openai-codex` provider
-  // registry. Drift-tested in codex-manifest-drift.test.ts.
-  codexEntry('gpt-5.3-codex-spark', 'GPT-5.3 Codex Spark', ['interactive', 'autonomous'], { vision: false }),
-  codexEntry('gpt-5.4', 'GPT-5.4', ['interactive', 'autonomous']),
-  codexEntry('gpt-5.4-mini', 'GPT-5.4 Mini', ['interactive', 'autonomous']),
-  codexEntry('gpt-5.5', 'GPT-5.5', ['interactive', 'autonomous']),
+  // registry, minus RETIRED_CODEX_IDS (below). Drift-tested in
+  // codex-manifest-drift.test.ts.
   codexEntry('gpt-5.6-sol', 'GPT-5.6 Sol', ['interactive', 'autonomous']),
   codexEntry('gpt-5.6-terra', 'GPT-5.6 Terra', ['interactive', 'autonomous']),
   codexEntry('gpt-5.6-luna', 'GPT-5.6 Luna', ['interactive', 'autonomous']),
@@ -309,10 +330,6 @@ export const MODELS: readonly ModelEntry[] = [
   // above) by convention. No drift test governs these rows — when the
   // openai-codex list changes to match a pi-ai upgrade, mirror the same
   // add/remove here by hand.
-  codexCliEntry('gpt-5.3-codex-spark', 'GPT-5.3 Codex Spark (CLI)', ['interactive', 'autonomous'], { vision: false }),
-  codexCliEntry('gpt-5.4', 'GPT-5.4 (Codex CLI)', ['interactive', 'autonomous']),
-  codexCliEntry('gpt-5.4-mini', 'GPT-5.4 Mini (Codex CLI)', ['interactive', 'autonomous']),
-  codexCliEntry('gpt-5.5', 'GPT-5.5 (Codex CLI)', ['interactive', 'autonomous']),
   codexCliEntry('gpt-5.6-sol', 'GPT-5.6 Sol (Codex CLI)', ['interactive', 'autonomous']),
   codexCliEntry('gpt-5.6-terra', 'GPT-5.6 Terra (Codex CLI)', ['interactive', 'autonomous']),
   codexCliEntry('gpt-5.6-luna', 'GPT-5.6 Luna (Codex CLI)', ['interactive', 'autonomous']),
@@ -322,7 +339,41 @@ export const MODELS: readonly ModelEntry[] = [
   codexCliEntry('gpt-6-astra', 'GPT-6 Astra (Codex CLI)', ['interactive', 'autonomous']),
   codexCliEntry('gpt-6-sol', 'GPT-6 Sol (Codex CLI)', ['interactive', 'autonomous']),
   codexCliEntry('gpt-6-luna', 'GPT-6 Luna (Codex CLI)', ['interactive', 'autonomous']),
+  // Google AI Pro subscription shelf, verified against this deployment's
+  // authenticated Antigravity CLI catalog on 2026-11-22.
+  geminiCliEntry('gemini-4-neon', 'Gemini 4 Neon (Auto)'),
+  geminiCliEntry('gemini-4-neon-high', 'Gemini 4 Neon (High)'),
+  geminiCliEntry('gemini-4-neon-xhigh', 'Gemini 4 Neon (XHigh)'),
+  geminiCliEntry('gemini-4-neon-medium', 'Gemini 4 Neon (Medium)'),
+  geminiCliEntry('gemini-4-neon-low', 'Gemini 4 Neon (Low)'),
+  geminiCliEntry('gemini-4-argon', 'Gemini 4 Argon (Auto)'),
+  geminiCliEntry('gemini-4-argon-high', 'Gemini 4 Argon (High)'),
+  geminiCliEntry('gemini-4-argon-medium', 'Gemini 4 Argon (Medium)'),
+  geminiCliEntry('gemini-4-argon-low', 'Gemini 4 Argon (Low)'),
+  geminiCliEntry('gemini-4-hydrogen-high', 'Gemini 4 Hydrogen (High)'),
+  geminiCliEntry('gemini-4-hydrogen-xhigh', 'Gemini 4 Hydrogen (XHigh)'),
+  geminiCliEntry('gemini-4-hydrogen-medium', 'Gemini 4 Hydrogen (Medium)'),
+  geminiCliEntry('gemini-4-hydrogen-low', 'Gemini 4 Hydrogen (Low)'),
+  geminiCliEntry('gemini-pro-orchestrator-neon', 'Orchestrator (Neon)'),
+  geminiCliEntry('gemini-pro-orchestrator-g1-pro', 'Orchestrator (Argon)'),
+  geminiCliEntry('gemini-3.8-flash-high', 'Gemini 3.8 Flash (High)'),
+  geminiCliEntry('gemini-3.8-flash-medium', 'Gemini 3.8 Flash (Medium)'),
+  geminiCliEntry('gemini-3.8-flash-low', 'Gemini 3.8 Flash (Low)'),
 ] as const;
+
+/**
+ * Codex ids OpenAI retired for ChatGPT-account access: every call 400s with
+ * "model is not supported when using Codex with a ChatGPT account" (probed
+ * one by one on the VM, 2026-11-17). pi-ai still registers them, so they are
+ * left out of MODELS on purpose and the drift test skips them. When pi-ai
+ * drops one, delete it here too.
+ */
+export const RETIRED_CODEX_IDS: readonly string[] = [
+  'gpt-5.3-codex-spark',
+  'gpt-5.4',
+  'gpt-5.4-mini',
+  'gpt-5.5',
+];
 
 /**
  * Map of model id → minimum Claude Code version. Derived from `MODELS`.
@@ -395,6 +446,8 @@ const KNOWN_PROVIDERS: ReadonlySet<ProviderId> = new Set<ProviderId>([
   'xai',
   'claude-cli',
   'codex-cli',
+  'gemini-cli',
+  'zai',
   'ollama',
 ]);
 

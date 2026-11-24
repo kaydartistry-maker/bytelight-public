@@ -60,15 +60,47 @@ export async function fetchServerSettings(): Promise<ServerSettingsBlob | null> 
   return (data?.settings as ServerSettingsBlob | null) ?? null;
 }
 
-export async function pushServerSettings(blob: ServerSettingsBlob): Promise<boolean> {
+export const MAX_SETTINGS_PAYLOAD_BYTES = 10 * 1024 * 1024;
+export type SettingsWriteResult = { ok: true } | { ok: false; error: string };
+
+/** Match the server's bounded general JSON parser, including the envelope.
+ * Never log the serialized setup: legacy settings may contain service keys. */
+export function serializeSettingsSnapshot(blob: ServerSettingsBlob): string {
+  let body: string;
+  try { body = JSON.stringify({ settings: blob }); }
+  catch { throw new Error('Settings could not be serialized. Your saved setup is unchanged.'); }
+  if (new TextEncoder().encode(body).byteLength > MAX_SETTINGS_PAYLOAD_BYTES) {
+    throw new Error('This setup exceeds the 10 MB sync limit. Use library image assets or reduce inline wallpaper/preset data before saving.');
+  }
+  return body;
+}
+
+// Old in-flight snapshots finish before a newer explicit Apply. This avoids a
+// slow older PUT arriving last and overwriting an acknowledged new look.
+let settingsWrites: Promise<unknown> = Promise.resolve();
+export async function pushServerSettingsDetailed(blob: ServerSettingsBlob): Promise<SettingsWriteResult> {
+  let body: string;
+  try { body = serializeSettingsSnapshot(blob); }
+  catch (cause) { return { ok: false, error: cause instanceof Error ? cause.message : 'Settings are too large to sync.' }; }
+  const write = async (): Promise<SettingsWriteResult> => {
   try {
     const res = await apiFetch('/api/app-settings', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ settings: blob }),
+      body,
     });
-    return res.ok;
+    if (res.ok) return { ok: true };
+    return { ok: false, error: res.status === 413 ? 'The server refused this setup because it exceeds its size limit.'
+      : res.status === 401 || res.status === 403 ? 'Sign in again before syncing your settings.' : `Settings sync failed (HTTP ${res.status}).` };
   } catch {
-    return false;
+    return { ok: false, error: 'Could not reach the server. Your locally saved settings are waiting to sync.' };
   }
+  };
+  const pending = settingsWrites.then(write, write);
+  settingsWrites = pending.then(() => undefined, () => undefined);
+  return pending;
+}
+
+export async function pushServerSettings(blob: ServerSettingsBlob): Promise<boolean> {
+  return (await pushServerSettingsDetailed(blob)).ok;
 }

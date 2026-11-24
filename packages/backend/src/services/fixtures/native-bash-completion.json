@@ -1,0 +1,185 @@
+{
+  "raw": [
+    {
+      "id": "message-47fb3d01-dca9-45d1-bc33-c48ae180bf82",
+      "date": "2026-11-17T01:28:06.663Z",
+      "otid": "47fb3d01-dca9-45d1-bc33-c48ae180bf80",
+      "run_id": "run-a8880da6-f52c-4bbe-9bbc-bb5fe7ba7f62",
+      "step_id": "step-8aa44f1b-1bdb-49b5-b15d-6d6a77dddf90",
+      "name": null,
+      "sender_id": null,
+      "seq_id": 189557686,
+      "is_err": null,
+      "message_type": "assistant_message",
+      "content": "CPU_TOOL_DONE"
+    },
+    {
+      "id": "message-c88673d4-5af4-472b-b27f-bf914e93a73c",
+      "date": "2026-11-17T01:28:06.249Z",
+      "otid": "b58756ce-0640-4af2-b7ba-fdbac122d537",
+      "run_id": "run-a8880da6-f52c-4bbe-9bbc-bb5fe7ba7f62",
+      "step_id": "step-2119374d-44c2-4156-a0cc-c5af42b8b3a2",
+      "name": null,
+      "sender_id": null,
+      "seq_id": 189557673,
+      "is_err": null,
+      "message_type": "approval_response_message",
+      "approvals": [
+        {
+          "type": "tool",
+          "tool_call_id": "toolu_01H5Xc1r6GSV5S8KruYMip4z",
+          "status": "success",
+          "tool_return": "CPU_TOOL_DONE\n",
+          "stdout": null,
+          "stderr": null
+        }
+      ],
+      "approval_request_id": null,
+      "approve": null,
+      "reason": null
+    },
+    {
+      "id": "message-7ca9e8b5-8c0b-4395-8181-cc60f857f683",
+      "message_type": "tool_return_message",
+      "date": "2026-11-17T01:28:06.249Z",
+      "status": "success",
+      "tool_call_id": "toolu_01H5Xc1r6GSV5S8KruYMip4z",
+      "tool_return": "CPU_TOOL_DONE\n",
+      "tool_returns": [
+        {
+          "type": "tool",
+          "status": "success",
+          "tool_call_id": "toolu_01H5Xc1r6GSV5S8KruYMip4z",
+          "tool_return": [
+            {
+              "type": "text",
+              "text": "CPU_TOOL_DONE\n"
+            }
+          ],
+          "stdout": null,
+          "stderr": null
+        }
+      ],
+      "stdout": null,
+      "stderr": null,
+      "otid": "7ca9e8b5-8c0b-4395-8181-cc60f857f680",
+      "run_id": "run-a8880da6-f52c-4bbe-9bbc-bb5fe7ba7f62",
+      "step_id": "step-2119374d-44c2-4156-a0cc-c5af42b8b3a2",
+      "name": null,
+      "sender_id": null,
+      "seq_id": 189557674,
+      "is_err": null
+    },
+    {
+      "id": "message-b2ef7aa9-3677-442e-acf6-235f9a75b88f",
+      "date": "2026-11-17T01:27:07.773Z",
+      "otid": "message-b2ef7aa9-3677-442e-acf6-235f9a75b88f",
+      "run_id": "run-a7a664fa-62b6-453e-9dc3-4093ef54ade8",
+      "step_id": "step-2119374d-44c2-4156-a0cc-c5af42b8b3a2",
+      "name": null,
+      "sender_id": null,
+      "seq_id": 189556258,
+      "is_err": null,
+      "message_type": "approval_request_message",
+      "tool_call": {
+        "tool_call_id": "toolu_01H5Xc1r6GSV5S8KruYMip4z",
+        "name": "Bash",
+        "arguments": "{\"command\":\"python3 -c 'import hashlib,time\\ndeadline=time.monotonic()+6\\nwhile time.monotonic()<deadline:\\n hashlib.pbkdf2_hmac(\\\"sha256\\\",b\\\"UI_TOOL_OK\\\",b\\\"diagnostic\\\",10000)\\nprint(\\\"CPU_TOOL_DONE\\\")'\",\"description\":\"Run six-second CPU hashing diagnostic\",\"timeout\":30000}"
+      },
+      "tool_calls": [
+        {
+          "tool_call_id": "toolu_01H5Xc1r6GSV5S8KruYMip4z",
+          "name": "Bash",
+          "arguments": "{\"command\":\"python3 -c 'import hashlib,time\\ndeadline=time.monotonic()+6\\nwhile time.monotonic()<deadline:\\n hashlib.pbkdf2_hmac(\\\"sha256\\\",b\\\"UI_TOOL_OK\\\",b\\\"diagnostic\\\",10000)\\nprint(\\\"CPU_TOOL_DONE\\\")'\",\"description\":\"Run six-second CPU hashing diagnostic\",\"timeout\":30000}"
+        }
+      ]
+    },
+    {
+      "id": "message-3f72b574-c050-4a0a-8950-e200cbbf5faf",
+      "message_type": "user_message",
+      "content": "Independent UI diagnostic. Make exactly ONE foreground terminal invocation and no other tool calls. Use exec_command with yield_time_ms:10000 if available; otherwise use the foreground Bash tool with a blocking timeout of at least 10000ms. Do not background it. No files, network, settings, memory, or additional commands. Execute exactly this CPU-only Python command, which does useful hashing for approximately six seconds and then prints its marker:\n\npython3 -c 'import hashlib,time\ndeadline=time.monotonic()+6\nwhile time.monotonic()<deadline:\n hashlib.pbkdf2_hmac(\"sha256\",b\"UI_TOOL_OK\",b\"diagnostic\",10000)\nprint(\"CPU_TOOL_DONE\")'\n\nAfter actual completion reply exactly CPU_TOOL_DONE. No explanation and no second terminal invocation.",
+      "date": "2026-11-17T01:27:05.609Z",
+      "otid": "1bc942c507cf62b408ff6c2e87580571d8589a77c79f68fa4102cb46589ef13e",
+      "run_id": "run-a7a664fa-62b6-453e-9dc3-4093ef54ade8",
+      "step_id": "step-2119374d-44c2-4156-a0cc-c5af42b8b3a2",
+      "name": null,
+      "sender_id": null,
+      "created_by_id": "user-9c5bc38d-45c4-45c9-96b4-22ab4ac37415",
+      "seq_id": 189556257,
+      "is_err": null
+    }
+  ],
+  "mapping": {
+    "thread_id": "e72fa836-fbdb-4740-bc73-00b4c9977137",
+    "agent_id": "agent-3fe6d072-598b-4547-9d66-83060d17340f",
+    "conversation_id": "conv-190323ed-28b4-4e91-b491-692f070e9aec",
+    "state": "ready",
+    "creation_attempt_id": "be3850d6ea173d1baac682719563d147a23510f87ce2707f155b2f0cabbc6ec6",
+    "created_at": 1794878816273,
+    "updated_at": 1794878820500,
+    "last_error_code": null
+  },
+  "delivery": {
+    "id": "c02bfc66f4c7dbf187e341fedc0f44979f17d4b90c6c77de22e4ee12cd045736",
+    "thread_id": "e72fa836-fbdb-4740-bc73-00b4c9977137",
+    "user_message_id": "9b9c7fd3-cfe5-4663-86bd-44182842eb28",
+    "operation_id": "cff23bebea7f0dafdc00d42b4f713e21813749343baf11f3fa037a450e07fc9a",
+    "kind": "send",
+    "otid": "1bc942c507cf62b408ff6c2e87580571d8589a77c79f68fa4102cb46589ef13e",
+    "payload_json": "{\"text\":\"Independent UI diagnostic. Make exactly ONE foreground terminal invocation and no other tool calls. Use exec_command with yield_time_ms:10000 if available; otherwise use the foreground Bash tool with a blocking timeout of at least 10000ms. Do not background it. No files, network, settings, memory, or additional commands. Execute exactly this CPU-only Python command, which does useful hashing for approximately six seconds and then prints its marker:\\n\\npython3 -c 'import hashlib,time\\ndeadline=time.monotonic()+6\\nwhile time.monotonic()<deadline:\\n hashlib.pbkdf2_hmac(\\\"sha256\\\",b\\\"UI_TOOL_OK\\\",b\\\"diagnostic\\\",10000)\\nprint(\\\"CPU_TOOL_DONE\\\")'\\n\\nAfter actual completion reply exactly CPU_TOOL_DONE. No explanation and no second terminal invocation.\"}",
+    "payload_hash": "1534f52294184e2332c2ac200f5f230ea4fe1a8d03e79535f6949a6c0b27a27d",
+    "state": "uncertain",
+    "cloud_user_id": "message-3f72b574-c050-4a0a-8950-e200cbbf5faf",
+    "cloud_run_id": "run-a7a664fa-62b6-453e-9dc3-4093ef54ade8",
+    "created_at": 1794878816273,
+    "updated_at": 1794878889922,
+    "last_error_code": "transport_uncertain"
+  },
+  "rows": [
+    {
+      "conversation_id": "conv-190323ed-28b4-4e91-b491-692f070e9aec",
+      "row_key": "tool_call:id:toolu_01H5Xc1r6GSV5S8KruYMip4z",
+      "delivery_id": "c02bfc66f4c7dbf187e341fedc0f44979f17d4b90c6c77de22e4ee12cd045736",
+      "bl_message_id": "12574355-2b6d-4a9a-b5fb-63b23650b77f",
+      "cloud_uuid": "message-b2ef7aa9-3677-442e-acf6-235f9a75b88f",
+      "cloud_otid": null,
+      "cloud_run_id": "run-a7a664fa-62b6-453e-9dc3-4093ef54ade8",
+      "cloud_seq": null,
+      "cloud_kind": "tool_call",
+      "payload_json": "{\"argumentsComplete\":true,\"key\":\"tool_call:id:toolu_01H5Xc1r6GSV5S8KruYMip4z\",\"kind\":\"tool_call\",\"result\":{\"content\":\"CPU_TOOL_DONE\\n\",\"isError\":false,\"uuid\":\"synthetic-tool-return-195bb745-4966-4ef6-b20d-9507932f7405\"},\"runId\":\"run-a7a664fa-62b6-453e-9dc3-4093ef54ade8\",\"status\":\"complete\",\"toolCallId\":\"toolu_01H5Xc1r6GSV5S8KruYMip4z\",\"toolInput\":{},\"toolName\":\"Bash\",\"uuid\":\"message-b2ef7aa9-3677-442e-acf6-235f9a75b88f\"}",
+      "checkpoint_json": null,
+      "created_at": 1794878828313,
+      "updated_at": 1794878887913
+    },
+    {
+      "conversation_id": "conv-190323ed-28b4-4e91-b491-692f070e9aec",
+      "row_key": "usage:run-a7a664fa-62b6-453e-9dc3-4093ef54ade8:cloud-2",
+      "delivery_id": "c02bfc66f4c7dbf187e341fedc0f44979f17d4b90c6c77de22e4ee12cd045736",
+      "bl_message_id": null,
+      "cloud_uuid": null,
+      "cloud_otid": null,
+      "cloud_run_id": "run-a7a664fa-62b6-453e-9dc3-4093ef54ade8",
+      "cloud_seq": null,
+      "cloud_kind": "usage",
+      "payload_json": "{\"key\":\"usage:run-a7a664fa-62b6-453e-9dc3-4093ef54ade8:cloud-2\",\"kind\":\"usage\",\"runId\":\"run-a7a664fa-62b6-453e-9dc3-4093ef54ade8\",\"usage\":{\"cached_input_tokens\":0,\"completion_tokens\":211,\"prompt_tokens\":49770,\"step_count\":1,\"total_tokens\":49981}}",
+      "checkpoint_json": null,
+      "created_at": 1794878828523,
+      "updated_at": 1794878828523
+    },
+    {
+      "conversation_id": "conv-190323ed-28b4-4e91-b491-692f070e9aec",
+      "row_key": "user:otid:1bc942c507cf62b408ff6c2e87580571d8589a77c79f68fa4102cb46589ef13e",
+      "delivery_id": "c02bfc66f4c7dbf187e341fedc0f44979f17d4b90c6c77de22e4ee12cd045736",
+      "bl_message_id": "9b9c7fd3-cfe5-4663-86bd-44182842eb28",
+      "cloud_uuid": "message-3f72b574-c050-4a0a-8950-e200cbbf5faf",
+      "cloud_otid": "1bc942c507cf62b408ff6c2e87580571d8589a77c79f68fa4102cb46589ef13e",
+      "cloud_run_id": "run-a7a664fa-62b6-453e-9dc3-4093ef54ade8",
+      "cloud_seq": 189556257,
+      "cloud_kind": "user",
+      "payload_json": "{\"key\":\"user:otid:1bc942c507cf62b408ff6c2e87580571d8589a77c79f68fa4102cb46589ef13e\",\"kind\":\"user\",\"otid\":\"1bc942c507cf62b408ff6c2e87580571d8589a77c79f68fa4102cb46589ef13e\",\"runId\":\"run-a7a664fa-62b6-453e-9dc3-4093ef54ade8\",\"seqId\":189556257,\"text\":\"Independent UI diagnostic. Make exactly ONE foreground terminal invocation and no other tool calls. Use exec_command with yield_time_ms:10000 if available; otherwise use the foreground Bash tool with a blocking timeout of at least 10000ms. Do not background it. No files, network, settings, memory, or additional commands. Execute exactly this CPU-only Python command, which does useful hashing for approximately six seconds and then prints its marker:\\n\\npython3 -c 'import hashlib,time\\ndeadline=time.monotonic()+6\\nwhile time.monotonic()<deadline:\\n hashlib.pbkdf2_hmac(\\\"sha256\\\",b\\\"UI_TOOL_OK\\\",b\\\"diagnostic\\\",10000)\\nprint(\\\"CPU_TOOL_DONE\\\")'\\n\\nAfter actual completion reply exactly CPU_TOOL_DONE. No explanation and no second terminal invocation.\",\"uuid\":\"message-3f72b574-c050-4a0a-8950-e200cbbf5faf\"}",
+      "checkpoint_json": null,
+      "created_at": 1794878828307,
+      "updated_at": 1794878889919
+    }
+  ]
+}

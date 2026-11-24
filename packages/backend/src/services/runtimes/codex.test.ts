@@ -243,6 +243,8 @@ beforeEach(() => {
   tmpDir = mkdtempSync(join(tmpdir(), 'codex-runtime-test-'));
   authPath = join(tmpDir, 'codex-auth.json');
   process.env.CODEX_AUTH_PATH = authPath;
+  // Keep the box's real `codex login` out of these tests' notion of logged out.
+  process.env.CODEX_CLI_AUTH_PATH = authPath + '.no-cli';
 
   resetOAuthForTests();
   _resetForTests();
@@ -270,6 +272,7 @@ beforeEach(() => {
 
 afterEach(() => {
   delete process.env.CODEX_AUTH_PATH;
+  delete process.env.CODEX_CLI_AUTH_PATH;
   try {
     rmSync(tmpDir, { recursive: true, force: true });
   } catch {

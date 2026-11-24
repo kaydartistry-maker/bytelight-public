@@ -22,7 +22,7 @@ import { AppShell } from "./AppShell";
 import Cropper from "react-easy-crop";
 import { PushNotifications } from "@capacitor/push-notifications";
 import { Capacitor } from "@capacitor/core";
-import { AppTheme, ThemeId, ThemeMode, AppSettings } from "../types";
+import { AppTheme, ThemeId, ThemeMode, AppSettings, type AppThemePreset, type AppearanceSaveResult } from "../types";
 import { THEMES, themeRadiusPx, withAccentOverride, ACCENT_PALETTES, TYPOGRAPHY_PRESETS, fontStack } from "../lib/theme";
 import { APPS, migrateAppIds } from "../lib/apps";
 import { noteColorsForAccent } from '../lib/note-colors';
@@ -33,6 +33,7 @@ import { lockSpotifyOf } from "../lib/lock-spotify";
 import { lockClockAtOf, lockFaceOf, lockHiddenOf, lockPositionOf, lockShortcutsOf, lockShowOf, lockSizeOf, lockWeatherAtOf, withClockAt, withHidden, type LockFace, type LockPiece, type LockShow, type LockSize } from "../lib/lock-clock";
 import { cn } from "../lib/utils";
 import getCroppedImg from "../lib/cropImage";
+import { resizeDataUrl } from "../lib/image-resize";
 import { WebUiPassword } from "./WebUiPassword";
 import { ProfilesPanel } from "./ProfilesPanel";
 import { SetupSync } from "./SetupSync";
@@ -40,6 +41,11 @@ import { AppUpdate } from "./AppUpdate";
 import { SEND_ICONS, DEFAULT_SEND_ICON_ID } from "../lib/sendIcons";
 import { Toggle } from "./Toggle";
 import { apiFetch } from "../bytelight";
+import { getProfiles, loadProfiles, saveProfiles } from '../bytelight/profiles';
+import type { VoiceCompanion } from '../lib/voices';
+import { AppearancePreview } from './AppearancePreview';
+import { AppearanceStudio } from './AppearanceStudio';
+import { PushNotificationsPanel } from './PushNotificationsPanel';
 import { subscribeWebPush, unsubscribeWebPush, sendTestPush, webPushSupported } from "../bytelight/push";
 
 // Determine if a hex color is near-white (needs black foreground for contrast)
@@ -60,6 +66,16 @@ function isNearWhite(hex: string): boolean {
 
 interface SettingsDashboardProps {
   theme: AppTheme;
+  previewTheme?: AppTheme;
+  onPreviewChange: (theme: AppTheme | undefined) => void;
+  onThemeReplace: (theme: AppTheme) => Promise<AppearanceSaveResult>;
+  onPresetsSave: (presets: AppThemePreset[]) => Promise<void>;
+  validatePresets: (presets: AppThemePreset[]) => void;
+  syncError?: string;
+  settingsSaving: boolean;
+  onRetrySync: () => Promise<void>;
+  companions: VoiceCompanion[];
+  ownerAvatar?: string;
   appSettings: Omit<AppSettings, "theme" | "contacts">;
   onThemeChange: (theme: Partial<AppTheme>) => void;
   onSettingsChange: (
@@ -70,6 +86,16 @@ interface SettingsDashboardProps {
 
 export const SettingsDashboard: React.FC<SettingsDashboardProps> = ({
   theme,
+  previewTheme,
+  onPreviewChange,
+  onThemeReplace,
+  onPresetsSave,
+  validatePresets,
+  syncError,
+  settingsSaving,
+  onRetrySync,
+  companions,
+  ownerAvatar,
   appSettings,
   onThemeChange,
   onSettingsChange,
@@ -77,8 +103,13 @@ export const SettingsDashboard: React.FC<SettingsDashboardProps> = ({
 }) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const avatarInputRef = useRef<HTMLInputElement>(null);
-  const activeTheme = withAccentOverride(THEMES[theme.id] || THEMES["monochrome"], theme.accentOverride, theme.accentPalette);
-  const colors = activeTheme[theme.mode];
+  const displayTheme = previewTheme ?? theme;
+  const activeTheme = withAccentOverride(THEMES[displayTheme.id] || THEMES["monochrome"], displayTheme.accentOverride, displayTheme.accentPalette);
+  const colors = activeTheme[displayTheme.mode];
+  const [previewSection, setPreviewSection] = useState('settings');
+  const [avatarError, setAvatarError] = useState('');
+  const [avatarSaving, setAvatarSaving] = useState(false);
+  const shownAvatar = ownerAvatar || appSettings.userAvatar;
 
   // These five used to be five pale hex values written into this file, saved on
   // her theme, and handed to the Notes app as the only source -- so the notes
@@ -284,18 +315,24 @@ export const SettingsDashboard: React.FC<SettingsDashboardProps> = ({
     }
   };
 
-  const handleUseOriginal = () => {
+  const handleUseOriginal = async () => {
     if (!cropImageSrc || isSaving) return;
-    saveImageResult(cropImageSrc);
-    setCropImageSrc(null);
+    setIsSaving(true);
+    try {
+      const fitted = await resizeDataUrl(cropImageSrc, 2048, 0.88).catch(() => cropImageSrc);
+      saveImageResult(fitted);
+      setCropImageSrc(null);
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   const saveImageResult = (imageUrl: string) => {
     if (cropTarget === "avatar") {
       // Downscale after the crop so the synced settings blob stays light.
       downscaleAvatar(imageUrl)
-        .then((a) => onSettingsChange({ userAvatar: a }))
-        .catch(() => onSettingsChange({ userAvatar: imageUrl }));
+        .catch(() => imageUrl)
+        .then((image) => saveOwnerAvatar(image));
     } else if (cropTarget === "single") {
       onThemeChange({ wallpaper: imageUrl });
     } else if (cropTarget === "lockscreen") {
@@ -305,6 +342,21 @@ export const SettingsDashboard: React.FC<SettingsDashboardProps> = ({
       currentWallpapers[cropTarget as number] = imageUrl;
       onThemeChange({ wallpapers: currentWallpapers.filter(Boolean) });
     }
+  };
+
+  const saveOwnerAvatar = async (image: string | null) => {
+    setAvatarSaving(true);
+    setAvatarError('');
+    try {
+      const profiles = getProfiles() ?? await loadProfiles();
+      if (!profiles?.user) throw new Error('Could not load your profile. Your current avatar is unchanged.');
+      if (!await saveProfiles({ user: { ...profiles.user, image } })) throw new Error('Could not save your profile photo. Please try again.');
+      // Keep one authoritative photo store. The empty legacy mirror is an
+      // explicit synced tombstone, not an omitted key that old caches revive.
+      onSettingsChange({ userAvatar: '' });
+    } catch (cause) {
+      setAvatarError(cause instanceof Error ? cause.message : 'Could not save your avatar.');
+    } finally { setAvatarSaving(false); }
   };
 
   const removeSlideshowImage = (index: number) => {
@@ -487,14 +539,17 @@ export const SettingsDashboard: React.FC<SettingsDashboardProps> = ({
           </div>
         )}
 
-        {/* Matches the pill-tab style used by Agent / Integrations /
+        {/* Matches the pill-tab style used by Agent /
             Status / Packs so all wrapper apps share the same visual
             grammar for tab navigation. */}
         <div className={cn("p-3 rounded-2xl border backdrop-blur-md mb-4 flex justify-center", colors.panelBg, colors.panelBorder)}>
-          <div className="flex gap-1.5 overflow-x-auto scrollbar-hide">
+          <div role="tablist" aria-label="Settings sections" className="flex gap-1.5 overflow-x-auto scrollbar-hide">
           {(["appearance", "profiles", "data"] as const).map((tab) => (
             <button
               key={tab}
+              role="tab"
+              aria-selected={activeTab === tab}
+              data-appearance-tab=""
               onClick={() => setActiveTab(tab)}
               className={cn(
                 "shrink-0 rounded-lg px-3 py-1.5 text-xs font-medium transition-colors border capitalize",
@@ -519,38 +574,18 @@ export const SettingsDashboard: React.FC<SettingsDashboardProps> = ({
 
         {/* No inner scroll container — AppShell already provides the
             scrollable body, so tabs scroll with content the way Agent /
-            Integrations / Status do, instead of being pinned. */}
+            Agent / Status do, instead of being pinned. */}
         <div className="space-y-8">
+          {syncError && <div data-theme-editor="" role="alert" className={cn('flex flex-wrap items-center gap-2 rounded-xl border p-3', colors.panelBorder)}>
+            <p className="min-w-0 flex-1 text-xs text-amber-400">{syncError}</p>
+            <button type="button" disabled={settingsSaving} onClick={() => void onRetrySync()} className={cn('rounded-lg border px-3 py-2 text-xs disabled:opacity-40', colors.panelBorder, colors.textMain)}>{settingsSaving ? 'Saving…' : 'Retry sync'}</button>
+          </div>}
           {activeTab === "appearance" && (
             <>
-              {/* Live Preview — BL's appearance panel, first thing: the vibe
-                  check. Bubbles + buttons drawn with the live theme/skin. */}
-              <section className={cn("space-y-3 p-4 rounded-2xl border backdrop-blur-md", colors.panelBg, colors.panelBorder)}>
-                <div className="flex items-center justify-between">
-                  <h3 className={cn("micro-label", colors.accentText)}>Live Preview</h3>
-                  <span className="h-2 w-2 rounded-full" style={{ background: resolvedAccent }} />
-                </div>
-                <div className="space-y-2">
-                  <div className="flex justify-start">
-                    <div data-user="false" className={cn("bytelight-message-bubble border px-3.5 py-2 rounded-[var(--shape-bubble)] rounded-tl-none text-[13px]", colors.compBubbleBg, colors.compBubbleText, colors.panelBorder)}>
-                      How's the vibe looking?
-                    </div>
-                  </div>
-                  <div className="flex justify-end">
-                    <div data-user="true" className={cn("bytelight-message-bubble border px-3.5 py-2 rounded-[var(--shape-bubble)] rounded-tr-none text-[13px]", colors.userBubbleBg, colors.userBubbleText, colors.panelBorder)}>
-                      Cosmic. ✨
-                    </div>
-                  </div>
-                </div>
-                <div className="flex gap-2 pt-1">
-                  <button className="bytelight-on-accent rounded-full px-4 py-1.5 text-[12px] font-bold" style={{ background: resolvedAccent }}>
-                    Primary
-                  </button>
-                  <button className={cn("rounded-full border px-4 py-1.5 text-[12px] font-bold", colors.panelBorder, colors.textMain)}>
-                    Ghost
-                  </button>
-                </div>
-              </section>
+              <AppearancePreview theme={displayTheme} companions={companions} section={previewSection} userAvatar={shownAvatar} userRing={appSettings.userAvatarColor} />
+              <AppearanceStudio theme={theme} appSettings={appSettings} companions={companions} colors={colors}
+                onApplyTheme={onThemeReplace} onPresetsSave={onPresetsSave} validatePresets={validatePresets} syncError={syncError} settingsSaving={settingsSaving} onRetrySync={onRetrySync}
+                onPreviewChange={onPreviewChange} onPreviewSectionChange={setPreviewSection} />
 
               {/* Appearance Mode */}
               <section className={cn("space-y-4 p-4 rounded-2xl border backdrop-blur-md", colors.panelBg, colors.panelBorder)}>
@@ -743,8 +778,10 @@ export const SettingsDashboard: React.FC<SettingsDashboardProps> = ({
               <section className={cn("space-y-4 p-4 rounded-2xl border backdrop-blur-md", colors.panelBg, colors.panelBorder)}>
                 <h3 className={cn("micro-label", colors.accentText)}>Effects</h3>
                 <p className={cn("text-[11px]", colors.textMuted)}>
-                  Aura &amp; Glow shape the Cosmos skin. 100% = default.
+                  Aura &amp; Glow are Cosmos-only. Motion works with every skin. Advanced appearance adds individual glow and texture on any skin. Explicit advanced overrides take priority; choose Inherit to follow the base controls again.
                 </p>
+                {theme.skin !== 'cosmos' && <button type="button" onClick={() => onThemeChange({ skin: 'cosmos' })}
+                  className={cn('rounded-xl border px-3 py-2 text-xs', colors.panelBorder, colors.textMain)}>Enable Cosmos atmosphere</button>}
                 {([
                   { key: "aura", label: "Aura" },
                   { key: "glow", label: "Glow" },
@@ -761,6 +798,7 @@ export const SettingsDashboard: React.FC<SettingsDashboardProps> = ({
                       max={200}
                       step={10}
                       value={theme.fx?.[fx.key] ?? 100}
+                      disabled={fx.key !== 'motion' && theme.skin !== 'cosmos'}
                       onChange={(e) => onThemeChange({ fx: { ...theme.fx, [fx.key]: Number(e.target.value) } })}
                       className="w-full cursor-pointer"
                       style={{ accentColor: resolvedAccent }}
@@ -783,6 +821,9 @@ export const SettingsDashboard: React.FC<SettingsDashboardProps> = ({
                 <h3 className={cn("micro-label", colors.accentText)}>
                   Your Avatar
                 </h3>
+                <p className={cn('text-[11px]', colors.textMuted)}>Your photo is shared with Profiles. Ring styling stays here.</p>
+                {avatarSaving && <p className={cn('text-xs', colors.textMuted)}>Saving profile photo…</p>}
+                {avatarError && <p role="alert" className="text-xs text-rose-400">{avatarError}</p>}
                 <div className="flex items-center gap-4">
                   <div
                     className="w-14 h-14 rounded-full overflow-hidden border-2 flex items-center justify-center shrink-0"
@@ -791,8 +832,8 @@ export const SettingsDashboard: React.FC<SettingsDashboardProps> = ({
                       background: "rgba(127,127,127,0.15)",
                     }}
                   >
-                    {appSettings.userAvatar ? (
-                      <img src={appSettings.userAvatar} alt="Your avatar" className="w-full h-full object-cover" />
+                    {shownAvatar ? (
+                      <img src={shownAvatar} alt="Your avatar" className="w-full h-full object-cover" />
                     ) : (
                       <UserRound size={24} className="opacity-50" />
                     )}
@@ -801,6 +842,7 @@ export const SettingsDashboard: React.FC<SettingsDashboardProps> = ({
                     <div className="flex items-center gap-2">
                       <button
                         onClick={() => avatarInputRef.current?.click()}
+                        disabled={avatarSaving}
                         className={cn(
                           "flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-[11px] font-bold uppercase tracking-widest",
                           colors.panelBg, colors.panelBorder, colors.accentText, "hover:opacity-80",
@@ -809,9 +851,10 @@ export const SettingsDashboard: React.FC<SettingsDashboardProps> = ({
                         <Upload size={12} strokeWidth={2} />
                         Upload
                       </button>
-                      {appSettings.userAvatar && (
+                      {shownAvatar && (
                         <button
-                          onClick={() => onSettingsChange({ userAvatar: undefined })}
+                          onClick={() => saveOwnerAvatar(null)}
+                          disabled={avatarSaving}
                           className={cn(
                             "flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-[11px] font-bold uppercase tracking-widest opacity-70",
                             colors.panelBg, colors.panelBorder, colors.textMain, "hover:opacity-100",
@@ -1844,6 +1887,7 @@ export const SettingsDashboard: React.FC<SettingsDashboardProps> = ({
           {activeTab === "data" && (
             <>
               {/* Backend & Worker URLs */}
+              {Capacitor.isNativePlatform() ? (
               <section className={cn("space-y-4 p-4 rounded-2xl border backdrop-blur-md", colors.panelBg, colors.panelBorder)}>
                 <h3 className={cn("micro-label", colors.accentText)}>
                   Notifications
@@ -1877,13 +1921,14 @@ export const SettingsDashboard: React.FC<SettingsDashboardProps> = ({
                     disabled={pushTestState === "sending"}
                     className={cn("rounded-lg border px-3 py-1.5 text-xs font-medium disabled:opacity-60", colors.panelBorder, colors.textMain)}
                   >
-                    {pushTestState === "sending" ? "Sending…" : pushTestState === "sent" ? "Sent — check your notifications" : "Send a test notification"}
+                    {pushTestState === "sending" ? "Sending…" : pushTestState === "sent" ? "Push service accepted — receipt unconfirmed" : "Send a test notification"}
                   </button>
                 )}
                 {pushError && (
                   <p className="text-xs" style={{ color: resolvedAccent }}>{pushError}</p>
                 )}
               </section>
+              ) : <PushNotificationsPanel colors={colors} appSettings={appSettings} onSettingsChange={onSettingsChange} />}
 
               {/* Web UI Password — moved from Agent → Models since it's a
                   security setting, not an agent setting. Saves to YAML via

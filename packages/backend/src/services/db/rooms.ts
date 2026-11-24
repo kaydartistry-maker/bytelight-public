@@ -119,7 +119,7 @@ export function updateCompanionCard(id: string, updates: CompanionCardUpdate): C
 
 export class ProtectedCompanionError extends Error {
   constructor() {
-    super('Core residents companion-a (Zaden) and companion-b (Kevin) cannot be deleted');
+    super('Core residents companion-a (Companion A) and companion-b (Companion B) cannot be deleted');
   }
 }
 
@@ -133,4 +133,13 @@ export function deleteCompanion(id: string): boolean {
     db.prepare('UPDATE threads SET default_companion_id = NULL WHERE default_companion_id = ?').run(id);
     return db.prepare('DELETE FROM companions WHERE id = ?').run(id).changes > 0;
   })();
+}
+
+/** Create a registry card; the id also names its independent brain. */
+export function createCompanion(input: { slug: string; displayName: string; emoji?: string; color?: string; avatarUrl?: string }): Companion {
+  const db = getDb();
+  db.prepare(`INSERT INTO companions (id, display_name, brain, emoji, color, avatar, sort_order)
+    VALUES (?, ?, ?, ?, ?, ?, (SELECT COALESCE(MAX(sort_order), -1) + 1 FROM companions))`)
+    .run(input.slug, input.displayName, input.slug, input.emoji ?? null, input.color ?? null, input.avatarUrl ?? null);
+  return db.prepare('SELECT * FROM companions WHERE id = ?').get(input.slug) as Companion;
 }

@@ -4,6 +4,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
+import { once } from 'node:events';
 import { chmodSync, existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -38,7 +39,13 @@ function lane(name: string) {
     squash: () => spawnSync(process.execPath, [join(dir, 'hooks', 'activity.cjs'), 'pre', 'compact'], { input: '{}' }),
     async done() {
       while (!existsSync(join(dir, 'session.log'))) await sleep(5);
+      // A just-relaunched child's append stream may not have opened yet even
+      // though an earlier session.log exists. Await its close before removing
+      // the fixture directory, so teardown cannot race the asynchronous open.
+      const stream = (session as any).logStream;
+      const closed = stream && !stream.closed ? once(stream, 'close') : Promise.resolve();
       session.stop();
+      await closed;
       process.env.PATH = path;
       rmSync(bin, { recursive: true, force: true });
       rmSync(dir, { recursive: true, force: true });

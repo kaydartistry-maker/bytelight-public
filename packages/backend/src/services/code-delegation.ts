@@ -15,8 +15,12 @@ import { resolve, sep } from 'node:path';
 
 import { identity, safeEnv, pendingPatch, execution } from './code-patch.js';
 
+import type { BeltContext } from './chat-tool-belt.js';
+import { liveOwner } from './code-authorization.js';
+import { bindPendingAuthorization, deployCode } from './code-deployment.js';
+
 const execFileAsync = promisify(execFile);
-const DEFAULT_WORKSPACE = '/srv/virelle-dev';
+const DEFAULT_WORKSPACE = '/srv/bytelight-dev';
 const MAX_TASK_CHARS = 8_000;
 const MAX_OUTPUT_CHARS = 24_000;
 const CODEX_TIMEOUT_MS = 20 * 60 * 1_000;
@@ -125,12 +129,19 @@ export async function prepareEditBranch(cwd: string, task: string, continueExist
   return branch;
 }
 
-export async function delegateCodeTask(raw: CodeDelegationRequest): Promise<{ ok: boolean; result: string }> {
+export function delegationLifecycle(mode: 'inspect' | 'edit', deployment?: { ok: boolean; result: string }): string | undefined {
+  if (mode === 'inspect') return undefined;
+  if (!deployment) return 'Editing';
+  return JSON.parse(deployment.result).lifecycle ?? (deployment.ok ? 'Validating' : 'Failed');
+}
+
+export async function delegateCodeTask(raw: CodeDelegationRequest, ctx?: BeltContext): Promise<{ ok: boolean; result: string }> {
   const task = typeof raw.task === 'string' ? raw.task.trim() : '';
   const mode = raw.mode === 'inspect' ? 'inspect' : 'edit';
   const continueExisting = raw.continue_existing === true;
 
   if (!task) return { ok: false, result: JSON.stringify({ ok: false, error: 'task is required' }) };
+  if (!liveOwner(ctx)) return { ok: false, result: JSON.stringify({ error: 'Live owner originating request and thread required' }) };
   if (task.length > MAX_TASK_CHARS) {
     return { ok: false, result: JSON.stringify({ ok: false, error: `task exceeds ${MAX_TASK_CHARS} characters` }) };
   }
@@ -168,6 +179,7 @@ export async function delegateCodeTask(raw: CodeDelegationRequest): Promise<{ ok
       ? await prepareEditBranch(workspace, task, continueExisting)
       : await git(workspace, ['branch', '--show-current']);
 
+    const beforeFingerprint = mode === 'edit' ? pendingPatch(workspace).diff_sha256 : undefined;
     const tmpDir = await mkdtemp('/tmp/bytelight-code-');
     outputDir = tmpDir;
     await chown(tmpDir, id.uid, id.gid);
@@ -206,12 +218,19 @@ export async function delegateCodeTask(raw: CodeDelegationRequest): Promise<{ ok
     const diffStat = mode === 'edit' ? await git(workspace, ['diff', '--stat']) : '';
     const snapshot = mode === 'edit' ? pendingPatch(workspace) : undefined;
     const diff = snapshot?.patch.toString('utf8') || '';
+    if (snapshot && (!snapshot.files.length || !snapshot.patch.length || snapshot.diff_sha256 === beforeFingerprint)) throw new Error('Empty edit: no canonical change produced');
+    const authorization = snapshot ? bindPendingAuthorization(ctx, branch, await git(workspace, ['rev-parse', 'HEAD']), snapshot) : undefined;
+    const deployment = authorization && !authorization.requires_fresh_approval
+      ? await deployCode({ branch, diff_sha256: snapshot!.diff_sha256, authorization_id: authorization.authorization_id }, ctx) : undefined;
 
     return {
       ok: true,
       result: JSON.stringify({
         ok: true,
         mode,
+        lifecycle: delegationLifecycle(mode, deployment),
+        ...authorization,
+        deployment,
         branch,
         report: short(report, 12_000),
         status: short(status, 4_000),
@@ -219,7 +238,7 @@ export async function delegateCodeTask(raw: CodeDelegationRequest): Promise<{ ok
         diff: short(diff.replace(/GIT binary patch[\s\S]*?(?=diff --git|$)/g, '[binary patch omitted]\n'), 20_000),
         diff_sha256: snapshot?.diff_sha256,
         next: mode === 'edit'
-          ? 'Explain the result to the owner. Do not claim it is deployed. The owner must approve review/deployment.'
+          ? 'Explain the result to the owner. Do not claim it is deployed. Review authorization reasons and deployment result; sensitive changes require later owner approval.'
           : 'Explain the findings; no files were changed.',
       }),
     };

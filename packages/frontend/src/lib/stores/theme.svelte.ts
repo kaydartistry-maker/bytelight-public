@@ -87,7 +87,7 @@ export const ACCENT_PALETTES: AccentPalette[] = [
   { name: 'Orange',   dark: { main: '#e07840', bright: '#ef9060', dim: '#c26835' }, light: { main: '#c26835', bright: '#a8582d', dim: '#e07840' } },
   { name: 'Amber',    dark: { main: '#d4a030', bright: '#e4b548', dim: '#b88a28' }, light: { main: '#b88a28', bright: '#9e7622', dim: '#d4a030' } },
   { name: 'Forest',   dark: { main: '#4a8c5c', bright: '#5ea872', dim: '#3d7a4e' }, light: { main: '#3d7a4e', bright: '#336842', dim: '#4a8c5c' } },
-  { name: 'Emerald',  dark: { main: '#3daa7a', bright: '#50c490', dim: '#329068' }, light: { main: '#329068', bright: '#2a7a58', dim: '#3daa7a' } },
+  { name: 'User',  dark: { main: '#3daa7a', bright: '#50c490', dim: '#329068' }, light: { main: '#329068', bright: '#2a7a58', dim: '#3daa7a' } },
   { name: 'Mint',     dark: { main: '#44b8a0', bright: '#5cd0b6', dim: '#389e88' }, light: { main: '#389e88', bright: '#2e8674', dim: '#44b8a0' } },
   { name: 'Teal',     dark: { main: '#5eaba5', bright: '#7cc5c0', dim: '#4a908b' }, light: { main: '#3d8b86', bright: '#327570', dim: '#5eaba5' } },
   { name: 'Ocean',    dark: { main: '#4090b0', bright: '#52a8cc', dim: '#357a98' }, light: { main: '#357a98', bright: '#2c6680', dim: '#4090b0' } },

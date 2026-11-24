@@ -1,4 +1,5 @@
 import crypto from 'crypto';
+import { assertNativeThreadWritable } from '../native-history.js';
 import type { Message } from '@bytelight/shared';
 import { embed, vectorToBuffer } from '../embeddings.js';
 import { AUTO_EMBED_CONFIG_KEY, shouldAutomaticallyEmbed } from '../embedding-policy.js';
@@ -44,6 +45,7 @@ export function createMessage(params: {
   /** Stable id supplied by a client. Only user sends should set this. */
   clientId?: string;
 }): Message {
+  assertNativeThreadWritable(params.threadId);
   const sequence = getNextSequence(params.threadId);
 
   const stmt = getDb().prepare(`
@@ -169,6 +171,8 @@ export function getMessageContext(messageId: string, windowSize: number = 2): Me
 }
 
 export function editMessage(id: string, newContent: string, editedAt: string): void {
+  const message = getMessage(id);
+  if (message) assertNativeThreadWritable(message.thread_id);
   const stmt = getDb().prepare(`
     UPDATE messages
     SET content = ?, edited_at = ?, original_content = COALESCE(original_content, content)
@@ -178,6 +182,8 @@ export function editMessage(id: string, newContent: string, editedAt: string): v
 }
 
 export function softDeleteMessage(id: string, deletedAt: string): void {
+  const message = getMessage(id);
+  if (message) assertNativeThreadWritable(message.thread_id);
   const stmt = getDb().prepare('UPDATE messages SET deleted_at = ? WHERE id = ?');
   stmt.run(deletedAt, id);
 }
@@ -204,6 +210,8 @@ export function getRerollPreview(id: string) {
 
 /** Check the confirmed tail and delete it in one synchronous transaction. */
 export function applyReroll(id: string, revision: string) {
+  const message = getMessage(id);
+  if (message) assertNativeThreadWritable(message.thread_id);
   return getDb().transaction(() => {
     const preview = getRerollPreview(id);
     if (!preview || preview.revision !== revision) return null;
@@ -218,6 +226,7 @@ export function softDeleteAfterSequence(
   afterSequence: number,
   deletedAt: string,
 ): string[] {
+  assertNativeThreadWritable(threadId);
   const idsStmt = getDb().prepare(
     'SELECT id FROM messages WHERE thread_id = ? AND sequence > ? AND deleted_at IS NULL'
   );

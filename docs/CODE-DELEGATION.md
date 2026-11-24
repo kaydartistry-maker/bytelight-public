@@ -6,12 +6,12 @@ Virelle can keep an OpenRouter model (for example Gemini 4 Argon) as the convers
 
 1. Install Codex CLI on the server: `npm install -g @openai/codex`
 2. Authenticate once: `codex login --device-auth`
-3. Create a clean development clone separate from production, for example `/root/virelle-workspace`.
+3. Create a clean development clone separate from production, for example `/srv/bytelight-workspace`.
 4. Set these environment variables for the backend:
 
 ```bash
 BYTELIGHT_CODE_DELEGATION_ENABLED=true
-BYTELIGHT_CODE_WORKSPACE=/root/virelle-workspace
+BYTELIGHT_CODE_WORKSPACE=/srv/bytelight-workspace
 ```
 
 Restart Bytelight after changing its environment.

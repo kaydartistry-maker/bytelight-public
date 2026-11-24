@@ -20,8 +20,20 @@ import { registry } from '../services/registry.js';
 import { saveFile, getFile } from '../services/files.js';
 import { VoiceService } from '../services/voice.js';
 import type { AgentService } from '../services/agent.js';
+import { isPreservedCloudThread } from '../services/native-history.js';
 
 const router = Router();
+router.use((req, res, next) => {
+  const match = /^\/messages\/([^/]+)(?:\/regenerate)?\/?$/.exec(req.path);
+  if (match && ['PATCH', 'DELETE', 'POST'].includes(req.method)) {
+    const message = getMessage(match[1]);
+    if (message && isPreservedCloudThread(message.thread_id)) {
+      res.status(409).json({ error: 'legacy_history_read_only' });
+      return;
+    }
+  }
+  next();
+});
 
 // ----------------------------------------------------------------------------
 // Ordered per-companion TTS streaming (reference implementation s4, wired to the native

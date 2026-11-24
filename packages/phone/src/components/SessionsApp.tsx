@@ -85,7 +85,7 @@ export function SessionsApp({ onClose, themeConfig, themeMode, embedded }: Sessi
       ) : (
         <div className="space-y-2">
           {sessionsPage.visible.map((s) => (
-            <div key={s.key} className={card}>
+            <div key={s.key} data-appearance-card="" className={card}>
               <div className="flex items-center justify-between gap-2">
                 <span className={cn('text-sm font-medium truncate', colors.textMain)}>{s.title}</span>
                 <span className={cn('text-[11px] shrink-0', colors.textMuted)}>{formatDate(s.startedMs)}</span>

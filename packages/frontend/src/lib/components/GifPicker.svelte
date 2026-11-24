@@ -3,9 +3,9 @@
   const GIPHY_SEARCH = 'https://api.giphy.com/v1/gifs/search';
   const GIPHY_TRENDING = 'https://api.giphy.com/v1/gifs/trending';
 
-  let { onselect } = $props<{
+  let { onselect }: {
     onselect?: (url: string) => void;
-  }>();
+  } = $props();
 
   let open = $state(false);
   let query = $state('');

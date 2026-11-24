@@ -148,7 +148,8 @@ export function AppDrawer({ onClose, onOpenApp, themeConfig, themeMode }: AppDra
             drawer itself (owner's call, Jul 13 2026). */}
         <button
           onClick={() => { haptic(55); onClose(); }}
-          className={cn('rounded-full p-2 -ml-1 transition-colors hover:bg-black/10 dark:hover:bg-white/10', colors.textMuted)}
+          aria-label="Back from Apps"
+          className={cn('bytelight-back-button rounded-full p-2 -ml-1 transition-colors hover:bg-black/10 dark:hover:bg-white/10', colors.textMuted)}
           title="Back to home"
         >
           <ChevronLeft size={20} />
@@ -193,7 +194,7 @@ export function AppDrawer({ onClose, onOpenApp, themeConfig, themeMode }: AppDra
 
       {!editing && (
         <div className="px-5 pb-2">
-          <div className={cn('bytelight-field flex items-center gap-2 rounded-full px-3 py-2', colors.textMain)}>
+          <div data-appearance-card="" className={cn('bytelight-field flex items-center gap-2 rounded-full px-3 py-2', colors.textMain)}>
             <Search size={14} className={colors.textMuted} />
             <input
               type="text"
@@ -224,6 +225,7 @@ export function AppDrawer({ onClose, onOpenApp, themeConfig, themeMode }: AppDra
                   className="flex flex-col items-center gap-1 select-none cursor-pointer"
                 >
                   <div
+                    data-appearance-card=""
                     className="bytelight-app-tile flex h-11 w-11 items-center justify-center rounded-xl"
                   >
                     <app.icon className="h-5 w-5" />
@@ -274,6 +276,7 @@ export function AppDrawer({ onClose, onOpenApp, themeConfig, themeMode }: AppDra
                 style={editing ? { touchAction: 'none' } : undefined}
               >
                 <div
+                  data-appearance-card=""
                   className="bytelight-app-tile flex h-11 w-11 items-center justify-center rounded-xl"
                 >
                   <app.icon className="h-5 w-5" />
@@ -299,6 +302,7 @@ export function AppDrawer({ onClose, onOpenApp, themeConfig, themeMode }: AppDra
           }}
         >
           <div
+            data-appearance-card=""
             className="bytelight-app-tile flex h-11 w-11 items-center justify-center rounded-xl shadow-md"
           >
             <draggingApp.icon className="h-5 w-5" />

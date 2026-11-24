@@ -255,6 +255,7 @@ export function Sheet({ title, colors, onClose, children }: { title: string; col
     <div className="fixed inset-0 z-[90] flex items-end justify-center" role="dialog" aria-modal="true" aria-label={title}>
       <button type="button" aria-label="Close" className="absolute inset-0 bg-black/55" onClick={onClose} />
       <div
+        data-appearance-card=""
         className={cn('relative max-h-[80vh] w-full max-w-md overflow-y-auto rounded-t-2xl border px-4 pb-[max(1.25rem,env(safe-area-inset-bottom))] pt-3', colors.panelBg, colors.panelBorder)}
       >
         <div className="mb-2 flex items-center justify-between gap-3">

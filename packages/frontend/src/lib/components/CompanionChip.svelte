@@ -15,7 +15,7 @@
     size = 'md',
     showName = true,
     onclick,
-  } = $props<{
+  }: {
     companion: Companion;
     /** Dimmed when false (used by the picker's toggle state). */
     selected?: boolean;
@@ -24,7 +24,7 @@
     size?: 'sm' | 'md';
     showName?: boolean;
     onclick?: () => void;
-  }>();
+  } = $props();
 
   const profile = $derived(getProfile(companion.id));
   const label = $derived(profile.name || companion.display_name);

@@ -46,6 +46,7 @@ import {
   CODEX_CLI_CAPABILITIES,
 } from './codex-daemon.js';
 import { executeForeignLaneTool, getRouterTools } from '../mcp-bridge.js';  // SLICE-3a ADAPTATION: tag's tools-bridge.ts == main's mcp-bridge.ts (same exports)
+import { GeminiCliRuntime, GEMINI_CLI_CAPABILITIES } from './gemini-cli.js';
 import type { AgentRuntime } from './types.js';
 import type { AgentModelTier } from './types.js';  // SLICE-3a ADAPTATION: declared in types.ts until agent.ts exports it (Slice 3b)
 
@@ -123,6 +124,7 @@ export function getClaudeCliLaneRuntime(companionSlug: string): InteractiveCliRu
  * factory map (mirroring `apiRouterRuntimes`) can replace this.
  */
 const codexCliRuntime = new InteractiveCodexRuntime();
+const geminiCliRuntime = new GeminiCliRuntime();
 
 /**
  * A companion's own Codex CLI lane — one runtime (its own daemon connection
@@ -228,7 +230,8 @@ export interface RuntimeDispatchPacket {
     | typeof API_ROUTER_CAPABILITIES
     | typeof CODEX_CAPABILITIES
     | typeof CLAUDE_CLI_CAPABILITIES
-    | typeof CODEX_CLI_CAPABILITIES;
+    | typeof CODEX_CLI_CAPABILITIES
+    | typeof GEMINI_CLI_CAPABILITIES;
 }
 
 /**
@@ -368,6 +371,8 @@ export function resolveRuntimeForRef(modelRef: ModelRef): RuntimeDispatchPacket 
         modelRef,
         capabilities: CODEX_CLI_CAPABILITIES,
       };
+    case 'gemini-cli':
+      return { runtime: geminiCliRuntime, modelRef, capabilities: GEMINI_CLI_CAPABILITIES };
     default: {
       const _exhaustive: never = modelRef.runtime;
       throw new Error(`Unhandled runtime: ${_exhaustive as string}`);

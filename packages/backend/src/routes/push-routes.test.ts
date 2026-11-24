@@ -19,7 +19,7 @@ const dbPath = join(tmpRoot, 'test.db');
 process.env.RESONANT_HOME = tmpRoot;
 writeFileSync(join(tmpRoot, 'config.yaml'), 'agent:\n  cwd: .\n  model: claude-sonnet-4-6\n');
 
-const { initDb, listPushSubscriptions } = await import('../services/db.js');
+const { initDb, listPushSubscriptions, createWebSession } = await import('../services/db.js');
 const { createPushRoutes } = await import('./push-routes.js');
 
 let server: Server;
@@ -27,6 +27,7 @@ let base = '';
 
 before(async () => {
   initDb(dbPath);
+  createWebSession({ id: 'push-idempotency-owner', token: 'isolated-idempotency-owner', createdAt: new Date().toISOString(), expiresAt: new Date(Date.now() + 3_600_000).toISOString() });
   const app = express();
   app.use(express.json());
   app.use(createPushRoutes());
@@ -46,7 +47,7 @@ after(() => {
 const post = async (path: string, body: unknown) => {
   const res = await fetch(`${base}${path}`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
+    headers: { 'content-type': 'application/json', cookie: 'bytelight_session=isolated-idempotency-owner', origin: base.replace('http:', 'https:'), 'x-forwarded-proto': 'https' },
     body: JSON.stringify(body),
   });
   return { status: res.status, body: (await res.json()) as any };

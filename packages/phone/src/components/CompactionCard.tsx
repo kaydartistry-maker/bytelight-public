@@ -40,7 +40,7 @@ export function CompactionCard({ row, isOpen, fullText, opening, colors, onToggl
   const showPreview = row.previewFrom !== null && row.preview.length > 0;
   const body = fullText ?? (row.id ? null : row.preview);
   return (
-    <div className={cn('rounded-2xl border overflow-hidden', colors.panelBg, colors.panelBorder)}>
+    <div data-appearance-card="" className={cn('rounded-2xl border overflow-hidden', colors.panelBg, colors.panelBorder)}>
       <button onClick={() => onToggle(row)} className="w-full p-3 text-left flex items-start gap-2" aria-expanded={isOpen}>
         <Scissors size={14} className="mt-0.5 shrink-0" style={{ color: colors.accent }} />
         <span className="flex-1 min-w-0">

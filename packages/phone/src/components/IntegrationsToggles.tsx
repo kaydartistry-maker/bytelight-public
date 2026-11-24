@@ -87,7 +87,7 @@ export function IntegrationsToggles({ themeConfig, themeMode }: IntegrationsTogg
   }
 
   return (
-    <div className={cn('rounded-2xl border p-3 mb-3', colors.panelBg, colors.panelBorder)}>
+    <div data-appearance-card="" className={cn('rounded-2xl border p-3 mb-3', colors.panelBg, colors.panelBorder)}>
       <div className={cn('text-[11px] font-bold uppercase tracking-[0.12em] mb-2', colors.textMuted)}>Services</div>
       {ROWS.map((row) => (
         <div key={row.key} className="flex items-center justify-between py-1.5">

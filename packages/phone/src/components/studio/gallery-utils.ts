@@ -12,6 +12,8 @@ export function galleryItemToImage(item: any): GeneratedImage {
     prompt: typeof item.prompt === 'string' ? item.prompt : '',
     sourcePrompt: typeof item.sourcePrompt === 'string' ? item.sourcePrompt : undefined,
     styleId: typeof item.styleId === 'string' ? item.styleId : undefined,
+    imageModelId: typeof item.imageModelId === 'string' ? item.imageModelId : undefined,
+    styleTitle: typeof item.styleTitle === 'string' ? item.styleTitle : undefined,
     model: typeof item.model === 'string' && item.model ? item.model : 'gpt-image-2',
     backend: typeof item.backend === 'string' && item.backend ? item.backend : 'codex',
     width: Number(item.width) || 1024,
@@ -23,6 +25,9 @@ export function galleryItemToImage(item: any): GeneratedImage {
     aspectRatio: typeof item.aspectRatio === 'string' ? item.aspectRatio : undefined,
     references: referenceDrawers,
     referenceDrawers,
+    subjectDescriptions: Array.isArray(item.subjectDescriptions)
+      ? item.subjectDescriptions.filter((ref: unknown) => !!ref && typeof ref === 'object' && 'slug' in ref && typeof ref.slug === 'string' && 'description' in ref && typeof ref.description === 'string')
+      : undefined,
     mediaType: item.mediaType === 'video' ? 'video' : 'image',
     threadId: typeof item.threadId === 'string' && item.threadId ? item.threadId : undefined,
     messageId: typeof item.messageId === 'string' && item.messageId ? item.messageId : undefined,

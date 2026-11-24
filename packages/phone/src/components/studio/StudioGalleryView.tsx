@@ -247,7 +247,8 @@ export function StudioGalleryView({
 
   const copyPrompt = async (image: GeneratedImage) => {
     const lines = [image.prompt];
-    lines.push(`Model: ${image.backend}/${image.model}`);
+    lines.push(`Model: ${image.backend === 'codex' ? 'ChatGPT subscription (automatic image model)' : image.model}`);
+    if (image.styleTitle) lines.push(`Style: ${image.styleTitle}`);
     if (image.aspectRatio) lines.push(`Aspect: ${image.aspectRatio}`);
     if (image.referenceDrawers?.length) lines.push(`References: ${image.referenceDrawers.join(', ')}`);
     await copyStudioText(lines.join('\n'));
@@ -485,7 +486,8 @@ export function StudioGalleryView({
               <MoreHorizontal className="h-4 w-4 text-white/30" />
             </div>
             <p className="text-[10px] uppercase tracking-wide text-white/45">
-              {viewing.backend} · {viewing.model.split('/').pop()}
+              {viewing.backend === 'codex' ? 'ChatGPT subscription · automatic image model' : viewing.model.split('/').pop()}
+              {viewing.styleTitle ? ` · ${viewing.styleTitle}` : ''}
               {viewing.references?.length ? ` · ${viewing.references.map(labelFor).join(', ')}` : ''}
             </p>
           </div>

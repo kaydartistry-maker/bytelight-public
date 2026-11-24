@@ -1,5 +1,9 @@
 // Copyright 2026 Aerie Systems. Licensed under the Apache License 2.0. Porting code from here? Keep this line, and credit Aerie in your NOTICE file for this and anything ported before.
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
+import { normalizeThemeAppearance } from '@bytelight/shared';
+import type { AppTheme } from '../types';
+import { AppBackground } from './ThemedAppBackground';
+import { themeAssetUrl } from '../lib/appearance-css';
 import { motion, useAnimation, PanInfo } from 'motion/react';
 import { LockClock } from './LockClock';
 import { useWeather } from './useWeather';
@@ -47,6 +51,7 @@ function notesSeenAt(): number | null {
 interface LockScreenProps {
   onUnlock: () => void;
   wallpaper?: string;
+  backgroundTheme?: AppTheme;
   face: LockFace;
   position: LockPosition;
   size: LockSize;
@@ -83,10 +88,26 @@ interface LockScreenProps {
   onHide?: (piece: LockPiece) => void;
 }
 
-export function LockScreen({ onUnlock, wallpaper, face, position, size, shortcuts, onOpenApp, show, unread, faces, messagesApp, writers = [], notesApp, spotify = true, spotifyApp, cards = 'dark', clockAt = null, onMoveClock, weatherAt = null, onMoveWeather, showClock = true, showWeather = true, onHide }: LockScreenProps) {
+/** Reuse wallpaper effects inside the opaque lock frame, without replacing a
+ * dedicated lock image or changing untouched themes' original 60% treatment.
+ * The caller's wallpaper prop remains authoritative (including auth filtering).
+ */
+export function resolveLockBackgroundTheme(backgroundTheme: AppTheme | undefined, wallpaper?: string): AppTheme | undefined {
+  if (!backgroundTheme) return undefined;
+  const appearance = normalizeThemeAppearance(backgroundTheme.appearance);
+  if (!appearance.wallpaper) return undefined;
+  const lockWallpaper = { ...appearance.wallpaper, opacity: appearance.wallpaper.opacity ?? 60 };
+  if (backgroundTheme.lockScreenWallpaper) delete lockWallpaper.assetId;
+  if (!wallpaper && !lockWallpaper.assetId) return undefined;
+  return { ...backgroundTheme, wallpaper, wallpapers: undefined, slideshowEnabled: false,
+    appearance: { ...appearance, wallpaper: lockWallpaper } };
+}
+
+export function LockScreen({ onUnlock, wallpaper, backgroundTheme, face, position, size, shortcuts, onOpenApp, show, unread, faces, messagesApp, writers = [], notesApp, spotify = true, spotifyApp, cards = 'dark', clockAt = null, onMoveClock, weatherAt = null, onMoveWeather, showClock = true, showWeather = true, onHide }: LockScreenProps) {
   const [time, setTime] = useState(new Date());
   const weather = useWeather();
   const controls = useAnimation();
+  const themedBackground = useMemo(() => resolveLockBackgroundTheme(backgroundTheme, wallpaper), [backgroundTheme, wallpaper]);
 
   useEffect(() => {
     const timer = setInterval(() => setTime(new Date()), 1000);
@@ -106,7 +127,8 @@ export function LockScreen({ onUnlock, wallpaper, face, position, size, shortcut
   const note = show === 'nothing' ? null : unseenCompanionNote(notes, writers.map((w) => w.slug), seenAt);
   const noteWriter = note ? writers.find((w) => w.slug.toLowerCase() === (note.sender || '').toLowerCase()) : undefined;
   // One look for every card on the lock screen, theirs or read off the wallpaper.
-  const look = useLockCardLook(cards, wallpaper);
+  const backgroundAsset = themedBackground?.appearance?.wallpaper?.assetId;
+  const look = useLockCardLook(cards, backgroundAsset ? themeAssetUrl(backgroundAsset) : wallpaper);
   const ink = LOCK_CARD_LOOKS[look];
   const messagesCardUp = show !== 'nothing' && unread.count > 0;
   const cardBase = face === 'dateline' ? 184 : 124;
@@ -143,13 +165,13 @@ export function LockScreen({ onUnlock, wallpaper, face, position, size, shortcut
       exit={{ y: '-100%', opacity: 0, transition: { duration: 0.4, ease: 'easeInOut' } }}
     >
       {/* Wallpaper Background */}
-      {wallpaper && (
+      {themedBackground ? <AppBackground theme={themedBackground} /> : wallpaper && (
         <div 
           className="absolute inset-0 z-0 bg-cover bg-center opacity-60"
           style={{ backgroundImage: `url(${wallpaper})` }}
         />
       )}
-      {!wallpaper && (
+      {!wallpaper && !backgroundAsset && (
         <div className="absolute inset-0 z-0 bg-gradient-to-b from-slate-900 to-black opacity-80" />
       )}
 
@@ -161,95 +183,110 @@ export function LockScreen({ onUnlock, wallpaper, face, position, size, shortcut
           nothing at all if nothing is chosen. Sits above the dateline row when
           that face is up. */}
       {show !== 'nothing' && unread.count > 0 && (
-        <button
-          type="button"
-          onClick={() => messagesApp && onOpenApp(messagesApp)}
-          className={`absolute inset-x-5 z-20 flex items-center gap-3 rounded-2xl border px-4 py-3 text-left ${ink.card}`}
+        <div
+          className="absolute inset-x-5 z-20"
           style={{ bottom: face === 'dateline' ? 'calc(var(--sab, 0px) + 184px)' : 'calc(var(--sab, 0px) + 124px)' }}
         >
-          <span className="flex shrink-0 -space-x-2">
-            {faces.slice(0, 3).map((f, i) => (
-              <span
-                key={f.name + i}
-                className={`h-[26px] w-[26px] overflow-hidden rounded-full border-2 ${ink.face}`}
-                style={{ borderColor: f.color || ink.ring, zIndex: 3 - i }}
-              >
-                {f.url && <img src={f.url} alt="" className="h-full w-full object-cover" />}
+          <button
+            type="button"
+            data-appearance-card=""
+            onClick={() => messagesApp && onOpenApp(messagesApp)}
+            className={`flex w-full items-center gap-3 rounded-2xl border px-4 py-3 text-left ${ink.card}`}
+          >
+            <span className="flex shrink-0 -space-x-2">
+              {faces.slice(0, 3).map((f, i) => (
+                <span
+                  key={f.name + i}
+                  className={`h-[26px] w-[26px] overflow-hidden rounded-full border-2 ${ink.face}`}
+                  style={{ borderColor: f.color || ink.ring, zIndex: 3 - i }}
+                >
+                  {f.url && <img src={f.url} alt="" className="h-full w-full object-cover" />}
+                </span>
+              ))}
+            </span>
+            <span className="min-w-0 flex-1">
+              <span className="block text-sm font-semibold">
+                {unread.count === 1 ? '1 new message' : `${unread.count} new messages`}
+                {unread.newestAt !== null && (
+                  <span className={`font-normal ${ink.muted}`}> · {ageLabel(unread.newestAt, time.getTime())}</span>
+                )}
               </span>
-            ))}
-          </span>
-          <span className="min-w-0 flex-1">
-            <span className="block text-sm font-semibold">
-              {unread.count === 1 ? '1 new message' : `${unread.count} new messages`}
-              {unread.newestAt !== null && (
-                <span className={`font-normal ${ink.muted}`}> · {ageLabel(unread.newestAt, time.getTime())}</span>
+              {show === 'first-line' && unread.firstLine && (
+                <span className={`block truncate text-xs ${ink.line}`}>{unread.firstLine}</span>
               )}
             </span>
-            {show === 'first-line' && unread.firstLine && (
-              <span className={`block truncate text-xs ${ink.line}`}>{unread.firstLine}</span>
-            )}
-          </span>
-        </button>
+          </button>
+        </div>
       )}
 
       {/* A note on the fridge: who left it and when, and its first line if
           the first line is chosen. Sits above the messages card when that
           one is up. Opening Notes is what puts it away. */}
       {note && (
-        <button
-          type="button"
-          onClick={() => notesApp && onOpenApp(notesApp)}
-          className={`absolute inset-x-5 z-20 flex items-center gap-3 rounded-2xl border px-4 py-3 text-left ${ink.card}`}
+        <div
+          className="absolute inset-x-5 z-20"
           style={{ bottom: `calc(var(--sab, 0px) + ${cardBase + messagesStep}px)` }}
         >
-          <span
-            className={`h-[26px] w-[26px] shrink-0 overflow-hidden rounded-full border-2 ${ink.face}`}
-            style={{ borderColor: noteWriter?.color || ink.ring }}
+          <button
+            type="button"
+            data-appearance-card=""
+            onClick={() => notesApp && onOpenApp(notesApp)}
+            className={`flex w-full items-center gap-3 rounded-2xl border px-4 py-3 text-left ${ink.card}`}
           >
-            {noteWriter?.url && <img src={noteWriter.url} alt="" className="h-full w-full object-cover" />}
-          </span>
-          <span className="min-w-0 flex-1">
-            <span className="block text-sm font-semibold">
-              A note from {noteWriter?.name || note.sender}
-              {Number.isFinite(Date.parse(note.timestamp)) && (
-                <span className={`font-normal ${ink.muted}`}> · {ageLabel(Date.parse(note.timestamp), time.getTime())}</span>
+            <span
+              className={`h-[26px] w-[26px] shrink-0 overflow-hidden rounded-full border-2 ${ink.face}`}
+              style={{ borderColor: noteWriter?.color || ink.ring }}
+            >
+              {noteWriter?.url && <img src={noteWriter.url} alt="" className="h-full w-full object-cover" />}
+            </span>
+            <span className="min-w-0 flex-1">
+              <span className="block text-sm font-semibold">
+                A note from {noteWriter?.name || note.sender}
+                {Number.isFinite(Date.parse(note.timestamp)) && (
+                  <span className={`font-normal ${ink.muted}`}> · {ageLabel(Date.parse(note.timestamp), time.getTime())}</span>
+                )}
+              </span>
+              {show === 'first-line' && note.text.trim() && (
+                <span className={`block truncate text-xs ${ink.line}`}>{note.text.trim().split('\n')[0]}</span>
               )}
             </span>
-            {show === 'first-line' && note.text.trim() && (
-              <span className={`block truncate text-xs ${ink.line}`}>{note.text.trim().split('\n')[0]}</span>
-            )}
-          </span>
-        </button>
+          </button>
+        </div>
       )}
 
       {/* Their status: who, in their mood's color, and what they're up to.
           Opens Messages. */}
       {statusRows.length > 0 && (
-        <button
-          type="button"
-          onClick={() => messagesApp && onOpenApp(messagesApp)}
-          className={`absolute inset-x-5 z-20 flex flex-col gap-1.5 rounded-2xl border px-4 py-3 text-left ${ink.card}`}
+        <div
+          className="absolute inset-x-5 z-20"
           style={{ bottom: `calc(var(--sab, 0px) + ${cardBase + messagesStep + noteStep}px)` }}
         >
-          {statusRows.map(({ s, w }) => {
-            const tint = moodColor(s.mood);
-            return (
-              <span key={s.companion} className="flex items-center gap-3">
-                <span
-                  className={`h-[22px] w-[22px] shrink-0 overflow-hidden rounded-full border-2 ${ink.face}`}
-                  style={{ borderColor: tint || w!.color || ink.ring, boxShadow: tint ? `0 0 10px ${withAlpha(tint, 0.5)}` : undefined }}
-                >
-                  {w!.url && <img src={w!.url} alt="" className="h-full w-full object-cover" />}
+          <button
+            type="button"
+            data-appearance-card=""
+            onClick={() => messagesApp && onOpenApp(messagesApp)}
+            className={`flex w-full flex-col gap-1.5 rounded-2xl border px-4 py-3 text-left ${ink.card}`}
+          >
+            {statusRows.map(({ s, w }) => {
+              const tint = moodColor(s.mood);
+              return (
+                <span key={s.companion} className="flex items-center gap-3">
+                  <span
+                    className={`h-[22px] w-[22px] shrink-0 overflow-hidden rounded-full border-2 ${ink.face}`}
+                    style={{ borderColor: tint || w!.color || ink.ring, boxShadow: tint ? `0 0 10px ${withAlpha(tint, 0.5)}` : undefined }}
+                  >
+                    {w!.url && <img src={w!.url} alt="" className="h-full w-full object-cover" />}
+                  </span>
+                  <span className="min-w-0 flex-1 truncate text-sm">
+                    <span className="font-semibold">{w!.name}</span>
+                    {s.mood && <span style={{ color: tint || undefined }}> · {s.mood}</span>}
+                    {show === 'first-line' && s.line && <span className={ink.muted}> — {s.line}</span>}
+                  </span>
                 </span>
-                <span className="min-w-0 flex-1 truncate text-sm">
-                  <span className="font-semibold">{w!.name}</span>
-                  {s.mood && <span style={{ color: tint || undefined }}> · {s.mood}</span>}
-                  {show === 'first-line' && s.line && <span className={ink.muted}> — {s.line}</span>}
-                </span>
-              </span>
-            );
-          })}
-        </button>
+              );
+            })}
+          </button>
+        </div>
       )}
 
       {/* What is playing on the owner Spotify, on top of the other cards, while a

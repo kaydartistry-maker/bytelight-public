@@ -10,6 +10,8 @@
 import { promises as fs } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import { getDb } from './db.js';
 
 const CLAUDE_CREDENTIALS_PATH = path.join(os.homedir(), '.claude', '.credentials.json');
@@ -17,6 +19,10 @@ const CLAUDE_USAGE_URL = 'https://api.anthropic.com/api/oauth/usage';
 const CODEX_SESSIONS_DIR = path.join(os.homedir(), '.codex', 'sessions');
 const USAGE_CACHE_MS = 60_000;
 const CODEX_SCAN_FILES = 10;
+const ANTIGRAVITY_ROOT = process.env.GEMINI_CLI_ROOT || '/var/lib/bytelight';
+const ANTIGRAVITY_BIN = process.env.GEMINI_CLI_BIN || `${ANTIGRAVITY_ROOT}/tools/antigravity/bin/agy`;
+const ANTIGRAVITY_HOME = process.env.GEMINI_CLI_HOME || `${ANTIGRAVITY_ROOT}/antigravity-home`;
+const execFileAsync = promisify(execFile);
 
 export interface ClaudeLimit {
   kind: string;
@@ -77,6 +83,26 @@ export interface CodexUsage {
   limitReached: string | null;
 }
 
+export interface GeminiUsageBucket {
+  id: string;
+  label: string;
+  window: string;
+  usedPercent: number;
+  remainingPercent: number;
+  resetsAt: string | null;
+}
+
+export interface GeminiUsageGroup {
+  name: string;
+  description: string;
+  buckets: GeminiUsageBucket[];
+}
+
+export interface GeminiUsage {
+  groups: GeminiUsageGroup[];
+  capturedAt: string;
+}
+
 export interface PersistedUsageWindow {
   lane: string;
   windowKey: string;
@@ -95,6 +121,55 @@ function isoOrNull(value: unknown): string | null {
   if (typeof value !== 'string') return null;
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? null : date.toISOString();
+}
+
+export function parseGeminiUsage(raw: unknown, capturedAt = new Date().toISOString()): GeminiUsage {
+  if (!raw || typeof raw !== 'object') throw new Error('Antigravity usage response is invalid');
+  const command = (raw as Record<string, unknown>).command;
+  const data = command && typeof command === 'object' ? (command as Record<string, unknown>).data : null;
+  const sourceGroups = data && typeof data === 'object' ? (data as Record<string, unknown>).groups : null;
+  if (!Array.isArray(sourceGroups)) throw new Error('Antigravity usage response has no quota groups');
+  const groups = sourceGroups.map((value): GeminiUsageGroup | null => {
+    if (!value || typeof value !== 'object') return null;
+    const group = value as Record<string, unknown>;
+    if (typeof group.name !== 'string' || !Array.isArray(group.buckets)) return null;
+    const buckets = group.buckets.map((item): GeminiUsageBucket | null => {
+      if (!item || typeof item !== 'object') return null;
+      const bucket = item as Record<string, unknown>;
+      const remaining = num(bucket.remaining_fraction);
+      if (typeof bucket.id !== 'string' || typeof bucket.name !== 'string' || remaining === null) return null;
+      const remainingPercent = Math.max(0, Math.min(100, remaining * 100));
+      return {
+        id: bucket.id,
+        label: bucket.name,
+        window: typeof bucket.window === 'string' ? bucket.window : '',
+        usedPercent: 100 - remainingPercent,
+        remainingPercent,
+        resetsAt: isoOrNull(bucket.reset_time),
+      };
+    }).filter((bucket): bucket is GeminiUsageBucket => bucket !== null);
+    return { name: group.name, description: typeof group.description === 'string' ? group.description : '', buckets };
+  }).filter((group): group is GeminiUsageGroup => group !== null && group.buckets.length > 0);
+  if (!groups.length) throw new Error('Antigravity usage response has no readable quota buckets');
+  return { groups, capturedAt };
+}
+
+let geminiCache: { at: number; data: GeminiUsage } | null = null;
+
+export async function getGeminiUsage(): Promise<GeminiUsage> {
+  if (geminiCache && Date.now() - geminiCache.at < USAGE_CACHE_MS) return geminiCache.data;
+  const { stdout } = await execFileAsync(ANTIGRAVITY_BIN, ['--print', '/usage', '--output-format', 'json', '--print-timeout', '1m'], {
+    env: { ...process.env, HOME: ANTIGRAVITY_HOME }, timeout: 75_000, maxBuffer: 2 * 1024 * 1024,
+  });
+  const capturedAt = new Date().toISOString();
+  const data = parseGeminiUsage(JSON.parse(stdout), capturedAt);
+  for (const group of data.groups) for (const bucket of group.buckets) recordUsageWindow({
+    lane: 'gemini', windowKey: bucket.id, usedPercent: bucket.usedPercent,
+    windowMinutes: bucket.window === '5h' ? 300 : bucket.window === 'weekly' ? 10_080 : null,
+    resetsAt: bucket.resetsAt, capturedAt, metadata: { group: group.name, label: bucket.label },
+  });
+  geminiCache = { at: Date.now(), data };
+  return data;
 }
 
 function formatMinorAmount(value: unknown): string | null {

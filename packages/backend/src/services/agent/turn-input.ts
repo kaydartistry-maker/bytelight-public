@@ -53,6 +53,7 @@ export interface BuildAgentTurnInputParams {
   platform?: AgentTurnInput['platform'] | string | null;
   isAutonomous: boolean;
   orientation?: string | null;
+  orientationLean?: string | null;
   systemPromptText?: string | null;
   messages: AgentTurnInput['messages'];
   cwd?: string;
@@ -61,6 +62,7 @@ export interface BuildAgentTurnInputParams {
   /** Optional tool surface offered to the runtime. Foreign lanes pass
    *  the resolved MCP tools here (H1); omitted → tool-less turn. */
   tools?: AgentTurnInput['tools'];
+  trustedBeltContext?: AgentTurnInput['trustedBeltContext'];
 }
 
 export function buildAgentTurnInput(
@@ -78,11 +80,13 @@ export function buildAgentTurnInput(
     platform: (params.platform as AgentTurnInput['platform']) ?? 'internal',
     isAutonomous: params.isAutonomous,
     orientation: params.orientation ?? '',
+    ...(params.orientationLean != null ? { orientationLean: params.orientationLean } : {}),
     systemPrompt: { kind: 'text', value: params.systemPromptText ?? '' },
     messages: params.messages,
     cwd: params.cwd,
     abortSignal: params.abortSignal,
     thinkingEffort: params.thinkingEffort,
     tools: params.tools,
+    trustedBeltContext: params.trustedBeltContext,
   };
 }

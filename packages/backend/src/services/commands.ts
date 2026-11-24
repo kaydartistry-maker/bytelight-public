@@ -2,6 +2,7 @@
 // Skills, custom commands, /compact, /clear all pass through to the Agent SDK as prompt text.
 
 import { existsSync, readdirSync, readFileSync } from 'fs';
+import { isPreservedCloudThread } from './native-history.js';
 import { join } from 'path';
 import crypto from 'crypto';
 import { MODEL_VARIANTS, type CommandRegistryEntry, type ServerMessage } from '@bytelight/shared';
@@ -133,6 +134,9 @@ export async function handleCommand(
   threadId: string | undefined,
   services: CommandServices,
 ): Promise<ServerMessage> {
+  if (threadId && name !== 'new' && isPreservedCloudThread(threadId)) {
+    return { type: 'command_result', name, success: false, error: 'This preserved Cloud conversation is read-only. Start a new native conversation.', display: 'toast' };
+  }
   // Ported from reference implementation (reference implementation) — adapted for byte-light.
   // Alias normalization: /agents matches Claude Code muscle memory but the
   // honest name here is /subagents. Accept both; canonicalize to /subagents

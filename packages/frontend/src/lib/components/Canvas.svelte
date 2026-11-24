@@ -12,10 +12,10 @@
   import { renderMarkdown } from '$lib/utils/markdown';
   import { showToast } from '$lib/stores/toast.svelte';
 
-  let { embedded = false, onreference } = $props<{
+  let { embedded = false, onreference }: {
     embedded?: boolean;
     onreference?: (canvasId: string, title: string) => void;
-  }>();
+  } = $props();
 
 
   let canvases = $derived(getCanvases());

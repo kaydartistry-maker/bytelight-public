@@ -6,6 +6,7 @@ import express from 'express';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { createBeltMcpRouter, type BeltMcpRouter } from './mcp-belt.js';
+import { getBeltContext } from '../services/chat-tool-belt.js';
 
 const TOKEN = 'test-house-token';
 const servers: HttpServer[] = [];
@@ -29,9 +30,9 @@ async function startBelt(overrides: Parameters<typeof createBeltMcpRouter>[0] = 
   return { belt, url: new URL(`http://127.0.0.1:${address.port}/mcp/belt`) };
 }
 
-async function connect(url: URL) {
+async function connect(url: URL, extraHeaders: Record<string, string> = {}) {
   const transport = new StreamableHTTPClientTransport(url, {
-    requestInit: { headers: { Authorization: `Bearer ${TOKEN}` } },
+    requestInit: { headers: { Authorization: `Bearer ${TOKEN}`, ...extraHeaders } },
   });
   const client = new Client({ name: 'bytelight-mcp-test', version: '1.0.0' });
   await client.connect(transport);
@@ -79,14 +80,19 @@ describe('official MCP belt transport', () => {
   });
 
   it('reaps abandoned sessions that never send DELETE', async () => {
+    let now = 0;
     const { belt, url } = await startBelt({
       getTools: async () => [],
       sessionIdleMs: 25,
       sweepIntervalMs: 10,
+      now: () => now,
     });
     const { client } = await connect(url);
     assert.equal(belt.sessionCount(), 1);
     await client.close();
+    // Advance the idle clock only after handshake/close, independent of CPU
+    // contention in the full suite. The real sweep timer still reaps it.
+    now = 1000;
     // Wait for the sweep rather than a fixed 80ms: under a full parallel test
     // run the 10ms sweep timer can fire late, and the fixed wait lost the race.
     const deadline = Date.now() + 2000;
@@ -131,6 +137,28 @@ describe('official MCP belt transport', () => {
     assert.equal(refused.isError, true);
     assert.match((refused.content as Array<{ text: string }>)[0].text, /requires an active byte-light Codex turn/);
     assert.equal(executed, false);
+    await transport.terminateSession();
+    await client.close();
+  });
+
+  it('binds an authenticated foreign-model session to its Virelle turn', async () => {
+    let context: ReturnType<typeof getBeltContext>;
+    const { url } = await startBelt({
+      getTools: async () => [{ name: 'send_voice_note', description: '', input_schema: { type: 'object' } }],
+      executeTool: async () => { context = getBeltContext(); return { ok: true, result: 'sent' }; },
+      activeThread: () => null,
+    });
+    const ownerMessage = 'Please send me a voice note';
+    const { client, transport } = await connect(url, {
+      'X-Bytelight-Thread-Id': 'thread-gemini',
+      'X-Bytelight-Is-Autonomous': '0',
+      'X-Bytelight-Owner-Message': Buffer.from(ownerMessage).toString('base64url'),
+    });
+    const result = await client.callTool({ name: 'send_voice_note', arguments: {} });
+    assert.equal(result.isError, undefined);
+    assert.equal(context?.threadId, 'thread-gemini');
+    assert.equal(context?.rawOwnerMessageText, ownerMessage);
+    assert.equal(context?.isAutonomous, false);
     await transport.terminateSession();
     await client.close();
   });
