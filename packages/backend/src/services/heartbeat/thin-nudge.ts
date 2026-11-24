@@ -11,7 +11,7 @@
  */
 
 import { getConfigNumber } from '../db/config.js';
-import { getAllBlocks, SHARED_SCOPE } from '../memory-blocks.js';
+import { getCarriedBlocks, SHARED_SCOPE } from '../memory-blocks.js';
 import { SHARED_LANE_KEY } from './lane-dir.js';
 
 /** Config key for the budget, in characters. */
@@ -48,7 +48,8 @@ export function buildThinNudge(laneKey: string = SHARED_LANE_KEY): string {
   try {
     const configured = getConfigNumber(THIN_THRESHOLD_KEY, DEFAULT_THIN_THRESHOLD_CHARS);
     const threshold = configured > 0 ? configured : DEFAULT_THIN_THRESHOLD_CHARS;
-    return thinNudge(getAllBlocks(), threshold, laneKey);
+    // Carried blocks only: a shelved block is not a per-session tax.
+    return thinNudge(getCarriedBlocks(), threshold, laneKey);
   } catch {
     return ''; // blocks table unavailable — skip the nudge
   }

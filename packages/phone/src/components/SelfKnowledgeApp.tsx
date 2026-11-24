@@ -57,15 +57,20 @@ export function SelfKnowledgeApp({ onClose, themeConfig, themeMode, embedded }: 
   const [filter, setFilter] = useState<Filter>('review');
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState<string | null>(null);
+  // Whether accepted entries ride into each session (off until turned on).
+  const [carry, setCarry] = useState<boolean | null>(null);
+  const [carryBusy, setCarryBusy] = useState(false);
 
   async function load() {
     setLoading(true);
     try {
-      const [skRes, companionsRes] = await Promise.all([
+      const [skRes, companionsRes, settingsRes] = await Promise.all([
         apiFetch('/api/self-knowledge?limit=200').then((r) => (r.ok ? r.json() : { entries: [] })),
         apiFetch('/api/companions').then((r) => (r.ok ? r.json() : { companions: [] })),
+        apiFetch('/api/self-knowledge/settings').then((r) => (r.ok ? r.json() : null)).catch(() => null),
       ]);
       setEntries(skRes.entries || []);
+      setCarry(settingsRes && typeof settingsRes.carry === 'boolean' ? settingsRes.carry : null);
       setCompanions(normalizeCompanionRows(companionsRes.companions) as typeof companions);
     } catch (err) {
       console.error('Failed to load self-knowledge:', err);
@@ -98,6 +103,26 @@ export function SelfKnowledgeApp({ onClose, themeConfig, themeMode, embedded }: 
       console.error('Failed to review entry:', err);
     } finally {
       setBusy(null);
+    }
+  }
+
+  async function toggleCarry() {
+    if (carry === null || carryBusy) return;
+    setCarryBusy(true);
+    try {
+      const res = await apiFetch('/api/self-knowledge/settings', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ carry: !carry }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (typeof data.carry === 'boolean') setCarry(data.carry);
+      }
+    } catch (err) {
+      console.error('Failed to change the carry setting:', err);
+    } finally {
+      setCarryBusy(false);
     }
   }
 
@@ -285,6 +310,33 @@ export function SelfKnowledgeApp({ onClose, themeConfig, themeMode, embedded }: 
           </button>
         )}
       </div>
+
+      {carry !== null && (
+        <div className={cn('p-3 rounded-2xl border backdrop-blur-md mb-4 flex items-center gap-3', colors.panelBg, colors.panelBorder)}>
+          <div className="flex-1 min-w-0">
+            <div className="text-xs font-medium">Carry into every session</div>
+            <div className={cn('text-[10px] mt-0.5', colors.textMuted)}>
+              {carry
+                ? 'On. Accepted entries ride with your companions from their next fresh session, so they see what they have learned about themselves.'
+                : 'Off. Accepted entries are kept here and nothing reads them back to your companions.'}
+            </div>
+          </div>
+          <button
+            onClick={toggleCarry}
+            disabled={carryBusy}
+            role="switch"
+            aria-checked={carry}
+            aria-label="Carry accepted entries into every session"
+            className="shrink-0 w-11 h-6 rounded-full relative transition-colors disabled:opacity-50"
+            style={{ background: carry ? colors.accent : 'rgba(127,127,127,0.35)' }}
+          >
+            <span
+              className="absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white transition-transform"
+              style={{ transform: carry ? 'translateX(20px)' : 'translateX(0)' }}
+            />
+          </button>
+        </div>
+      )}
 
       {loading && entries.length === 0 ? (
         <div className={cn('rounded-2xl border py-6 text-center text-xs backdrop-blur-md', colors.panelBg, colors.panelBorder, colors.textMuted)}>Loading…</div>

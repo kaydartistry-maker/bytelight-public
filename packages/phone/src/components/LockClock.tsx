@@ -52,6 +52,8 @@ interface LockClockProps {
   /** Whether each piece is showing; either can be tucked away. */
   showClock?: boolean;
   showWeather?: boolean;
+  /** Her house nameplate, riding under the clock so it moves with it. */
+  nameplate?: React.ReactNode;
   /** Given on the lock screen: a piece let go of in the strip at the top is
    *  tucked away instead of moved. */
   onHide?: (piece: LockPiece) => void;
@@ -250,7 +252,7 @@ function WeatherPill({ weather, at, onMove, onHide }: { weather: LockWeather; at
 /** Fills its parent. Nothing in it takes a touch except, on the lock screen,
  *  the clock itself, which lifts when held; the swipe along the bottom
  *  still unlocks. */
-export function LockClock({ face, position, size, now, weather, at = null, onMove, weatherAt = null, onMoveWeather, showClock = true, showWeather = true, onHide }: LockClockProps) {
+export function LockClock({ face, position, size, now, weather, at = null, onMove, weatherAt = null, onMoveWeather, showClock = true, showWeather = true, onHide, nameplate }: LockClockProps) {
   const t = clockParts(now);
   // The weather pill is its own piece on every face now, the dateline's too,
   // and either piece can be tucked away.
@@ -280,6 +282,7 @@ export function LockClock({ face, position, size, now, weather, at = null, onMov
               {t.minute}
             </span>
             <span className="mt-5 text-base font-medium text-white/85 drop-shadow-md">{t.dateShort}</span>
+            {nameplate && <div className="mt-3">{nameplate}</div>}
           </Placed>
         )}
       </div>
@@ -307,6 +310,7 @@ export function LockClock({ face, position, size, now, weather, at = null, onMov
               {t.short}
             </span>
             <span className="text-sm font-medium text-white/85 drop-shadow-md">{t.dateShort}</span>
+            {nameplate && <div className="self-center">{nameplate}</div>}
           </Placed>
         )}
       </div>
@@ -328,6 +332,7 @@ export function LockClock({ face, position, size, now, weather, at = null, onMov
         >
           <h1 className={`${CLASSIC_SIZE[size]} font-light tracking-tight drop-shadow-lg`}>{t.classic}</h1>
           <p className="mt-1 text-sm font-medium text-white/80 drop-shadow-md">{t.dateLong}</p>
+          {nameplate && <div className="mt-3">{nameplate}</div>}
         </Placed>
       )}
     </div>

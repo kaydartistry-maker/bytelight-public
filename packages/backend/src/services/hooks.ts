@@ -985,7 +985,7 @@ if (h.digest) {
       const SC = `node ${memCliPath.replace(/\\/g, '/')}`;
       parts.push({ label: 'Memory tools', content: [
         'CORE MEMORY (persistent labeled blocks — view + edit in place; scope = shared|companion-a|companion-b):',
-        `  ${SC} memory view [scope]                          (list blocks, optionally one scope)`,
+        `  ${SC} memory view [scope] [label]                  (list blocks, one scope, or open one block)`,
         `  ${SC} memory append <scope> <label> <content>      (add a line; creates the block if new)`,
         `  ${SC} memory replace <scope> <label> <old> <new>   (fix exact text; old must be unique)`,
         `  ${SC} memory rethink <scope> <label> <content>     (rewrite the whole block)`,

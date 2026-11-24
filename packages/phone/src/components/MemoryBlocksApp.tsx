@@ -5,8 +5,9 @@ import { ArchivistSettings } from './ArchivistSettings';
 import { ThemeConfig } from '../lib/theme';
 import { Paginator, usePaged } from './Paginator';
 import { cn } from '../lib/utils';
-import { useMemoryBlockVersion } from '../bytelight';
+import { apiFetch, useMemoryBlockVersion } from '../bytelight';
 import { normalizeCompanionRows } from '../lib/companion-row';
+import { MemoryBlockHistory, DeletedMemoryBlocks } from './MemoryBlockHistory';
 
 interface MemoryBlocksAppProps {
   onClose: () => void;
@@ -23,6 +24,17 @@ interface MemoryBlock {
   content: string;
   description?: string;
   updated_at: string;
+  /** 'on_demand' = kept on the shelf, not carried in full. Absent = 'always'. */
+  carry?: 'always' | 'on_demand';
+}
+
+function onTheShelf(b: { carry?: string }): boolean {
+  return b.carry === 'on_demand';
+}
+
+/** "12.3k" for a character count. */
+function kChars(n: number): string {
+  return n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n);
 }
 
 interface ArchivistStatus {
@@ -35,8 +47,9 @@ interface ArchivistStatus {
   backlogThreads: number;
 }
 
-// One Archivist proposal (backend services/memory-proposals.ts). Nothing the
-// Archivist notices reaches a block until the operator approves it here.
+// One Archivist proposal (backend services/memory-proposals.ts). They are
+// offered to the companions, who file what belongs; this screen is the owner's
+// window onto them, and she can file or drop any open one herself.
 interface MemoryProposal {
   id: number;
   op: 'append' | 'replace';
@@ -253,6 +266,33 @@ export function MemoryBlocksApp({ onClose, themeConfig, themeMode, embedded }: M
     }
   };
 
+  // Carry the block in every session, or keep it on the shelf.
+  const [carryBusy, setCarryBusy] = useState(false);
+  const handleCarry = async (block: MemoryBlock, carry: 'always' | 'on_demand') => {
+    if (carryBusy || (block.carry ?? 'always') === carry) return;
+    setCarryBusy(true);
+    try {
+      const res = await apiFetch(`${blockUrl(block.scope, block.label)}/carry`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ carry }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        alert(data.error || 'Could not change how this block is carried');
+      }
+      await fetchBlocks();
+    } catch (err) {
+      console.error('[MemoryBlocks] Carry change failed:', err);
+    } finally {
+      setCarryBusy(false);
+    }
+  };
+
+  const carriedBlocks = blocks.filter((b) => !onTheShelf(b));
+  const shelvedBlocks = blocks.filter(onTheShelf);
+  const sumChars = (list: MemoryBlock[]) => list.reduce((n, b) => n + b.content.length, 0);
+
   const handleAppend = async () => {
     if (!opTarget || !appendText.trim()) return;
     try {
@@ -419,6 +459,33 @@ export function MemoryBlocksApp({ onClose, themeConfig, themeMode, embedded }: M
                 {scopeBadge(selectedBlock.scope)}
               </div>
               {selectedBlock.description && <p className="text-xs opacity-60 mb-3">{selectedBlock.description}</p>}
+              <div className={cn('rounded-lg border p-2.5 mb-3', colors.panelBorder)}>
+                <div className="flex gap-1.5">
+                  {([
+                    { id: 'always', label: 'Carried every session' },
+                    { id: 'on_demand', label: 'On the shelf' },
+                  ] as { id: 'always' | 'on_demand'; label: string }[]).map((option) => {
+                    const active = (selectedBlock.carry ?? 'always') === option.id;
+                    return (
+                      <button
+                        key={option.id}
+                        onClick={() => handleCarry(selectedBlock, option.id)}
+                        disabled={carryBusy}
+                        aria-pressed={active}
+                        className={cn('flex-1 rounded-lg border px-2.5 py-1.5 text-xs font-medium disabled:opacity-50', colors.panelBorder)}
+                        style={active ? { background: colors.accent, color: 'var(--bytelight-on-accent)', borderColor: colors.accent } : undefined}
+                      >
+                        {option.label}
+                      </button>
+                    );
+                  })}
+                </div>
+                <p className={cn('text-[10px] mt-1.5', colors.textMuted)}>
+                  {onTheShelf(selectedBlock)
+                    ? 'Your companions carry one line saying what this holds, and open it when its subject comes up. Takes effect from their next fresh session.'
+                    : `All ${kChars(selectedBlock.content.length)} characters ride into every session your companions open.`}
+                </p>
+              </div>
               {editingKey === blockKey(selectedBlock) ? (
                 <div className="space-y-2">
                   <textarea
@@ -442,9 +509,28 @@ export function MemoryBlocksApp({ onClose, themeConfig, themeMode, embedded }: M
               <div className="mt-3 pt-2 border-t border-white/10 text-xs opacity-50">
                 Updated: {new Date(selectedBlock.updated_at).toLocaleString()}
               </div>
+              <MemoryBlockHistory
+                scope={selectedBlock.scope}
+                label={selectedBlock.label}
+                refreshKey={`${selectedBlock.updated_at}:${selectedBlock.content.length}`}
+                colors={colors}
+                onRestored={fetchBlocks}
+              />
             </div>
           ) : (
                 <>
+                <div className={cn('rounded-lg border px-3 py-2 text-xs', colors.panelBorder, colors.panelBg)}>
+                  <div>
+                    <span className="font-medium">Carried every session:</span>{' '}
+                    {carriedBlocks.length} {carriedBlocks.length === 1 ? 'block' : 'blocks'}, {kChars(sumChars(carriedBlocks))} characters
+                  </div>
+                  <div className="opacity-70">
+                    <span className="font-medium">On the shelf:</span>{' '}
+                    {shelvedBlocks.length === 0
+                      ? 'none. Open a block to move it there.'
+                      : `${shelvedBlocks.length} ${shelvedBlocks.length === 1 ? 'block' : 'blocks'}, ${kChars(sumChars(shelvedBlocks))} characters opened only when needed`}
+                  </div>
+                </div>
                 {blocksPage.visible.map((block) => (
               <button
                 key={blockKey(block)}
@@ -455,6 +541,9 @@ export function MemoryBlocksApp({ onClose, themeConfig, themeMode, embedded }: M
                   <div className="flex items-center gap-2">
                     <span className="font-medium truncate">{block.label}</span>
                     {scopeBadge(block.scope)}
+                    {onTheShelf(block) && (
+                      <span className="text-[10px] px-1.5 py-0.5 rounded-full border uppercase tracking-wide opacity-60 shrink-0">on the shelf</span>
+                    )}
                   </div>
                   {block.description && <div className="text-xs opacity-50 truncate">{block.description}</div>}
                   <div className="text-xs opacity-40 mt-1">{block.content.length} chars</div>
@@ -465,15 +554,18 @@ export function MemoryBlocksApp({ onClose, themeConfig, themeMode, embedded }: M
                 <Paginator page={blocksPage.page} pageCount={blocksPage.pageCount} onPage={blocksPage.setPage} colors={colors} />
                 </>
           )}
+          {!selectedBlock && (
+            <DeletedMemoryBlocks refreshKey={`${blocks.length}:${memoryBlockVersion}`} colors={colors} onRestored={fetchBlocks} />
+          )}
         </div>
       )}
 
-      {/* Review — the Archivist's proposals, waiting on the operator */}
+      {/* Review — the Archivist's proposals to the companions */}
       {tab === 'review' && (
         <div className="space-y-2">
           <div className="flex gap-1.5">
             {([
-              { id: 'review', label: 'Waiting' },
+              { id: 'review', label: 'Live' },
               { id: 'all', label: 'All' },
             ] as { id: ProposalView; label: string }[]).map((v) => (
               <button
@@ -487,7 +579,7 @@ export function MemoryBlocksApp({ onClose, themeConfig, themeMode, embedded }: M
             ))}
           </div>
           <p className={cn('text-[10px]', colors.textMuted)}>
-            What the Archivist noticed. Nothing here is on a block until you approve it.
+            What the Archivist has offered your companions. They file what belongs and the rest fades on its own. Nothing here needs you, but you can file or drop any of them yourself.
           </p>
           {proposalError && (
             <div className="p-2 rounded text-xs" style={{ backgroundColor: `${colors.accent}20`, color: colors.accent }}>
@@ -496,7 +588,7 @@ export function MemoryBlocksApp({ onClose, themeConfig, themeMode, embedded }: M
           )}
           {proposals.length === 0 ? (
             <div className="text-center py-8 opacity-50">
-              {proposalView === 'review' ? 'Nothing waiting for you' : 'No proposals yet'}
+              {proposalView === 'review' ? 'Nothing is being offered right now' : 'No proposals yet'}
             </div>
           ) : (
             <>
@@ -513,7 +605,7 @@ export function MemoryBlocksApp({ onClose, themeConfig, themeMode, embedded }: M
                       </span>
                       {p.status !== 'pending' && (
                         <span className="text-[10px] opacity-60 uppercase tracking-wide">
-                          {p.status === 'faded' ? 'faded for them, still yours' : `${p.status}${p.resolved_by ? ` by ${p.resolved_by}` : ''}`}
+                          {p.status === 'faded' ? 'faded, nobody picked it up' : `${p.status}${p.resolved_by ? ` by ${p.resolved_by}` : ''}`}
                         </span>
                       )}
                     </div>
@@ -532,14 +624,14 @@ export function MemoryBlocksApp({ onClose, themeConfig, themeMode, embedded }: M
                           className="px-3 py-1.5 rounded text-xs font-medium bytelight-on-accent disabled:opacity-50 flex items-center gap-1"
                           style={{ background: colors.accent }}
                         >
-                          <Check size={12} /> Approve
+                          <Check size={12} /> File it
                         </button>
                         <button
                           onClick={() => handleDecide(p, 'reject')}
                           disabled={proposalBusy === p.id}
                           className={cn('px-3 py-1.5 rounded text-xs font-medium border disabled:opacity-50 flex items-center gap-1', colors.panelBorder)}
                         >
-                          <X size={12} /> Reject
+                          <X size={12} /> Drop it
                         </button>
                       </div>
                     )}

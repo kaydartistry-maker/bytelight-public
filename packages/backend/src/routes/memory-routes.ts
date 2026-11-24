@@ -135,6 +135,28 @@ export function createMemoryRoutes(): Router {
     res.json({ success: true });
   });
 
+  // Carry the block in every session, or keep it on the shelf (migrations/053).
+  router.put('/memory/blocks/:scope/:label/carry', (req, res) => {
+    try {
+      const scope = checkScope(req.params.scope, res);
+      if (!scope) return;
+      const carry = req.body?.carry;
+      if (carry !== 'always' && carry !== 'on_demand') {
+        res.status(400).json({ error: "carry must be 'always' or 'on_demand'" });
+        return;
+      }
+      const block = memoryBlocks.setBlockCarry(scope, req.params.label, carry, API_WRITE);
+      if (!block) {
+        res.status(404).json({ error: 'Block not found' });
+        return;
+      }
+      broadcastBlockUpdated(block.scope, block.label);
+      res.json({ success: true, block });
+    } catch (err) {
+      res.status(400).json({ error: (err as Error).message });
+    }
+  });
+
   // Append a line.
   router.post('/memory/blocks/:scope/:label/append', (req, res) => {
     try {
@@ -177,6 +199,57 @@ export function createMemoryRoutes(): Router {
     }
   });
 
+  // --- Version history (migrations/052) -------------------------------------
+  //
+  // The text a block held before each write that would have lost some of it.
+  // Reading is free; restoring is itself a write (and itself kept), so a
+  // restore can be undone the same way.
+
+  // Earlier versions of one block, newest first (no full text).
+  router.get('/memory/blocks/:scope/:label/history', (req, res) => {
+    const rawLimit = parseInt(String(req.query.limit ?? '50'), 10);
+    res.json({
+      success: true,
+      versions: memoryBlocks.listBlockVersions(
+        req.params.scope,
+        req.params.label,
+        Number.isFinite(rawLimit) ? rawLimit : 50,
+      ),
+    });
+  });
+
+  // Blocks that were deleted and not made again.
+  router.get('/memory/history/deleted', (_req, res) => {
+    res.json({ success: true, versions: memoryBlocks.listDeletedBlocks() });
+  });
+
+  // One earlier version, with its full text.
+  router.get('/memory/history/:id', (req, res) => {
+    const id = Number(req.params.id);
+    const version = Number.isInteger(id) && id > 0 ? memoryBlocks.getBlockVersion(id) : null;
+    if (!version) {
+      res.status(404).json({ error: 'No such version' });
+      return;
+    }
+    res.json({ success: true, version });
+  });
+
+  // Put the block back the way that version had it.
+  router.post('/memory/history/:id/restore', (req, res) => {
+    try {
+      const id = Number(req.params.id);
+      const block = Number.isInteger(id) && id > 0 ? memoryBlocks.restoreBlockVersion(id, API_WRITE) : null;
+      if (!block) {
+        res.status(404).json({ error: 'No such version' });
+        return;
+      }
+      broadcastBlockUpdated(block.scope, block.label);
+      res.json({ success: true, block });
+    } catch (err) {
+      res.status(400).json({ error: (err as Error).message });
+    }
+  });
+
   // The receipts ledger — one row per memory write / surface, newest first.
   // Owner data: mounted after authMiddleware (api.ts), same as the block
   // routes above. The receipts drawer (Command Center) reads this.
@@ -211,13 +284,14 @@ export function createMemoryRoutes(): Router {
     }
   });
 
-  // --- The operator's review of the Archivist's proposals --------------------------
+  // --- The Archivist's proposals ------------------------------------------
   //
   // Every Archivist edit lands in memory_proposals (see memory-proposals.ts).
-  // These routes are the operator's gate: list them, approve one (written onto its
-  // block, closed as 'filed' by her), or reject one ('dropped' by her).
-  // ?status=review (default) is everything nobody has chosen yet — pending
-  // AND faded; any other status, or 'all', lists that slice.
+  // The operator's window onto the proposals, which are offered to the
+  // companions and not to the operator (services/memory-proposals.ts). The
+  // operator can list them, file one directly (written onto its block, closed
+  // as 'filed'), or drop one ('dropped'). ?status=review (default) is the live
+  // ones only; faded rows are under 'faded' or 'all', and stay fileable.
   const PROPOSAL_STATUSES = new Set(['pending', 'filed', 'dropped', 'faded']);
   const ownerSlug = () => getBytelightConfig().identity.user_name.trim().toLowerCase() || 'owner';
 

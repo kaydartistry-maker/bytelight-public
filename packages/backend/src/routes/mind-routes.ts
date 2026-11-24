@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { mindUrl, mindKey } from '../services/mind-secrets.js';
+import { consoleAllows, consoleSegments } from '../services/mind-console.js';
 
 // ─── Mind Bridge proxy ───────────────────────────────────────────
 
@@ -11,8 +12,56 @@ async function mindFetch(path: string): Promise<unknown> {
   return res.json();
 }
 
-export function createMindRoutes(): Router {
+export interface MindRouteDeps {
+  url?: () => string;
+  key?: () => string;
+  fetchImpl?: typeof fetch;
+}
+
+export function createMindRoutes(deps: MindRouteDeps = {}): Router {
   const router = Router();
+  const brainUrl = deps.url ?? mindUrl;
+  const brainKey = deps.key ?? mindKey;
+  const doFetch = deps.fetchImpl ?? fetch;
+
+  // ─── The console hallway ───────────────────────────────────────
+  // /api/mind/brain/<room>/... goes on to the brain's own /api/<room>/...
+  // Reads of known rooms pass; writes pass only when mind-console.ts names
+  // them. Sits behind authMiddleware with its neighbours, so it is the
+  // owner's alone.
+  router.all(/^\/mind\/brain\/(.+)$/, async (req, res) => {
+    const segs = consoleSegments((req.params as Record<string, string>)[0] ?? '');
+    if (!segs) { res.status(400).json({ error: 'bad path' }); return; }
+    if (!consoleAllows(req.method, segs)) {
+      res.status(403).json({ error: 'the console cannot do that' });
+      return;
+    }
+    const base = brainUrl();
+    const key = brainKey();
+    if (!base || !key) { res.status(503).json({ error: 'Mind Bridge not configured' }); return; }
+
+    const qIndex = req.originalUrl.indexOf('?');
+    const query = qIndex >= 0 ? req.originalUrl.slice(qIndex) : '';
+    const target = `${base.replace(/\/+$/, '')}/api/${segs.map(encodeURIComponent).join('/')}${query}`;
+    const hasBody = req.method !== 'GET' && req.method !== 'HEAD';
+    try {
+      const upstream = await doFetch(target, {
+        method: req.method,
+        headers: {
+          Authorization: `Bearer ${key}`,
+          ...(hasBody ? { 'Content-Type': 'application/json' } : {}),
+        },
+        body: hasBody ? JSON.stringify(req.body ?? {}) : undefined,
+        signal: AbortSignal.timeout(20_000),
+      });
+      const text = await upstream.text();
+      res.status(upstream.status);
+      res.type(upstream.headers.get('content-type') || 'application/json');
+      res.send(text);
+    } catch (e: any) {
+      res.status(502).json({ error: e?.name === 'TimeoutError' ? 'the brain took too long' : 'could not reach the brain' });
+    }
+  });
 
   router.get('/mind/health', async (_req, res) => {
     try {

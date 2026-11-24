@@ -90,14 +90,25 @@ export interface AppTheme {
   mode: ThemeMode;
   id: ThemeId;
   skin?: 'none' | 'cosmos'; // atmosphere layer over any palette (BL skins)
-  fx?: { aura?: number; glow?: number; motion?: number }; // skin effect intensity, percent (100 = default)
+  fx?: { aura?: number; glow?: number; motion?: number }; // skin effect intensity, percent (100 = default). glow is retired: one Glow now lives in `glass`.
+  // Her Glass card (lib/glass.ts): the one material every surface is made of.
+  // Unset fields keep Slice 1's look (72%, dock frost, theme tint/border).
+  glass?: import('./lib/glass').GlassSettings;
   accentOverride?: string | null; // BL accent model: custom hex beats everything
   accentPalette?: string | null; // BL named accent (ACCENT_PALETTES), mode-aware
-  typography?: string | null; // BL typography preset name (TYPOGRAPHY_PRESETS)
+  typography?: string | null; // BL typography preset name (TYPOGRAPHY_PRESETS). Retired by `type`; still honoured until she touches the Type card.
+  // Her Type card (lib/fonts.ts): a font per role. Unset = the old controls carry over.
+  type?: import('./lib/fonts').TypeSettings;
+  textOverride?: string | null; // her Text color pick (hex); null = the theme's own text
   wallpaper?: string; // Base64 or URL (Single)
   lockScreenWallpaper?: string; // Base64 or URL for lock screen (falls back to wallpaper)
   wallpapers?: string[]; // Array of Base64 or URLs for slideshow
   slideshowEnabled?: boolean;
+  // Slice 5: a moving wallpaper (video / GIF / animated WebP) plays instead of
+  // the still or slideshow, which stay saved. The file itself lives in
+  // localforage (lib/moving-wallpaper.ts); movingPoster is its first frame.
+  movingWallpaper?: boolean;
+  movingPoster?: string;
   customColors?: {
     light: Record<string, string>;
     dark: Record<string, string>;
@@ -172,6 +183,13 @@ export interface AppSettings {
   contacts: Record<string, ContactProfile>;
   groupChatName?: string;
   osName?: string;
+  // App Identity: her logo (512px, centre-cropped) and nameplate switches.
+  // House settings, not part of a Closet look (lib/nameplate.ts).
+  appLogo?: string;
+  nameplateLogo?: boolean;
+  nameplateName?: boolean;
+  // Closet: importing looks from other people is off unless she turns it on.
+  allowLookImport?: boolean;
   fontFamily?: string;
   fontSize?: 'small' | 'medium' | 'large';
   workerUrl?: string;

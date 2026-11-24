@@ -38,6 +38,8 @@ import {
 import type { TriggerCondition } from '../services/db.js';
 import {
   getAllBlocks,
+  getBlock,
+  isCarried,
   appendToBlock,
   replaceInBlock,
   rethinkBlock,
@@ -1114,6 +1116,19 @@ export function createInternalRoutes(): Router {
           if (typeof req.body.scope === 'string' && req.body.scope.trim()) {
             const scope = requireScope(req.body.scope);
             blocks = blocks.filter((b) => b.scope === scope);
+            // One block by name: how a session opens a block that is kept on
+            // the shelf (migrations/053). Resolved through aliases.
+            if (typeof req.body.label === 'string' && req.body.label.trim()) {
+              const one = getBlock(scope, req.body.label);
+              if (!one) {
+                res.status(404).json({ error: `Block '${req.body.label}' not found in scope '${scope}'` });
+                return;
+              }
+              blocks = [one];
+            }
+          } else if (typeof req.body.label === 'string' && req.body.label.trim()) {
+            res.status(400).json({ error: 'scope is required with label' });
+            return;
           }
           res.json({
             count: blocks.length,
@@ -1123,6 +1138,7 @@ export function createInternalRoutes(): Router {
               description: b.description ?? undefined,
               content: b.content,
               updatedAt: b.updated_at,
+              ...(isCarried(b) ? {} : { onTheShelf: true }),
             })),
           });
           break;

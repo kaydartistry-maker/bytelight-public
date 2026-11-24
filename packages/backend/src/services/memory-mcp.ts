@@ -13,6 +13,8 @@ import { createSdkMcpServer, tool, type McpSdkServerConfigWithInstance } from '@
 import { z } from 'zod';
 import {
   getAllBlocks,
+  getBlock,
+  isCarried,
   appendToBlock,
   replaceInBlock,
   rethinkBlock,
@@ -49,9 +51,10 @@ function requireScope(raw: string): string {
 
 const coreMemoryView = tool(
   'core_memory_view',
-  'View all core memory blocks across every scope, with current content and last-updated timestamps. Use to check state after edits or before reorganizing.',
+  'View core memory blocks with current content and last-updated timestamps. Give scope and label to open one block in full: that is how you read a block kept on the shelf (listed under "On the shelf" in your core memory). Omit both to see everything, e.g. before reorganizing.',
   {
     scope: z.string().optional().describe('Filter to one scope. Omit to see everything.'),
+    label: z.string().optional().describe('With scope: open just this block.'),
   },
   async (args) => {
     try {
@@ -59,6 +62,13 @@ const coreMemoryView = tool(
       if (args.scope) {
         const scope = requireScope(args.scope);
         blocks = blocks.filter((b) => b.scope === scope);
+        if (args.label && args.label.trim()) {
+          const one = getBlock(scope, args.label);
+          if (!one) return fail(`Block '${args.label}' not found in scope '${scope}'`);
+          blocks = [one];
+        }
+      } else if (args.label && args.label.trim()) {
+        return fail('scope is required with label');
       }
       return ok({
         count: blocks.length,
@@ -68,6 +78,7 @@ const coreMemoryView = tool(
           description: b.description ?? undefined,
           content: b.content,
           updatedAt: b.updated_at,
+          ...(isCarried(b) ? {} : { onTheShelf: true }),
         })),
       });
     } catch (e) {

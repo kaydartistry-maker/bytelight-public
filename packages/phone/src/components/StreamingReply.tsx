@@ -30,8 +30,7 @@ export function StreamingReply({ themeConfig, themeMode }: StreamingReplyProps) 
       return (
         <div
           key={key}
-          className={cn('my-1.5 flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] opacity-75', colors.panelBorder)}
-          style={{ background: 'rgba(127,127,127,0.08)' }}
+          className={cn('bytelight-glass-chip bytelight-chip-ink-75 my-1.5 flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px]', colors.panelBorder)}
         >
           <RefreshCw size={11} className="shrink-0" />
           <span>Session recycled — re-primed with recent history</span>

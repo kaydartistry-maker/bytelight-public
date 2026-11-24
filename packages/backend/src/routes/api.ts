@@ -16,6 +16,7 @@ import { createInternalRoutes } from './internal-routes.js';
 import ccRoutes from './cc-routes.js';
 import { createPreferencesRoutes } from './preferences-routes.js';
 import { createProfilesRoutes } from './profiles-routes.js';
+import { createAppSettingsRoutes } from './app-settings-routes.js';
 import { createCompanionSettingsRoutes } from './companion-settings-routes.js';
 import { createRoomsRoutes } from './rooms-routes.js';
 import { createChatRoutes } from './chat-routes.js';
@@ -25,6 +26,7 @@ import { createPushRoutes } from './push-routes.js';
 import { createOrchestratorRoutes } from './orchestrator-routes.js';
 import { createDiscordRoutes } from './discord-routes.js';
 import { createMindRoutes } from './mind-routes.js';
+import { createMindShareRoutes } from './mind-share-routes.js';
 import { createMemoryRoutes } from './memory-routes.js';
 import journalRouter from './journal.js';
 import lettersRouter from './letters.js';
@@ -105,6 +107,9 @@ router.use(createPreferencesRoutes());
 // Speaker profiles (companion-a/companion-b/user/fallback avatars + names) — ported from
 // Thornvale. Sits with the other user-facing settings routers.
 router.use(createProfilesRoutes());
+// App-settings sync (Slice 8): the phone's look, house settings, fonts and
+// Closet across devices. Behind authMiddleware above, beside its neighbours.
+router.use(createAppSettingsRoutes());
 // Companion settings — thread-override routes powering the chat-header
 // model pill (Slice 5a resurrection). Tag position: directly after
 // createPreferencesRoutes(), after authMiddleware above
@@ -153,6 +158,9 @@ router.use(createPushRoutes());
 router.use(createOrchestratorRoutes());
 router.use(createDiscordRoutes());
 router.use(createMindRoutes());
+// The Mind console's two hand-pressed sends into the house: a brain thread
+// as a Command Center task, a feeling/note/journal as a card in the home chat.
+router.use(createMindShareRoutes());
 // Memory Blocks — authenticated Letta-style core-memory API powering the
 // Settings → Memory panel (Slice 2, ported from Keystone). Mounted beside
 // createMindRoutes, after authMiddleware above.

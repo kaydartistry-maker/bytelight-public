@@ -1,179 +1,201 @@
-import React, { useEffect, useState } from 'react';
-import { RefreshCw, Loader2, ChevronRight } from 'lucide-react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import {
+  Activity, Brain, ChevronLeft, Clock, CloudSun, Feather, Fingerprint, GraduationCap, Heart, HeartPulse,
+  Link2, ListTodo, Moon, NotebookPen, RefreshCw, Scale, Search, Sparkles, Users, type LucideIcon,
+} from 'lucide-react';
 import { ThemeConfig } from '../lib/theme';
 import { cn } from '../lib/utils';
-import { apiFetch } from '../bytelight';
+import { useBackHandler } from '../lib/use-back-handler';
+import {
+  PROPOSAL_CAP, ROOMS, brainGet, brainPath, countLabel, countTensions, normSurface, normWeather,
+  roomById, type RoomId, type Weather,
+} from '../lib/mind-console';
+import { cardClass, Colors, Empty, fetchFn, Label } from './mind/parts';
+import { HealthRoom } from './mind/HealthRoom';
+import { EntitiesRoom } from './mind/EntitiesRoom';
+import { RecentRoom } from './mind/RecentRoom';
+import { SurfacingRoom } from './mind/SurfacingRoom';
+import { FeelingsRoom } from './mind/FeelingsRoom';
+import { ThreadsRoom } from './mind/ThreadsRoom';
+import { TensionsRoom } from './mind/TensionsRoom';
+import { ProposalsRoom } from './mind/ProposalsRoom';
+import { IdentityRoom } from './mind/IdentityRoom';
+import { JournalsRoom } from './mind/JournalsRoom';
+import { DreamsRoom } from './mind/DreamsRoom';
+import { PatternsRoom } from './mind/PatternsRoom';
+import { SearchRoom } from './mind/SearchRoom';
+import { CortexRoom } from './mind/CortexRoom';
+import { KnowledgeRoom } from './mind/KnowledgeRoom';
+import { SoulRoom } from './mind/SoulRoom';
 
-// The Mind (Neuralis Mind Bridge) — translated from BL main's MindPanel:
-// Overview (mind_health), Entities (expandable), Recent
-// observations, all through the /api/mind proxy (BYOK mind_api_url/key).
-// Fetches run in parallel and tolerate partial failure, BL behaviour.
+// The Mind console: a window onto the brain (Neuralis) through the house's
+// hallway at /api/mind/brain/... On top, the brain's inner weather and what
+// is pressing; below, a grid of rooms. A room loads only when it is opened.
+
+const ICONS: Record<RoomId, LucideIcon> = {
+  surfacing: Sparkles, feelings: Heart, threads: ListTodo, tensions: Scale, identity: Fingerprint,
+  entities: Users, journals: NotebookPen, dreams: Moon, proposals: Link2, patterns: Activity,
+  search: Search, cortex: Brain, knowledge: GraduationCap, soul: Feather, recent: Clock, health: HeartPulse,
+};
 
 interface MindAppProps {
   themeConfig: ThemeConfig;
   themeMode: 'light' | 'dark';
 }
 
-type Section = 'overview' | 'entities' | 'recent';
-const SECTIONS: { id: Section; label: string }[] = [
-  { id: 'overview', label: 'Overview' },
-  { id: 'entities', label: 'Entities' },
-  { id: 'recent', label: 'Recent' },
-];
-
-async function fetchMind(path: string) {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 8000);
-  try {
-    const res = await apiFetch(`/api/mind/${path}`, { signal: controller.signal });
-    if (!res.ok) throw new Error(`${path}: ${res.status}`);
-    return res.json();
-  } finally {
-    clearTimeout(timeout);
-  }
+interface Front {
+  weather: Weather | null;
+  weatherError: string | null;
+  surfacing: number | null;
+  tensions: number | null;
+  proposals: number | null;
 }
+
+const EMPTY_FRONT: Front = { weather: null, weatherError: null, surfacing: null, tensions: null, proposals: null };
 
 export function MindApp({ themeConfig, themeMode }: MindAppProps) {
   const colors = themeConfig[themeMode];
-  const [section, setSection] = useState<Section>('overview');
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [healthRaw, setHealthRaw] = useState('');
-  const [entities, setEntities] = useState<any[]>([]);
-  const [recentObs, setRecentObs] = useState<any[]>([]);
-  const [expandedEntity, setExpandedEntity] = useState<string | null>(null);
-  const [entityDetails, setEntityDetails] = useState<Record<string, any>>({});
+  const [room, setRoom] = useState<RoomId | null>(null);
+  const [front, setFront] = useState<Front>(EMPTY_FRONT);
+  const [loadingFront, setLoadingFront] = useState(true);
+  // Bumped by a room's refresh button: a new key opens the room afresh.
+  const [visit, setVisit] = useState(0);
+  const top = useRef<HTMLDivElement>(null);
 
-  async function loadAll() {
-    setLoading(true);
-    setError(null);
-    const results = await Promise.allSettled([
-      fetchMind('health'),
-      fetchMind('entities'),
-      fetchMind('recent'),
+  // Opening or leaving a room starts at the top, not wherever the grid was.
+  useEffect(() => { top.current?.scrollIntoView({ block: 'start' }); }, [room]);
+
+  // The front page: weather and the three pressing counts, side by side.
+  // Each tolerates the others failing.
+  const loadFront = useCallback(async () => {
+    setLoadingFront(true);
+    const [w, s, t, p] = await Promise.all([
+      brainGet(fetchFn, brainPath(['inner-weather'])),
+      brainGet(fetchFn, brainPath(['surface'])),
+      brainGet(fetchFn, brainPath(['tensions'])),
+      brainGet(fetchFn, brainPath(['proposals'], { status: 'pending' })),
     ]);
-    const [healthRes, entitiesRes, recentRes] = results;
-    if (healthRes.status === 'fulfilled') setHealthRaw(healthRes.value.output || JSON.stringify(healthRes.value));
-    if (entitiesRes.status === 'fulfilled') setEntities(entitiesRes.value.entities || entitiesRes.value || []);
-    if (recentRes.status === 'fulfilled') setRecentObs(recentRes.value.observations || recentRes.value || []);
-    const failures = results.filter((r) => r.status === 'rejected');
-    if (failures.length === results.length) {
-      setError((failures[0] as PromiseRejectedResult).reason?.message || 'All Mind Bridge requests failed');
-    }
-    setLoading(false);
-  }
-
-  useEffect(() => {
-    loadAll();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    setFront({
+      weather: w.ok ? normWeather(w.data) : null,
+      weatherError: w.ok ? null : w.error ?? null,
+      surfacing: s.ok ? normSurface(s.data).items.length : null,
+      tensions: t.ok ? countTensions(t.data) : null,
+      proposals: p.ok && Array.isArray(p.data) ? p.data.length : null,
+    });
+    setLoadingFront(false);
   }, []);
 
-  async function toggleEntity(id: string) {
-    if (expandedEntity === id) {
-      setExpandedEntity(null);
-      return;
-    }
-    setExpandedEntity(id);
-    if (!entityDetails[id]) {
-      try {
-        const d = await fetchMind(`entities/${encodeURIComponent(id)}`);
-        setEntityDetails((prev) => ({ ...prev, [id]: d }));
-      } catch { /* card shows nothing extra */ }
-    }
+  useEffect(() => { loadFront(); }, [loadFront]);
+  useBackHandler(room !== null, () => setRoom(null));
+
+  if (room) {
+    const Icon = ICONS[room];
+    return (
+      <div ref={top} className="space-y-3">
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => { setRoom(null); loadFront(); }}
+            className={cn('inline-flex min-h-[40px] shrink-0 items-center gap-1 rounded-full border px-3 text-xs font-semibold backdrop-blur-md', colors.panelBorder, colors.panelBg, colors.textMain)}
+          >
+            <ChevronLeft size={14} /> Mind
+          </button>
+          <Icon size={15} className="shrink-0" style={{ color: colors.accent }} />
+          <span className={cn('min-w-0 flex-1 truncate text-sm font-semibold', colors.textMain)}>{roomById(room).label}</span>
+          <button onClick={() => setVisit((v) => v + 1)} className={cn('shrink-0 rounded-full p-2.5', colors.textMuted)} aria-label="Refresh this room">
+            <RefreshCw size={14} />
+          </button>
+        </div>
+        <RoomView key={`${room}-${visit}`} room={room} colors={colors} />
+      </div>
+    );
   }
 
-  const card = cn('rounded-2xl border p-4', colors.panelBg, colors.panelBorder);
-  const label = cn('text-[10px] font-bold uppercase tracking-[0.12em]', colors.textMuted);
-  const when = (iso?: string) => (iso ? new Date(iso).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }) : '');
-
-  if (loading) {
-    return <div className={cn('flex items-center justify-center py-16', colors.textMuted)}><Loader2 size={22} className="animate-spin" /></div>;
-  }
+  const w = front.weather;
+  const pressing: { room: RoomId; label: string; count: number | null; capped?: boolean }[] = [
+    { room: 'surfacing', label: 'Surfacing', count: front.surfacing },
+    { room: 'tensions', label: 'Open tensions', count: front.tensions },
+    { room: 'proposals', label: 'Waiting', count: front.proposals, capped: front.proposals === PROPOSAL_CAP },
+  ];
 
   return (
-    <div className="space-y-3">
-      <div className="flex items-center gap-1.5 overflow-x-auto pb-1">
-        {SECTIONS.map((s) => (
-          <button
-            key={s.id}
-            onClick={() => setSection(s.id)}
-            className={cn(
-              'shrink-0 rounded-full border px-3 py-1.5 text-[11px] font-bold uppercase tracking-wider transition-all',
-              colors.panelBorder,
-              section === s.id ? colors.textMain : cn(colors.textMuted, 'opacity-70'),
-            )}
-            style={section === s.id ? { background: colors.accent + '33', borderColor: colors.accent } : undefined}
-          >
-            {s.label}
+    <div ref={top} className="space-y-3">
+      <div className={cardClass(colors)}>
+        <div className="flex items-center gap-2">
+          <CloudSun size={16} style={{ color: colors.accent }} />
+          <Label colors={colors}>Inner weather</Label>
+          <button onClick={loadFront} className={cn('ml-auto rounded-full p-2', colors.textMuted)} aria-label="Refresh">
+            <RefreshCw size={14} className={loadingFront ? 'animate-spin' : undefined} />
           </button>
-        ))}
-        <button onClick={loadAll} className={cn('ml-auto shrink-0 rounded-full p-2', colors.textMuted)} title="Refresh">
-          <RefreshCw size={14} />
-        </button>
+        </div>
+        {w ? (
+          <>
+            <div className={cn('mt-1 text-base font-semibold capitalize', colors.textMain)}>
+              {[w.sky, w.timeOfDay, w.energy].filter(Boolean).join(' · ') || 'Quiet'}
+            </div>
+            {w.moods.length > 0 && <div className={cn('mt-1 text-xs', colors.textMuted)}>{w.moods.join(', ')}</div>}
+            <div className={cn('mt-1 text-[11px]', colors.textMuted)}>
+              {w.activeThreads} threads open · {w.highPriority} marked important
+            </div>
+            {w.pressing.length > 0 && (
+              <div className="mt-2 space-y-1">
+                {w.pressing.slice(0, 3).map((p, i) => (
+                  <p key={i} className={cn('break-words text-xs leading-snug', colors.textMain)} style={{ display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
+                    <span className={colors.textMuted}>On their mind · </span>{p.content}
+                  </p>
+                ))}
+              </div>
+            )}
+          </>
+        ) : loadingFront ? (
+          <div className={cn('mt-1 text-xs', colors.textMuted)}>Reading the weather…</div>
+        ) : (
+          <div className="mt-1 text-xs" style={{ color: '#e05252' }}>{front.weatherError ?? "The weather didn't come back."}</div>
+        )}
       </div>
 
-      {error && (
-        <div className={cn(card, 'text-xs')} style={{ color: '#e05252' }}>
-          {error} — check mind_api_url / mind_api_key in Secrets.
-        </div>
-      )}
+      <div className="grid grid-cols-3 gap-2">
+        {pressing.map((p) => (
+          <button key={p.room} onClick={() => setRoom(p.room)} className={cardClass(colors, 'px-2 py-3 text-center')}>
+            <div className={cn('text-xl font-bold', colors.textMain)}>{countLabel(p.count, p.capped)}</div>
+            <div className={cn('break-words text-[10px] font-semibold uppercase leading-tight tracking-wider', colors.textMuted)}>{p.label}</div>
+          </button>
+        ))}
+      </div>
 
-      {section === 'overview' && (
-        <div className={card}>
-          <span className={label}>Mind health</span>
-          <pre className={cn('mt-2 max-h-[28rem] overflow-y-auto whitespace-pre-wrap font-mono text-[11px] leading-relaxed', colors.textMain)}>
-            {healthRaw || 'No health report.'}
-          </pre>
-        </div>
-      )}
-
-      {section === 'entities' && (
-        entities.length === 0 ? (
-          <div className={cn('py-8 text-center text-xs', colors.textMuted)}>No entities.</div>
-        ) : (
-          entities.map((e: any, i: number) => {
-            const id = String(e.id ?? e.name ?? i);
-            const open = expandedEntity === id;
-            const detail = entityDetails[id];
-            return (
-              <div key={id} className={card}>
-                <button onClick={() => toggleEntity(id)} className="flex w-full items-center justify-between text-left">
-                  <div>
-                    <div className={cn('text-sm font-semibold', colors.textMain)}>{e.name || e.label || id}</div>
-                    <div className={cn('text-[11px]', colors.textMuted)}>
-                      {[e.kind || e.type, e.relationship, e.observation_count ? `${e.observation_count} observations` : null].filter(Boolean).join(' · ')}
-                    </div>
-                  </div>
-                  <ChevronRight size={14} className={cn('transition-transform', colors.textMuted, open && 'rotate-90')} />
-                </button>
-                {open && (
-                  <pre className={cn('mt-3 max-h-64 overflow-y-auto whitespace-pre-wrap font-mono text-[11px]', colors.textMuted)}>
-                    {detail ? (detail.output || JSON.stringify(detail, null, 2)) : 'Loading…'}
-                  </pre>
-                )}
-              </div>
-            );
-          })
-        )
-      )}
-
-      {section === 'recent' && (
-        recentObs.length === 0 ? (
-          <div className={cn('py-8 text-center text-xs', colors.textMuted)}>No recent observations.</div>
-        ) : (
-          recentObs.map((o: any, i: number) => (
-            <div key={o.id ?? i} className={card}>
-              <div className="flex flex-wrap items-center gap-2">
-                {o.emotion && <span className={cn('rounded-full border px-2 py-0.5 text-[10px]', colors.panelBorder, colors.textMuted)}>{o.emotion}</span>}
-                {o.weight && <span className={cn('text-[10px] uppercase', colors.textMuted)}>{o.weight}</span>}
-                {o.entity_name && <span className={cn('text-[10px]', colors.textMuted)}>· {o.entity_name}</span>}
-                <span className={cn('ml-auto text-[10px]', colors.textMuted)}>{when(o.created_at)}</span>
-              </div>
-              <p className={cn('mt-2 whitespace-pre-wrap text-sm leading-relaxed', colors.textMain)}>{o.content}</p>
-            </div>
-          ))
-        )
-      )}
+      <div className="grid grid-cols-2 gap-2">
+        {ROOMS.map((r) => {
+          const Icon = ICONS[r.id];
+          return (
+          <button key={r.id} onClick={() => setRoom(r.id)} className={cardClass(colors, 'min-h-[84px] min-w-0 text-left transition-transform active:scale-[0.98]')}>
+            <Icon size={16} style={{ color: colors.accent }} />
+            <div className={cn('mt-1.5 break-words text-sm font-semibold', colors.textMain)}>{r.label}</div>
+            <div className={cn('mt-0.5 text-[11px] leading-snug', colors.textMuted)}>{r.hint}</div>
+          </button>
+          );
+        })}
+      </div>
     </div>
   );
+}
+
+function RoomView({ room, colors }: { room: RoomId; colors: Colors }) {
+  switch (room) {
+    case 'health': return <HealthRoom colors={colors} />;
+    case 'entities': return <EntitiesRoom colors={colors} />;
+    case 'recent': return <RecentRoom colors={colors} />;
+    case 'surfacing': return <SurfacingRoom colors={colors} />;
+    case 'feelings': return <FeelingsRoom colors={colors} />;
+    case 'threads': return <ThreadsRoom colors={colors} />;
+    case 'tensions': return <TensionsRoom colors={colors} />;
+    case 'proposals': return <ProposalsRoom colors={colors} />;
+    case 'identity': return <IdentityRoom colors={colors} />;
+    case 'journals': return <JournalsRoom colors={colors} />;
+    case 'dreams': return <DreamsRoom colors={colors} />;
+    case 'patterns': return <PatternsRoom colors={colors} />;
+    case 'search': return <SearchRoom colors={colors} />;
+    case 'cortex': return <CortexRoom colors={colors} />;
+    case 'knowledge': return <KnowledgeRoom colors={colors} />;
+    case 'soul': return <SoulRoom colors={colors} />;
+    default: return <Empty colors={colors}>This room isn't furnished yet.</Empty>;
+  }
 }

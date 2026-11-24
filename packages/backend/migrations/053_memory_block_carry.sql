@@ -1,0 +1,11 @@
+-- 053: a block is either carried in every session or kept on the shelf.
+--
+-- Every block used to ride into every session in full. A block that is only
+-- needed when its subject comes up (build notes, a finished investigation) can
+-- be set 'on_demand': the session then carries one line saying what it holds
+-- and opens the block when it needs it.
+--
+-- Everything defaults to 'always', so nothing changes until the owner moves a
+-- block herself. Run one statement at a time; "duplicate column" means it
+-- already ran.
+ALTER TABLE memory_blocks ADD COLUMN carry TEXT NOT NULL DEFAULT 'always';

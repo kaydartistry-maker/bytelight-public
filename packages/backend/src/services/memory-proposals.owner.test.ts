@@ -1,6 +1,7 @@
 /**
- * The operator's gate on the Archivist. The Archivist only proposes; a line reaches a
- * block when the operator approves it, and a rejected one never surfaces again.
+ * The owner's window on the Archivist. The Archivist only proposes, and it
+ * proposes to the companions. The owner can still file or drop any open row
+ * herself, but an unclaimed one retires for her the same as it does for them.
  */
 import assert from 'node:assert/strict';
 import test from 'node:test';
@@ -10,6 +11,8 @@ import {
   markSurfaced,
   getProposal,
   listForOwnerReview,
+  countForOwnerReview,
+  listProposals,
   approveProposalForOwner,
   rejectProposalForOwner,
 } from './memory-proposals.js';
@@ -54,15 +57,20 @@ test('rejecting drops it without touching the block', () => {
   assert.equal(listForOwnerReview().some((p) => p.id === id), false);
 });
 
-test('a faded proposal is still in the operator\'s queue and can still be approved', () => {
+test('a faded proposal leaves the owner\'s Review list but can still be filed by her', () => {
   initDb(':memory:');
   setBlock('companion-b', 'continuity', '');
+  const live = proposeEdit({ op: 'append', scope: 'companion-b', label: 'continuity', content: 'still being offered' })!;
   const id = proposeEdit({ op: 'append', scope: 'companion-b', label: 'continuity', content: 'I kept my word' })!;
   markSurfaced([id]);
   markSurfaced([id]);
   markSurfaced([id]);
   assert.equal(getProposal(id)?.status, 'faded');
-  assert.ok(listForOwnerReview().some((p) => p.id === id));
+
+  assert.deepEqual(listForOwnerReview().map((p) => p.id), [live]);
+  assert.equal(countForOwnerReview(), 1);
+  assert.ok(listProposals('faded').some((p) => p.id === id), 'still listed under faded');
+
   assert.equal(approveProposalForOwner(id, 'user').ok, true);
   assert.match(getBlock('companion-b', 'continuity')?.content ?? '', /I kept my word/);
 });

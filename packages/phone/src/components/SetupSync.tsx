@@ -1,8 +1,7 @@
 import React, { useState } from 'react';
 import { Loader2, UploadCloud, DownloadCloud } from 'lucide-react';
-import localforage from 'localforage';
 import { cn } from '../lib/utils';
-import { apiFetch } from '../bytelight';
+import { syncNow } from '../lib/sync';
 import type { ThemeConfig } from '../lib/theme';
 
 interface Props {
@@ -52,17 +51,9 @@ export function applyLocalExtras(extras: Record<string, unknown>): void {
   }
 }
 
-function readLocalJson(key: string): unknown {
-  try {
-    const raw = localStorage.getItem(key);
-    return raw ? JSON.parse(raw) : null;
-  } catch {
-    return null;
-  }
-}
 
 // Setup Sync — explicit send/bring for the whole device setup. The
-// automatic sync (settings-sync.ts) covers theme/contacts/appSettings
+// automatic sync (lib/sync.ts: pull on open, send on Apply) covers the same
 // passively; these buttons exist so moving into a new browser or the
 // APK is one deliberate tap on each side, extras included, with
 // failures shown instead of swallowed.
@@ -73,104 +64,35 @@ export function SetupSync({ themeConfig, themeMode }: Props) {
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  // Slice 8: both buttons go through the sync engine (lib/sync.ts): pictures,
+  // fonts, Closet looks and moving videos travel as files; furniture and
+  // connection settings stay on each device.
   async function send() {
     setBusy('send');
     setError(null);
     setMessage(null);
     setConfirmArmed(false);
-    try {
-      const [theme, contacts, appSettings] = await Promise.all([
-        localforage.getItem('bytelight_theme'),
-        localforage.getItem('bytelight_contacts'),
-        localforage.getItem('bytelight_settings'),
-      ]);
-      const blob = {
-        theme: theme ?? readLocalJson('bytelight_theme'),
-        contacts: contacts ?? readLocalJson('bytelight_contacts'),
-        appSettings: appSettings ?? readLocalJson('bytelight_settings'),
-        extras: collectLocalExtras(),
-      };
-      const body = JSON.stringify({ settings: blob });
-      const sizeMb = (body.length / (1024 * 1024)).toFixed(1);
-      const res = await apiFetch('/api/app-settings', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body,
-      });
-      if (!res.ok) {
-        throw new Error(
-          res.status === 404
-            ? 'The house needs its restart first — the sync door ships with the next backend start.'
-            : res.status === 413 || res.status >= 500
-              ? `The house refused ${sizeMb} MB (HTTP ${res.status}). If the backend hasn't restarted since the door was widened, restart it and tap again.`
-              : `Send failed (HTTP ${res.status})`,
-        );
-      }
-      setMessage(`Setup sent — ${sizeMb} MB stored in the house.`);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Send failed');
-    } finally {
-      setBusy(null);
-    }
+    const r = await syncNow('send');
+    if (r.ok) setMessage(`Setup sent to the house${r.detail ? ` (${r.detail})` : ''}. Your other devices pick it up when they open.`);
+    else setError(`Send failed: ${'reason' in r ? r.reason : 'unknown'}.`);
+    setBusy(null);
   }
 
   async function bring() {
     if (!confirmArmed) {
       setConfirmArmed(true);
       setError(null);
-      setMessage("This replaces this device's setup with the house copy. Tap again to do it.");
+      setMessage("This replaces this device's look, fonts and Closet with the house copy. Your dock, widgets and lock layout stay. Tap again to do it.");
       return;
     }
     setBusy('bring');
     setError(null);
     setMessage(null);
     setConfirmArmed(false);
-    try {
-      const res = await apiFetch('/api/app-settings');
-      if (res.status === 404) {
-        throw new Error('The house needs its restart first — the sync door ships with the next backend start.');
-      }
-      if (!res.ok) throw new Error(`Fetch failed (HTTP ${res.status})`);
-      // Shape-validate instead of trusting res.ok — an old backend's SPA
-      // fallback answers unknown routes with 200 + HTML.
-      let data: { settings?: Record<string, unknown> | null };
-      try {
-        data = await res.json();
-      } catch {
-        throw new Error('The house gave a non-JSON answer — backend may need a restart.');
-      }
-      const blob = data?.settings;
-      if (!blob || typeof blob !== 'object') {
-        setError('The house has no saved setup yet — send one from the device where things look right.');
-        return;
-      }
-      if (blob.theme) await localforage.setItem('bytelight_theme', blob.theme);
-      if (blob.contacts) await localforage.setItem('bytelight_contacts', blob.contacts);
-      if (blob.appSettings) await localforage.setItem('bytelight_settings', blob.appSettings);
-      // Best-effort localStorage mirrors so first paint isn't default;
-      // oversized values just stay localforage-only like they do today.
-      for (const [key, value] of [
-        ['bytelight_theme', blob.theme],
-        ['bytelight_contacts', blob.contacts],
-        ['bytelight_settings', blob.appSettings],
-      ] as const) {
-        if (!value) continue;
-        try {
-          localStorage.setItem(key, JSON.stringify(value));
-        } catch {
-          // quota — localforage copy is the one boot trusts anyway
-        }
-      }
-      if (blob.extras && typeof blob.extras === 'object') {
-        applyLocalExtras(blob.extras as Record<string, unknown>);
-      }
-      setMessage('Setup brought home — reloading…');
-      setTimeout(() => window.location.reload(), 600);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Bring failed');
-    } finally {
-      setBusy(null);
-    }
+    const r = await syncNow('bring');
+    if (r.ok) setMessage('Setup brought home.');
+    else setError(`Bring failed: ${'reason' in r ? r.reason : 'unknown'}.`);
+    setBusy(null);
   }
 
   return (

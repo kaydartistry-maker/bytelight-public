@@ -37,6 +37,7 @@ const BELT_NAMES = [
   'battleship_fire',
   'canvas_create', 'canvas_update', 'canvas_read', 'canvas_list', 'react_to_message',
   'schedule_wakes', 'timer', 'star_message', 'impulse', 'watcher', 'telegram_send', 'search_backfill',
+  'self_knowledge',
 ];
 
 // ── fetch mock ───────────────────────────────────────────────────────
@@ -501,5 +502,59 @@ describe('schedule, timers, stars, impulses, watchers, Telegram and backfill', (
       { action: 'stop' },
     ]);
     assert.equal((await executeBeltTool('search_backfill', { action: 'run' }))?.ok, false);
+  });
+});
+
+describe('self_knowledge', () => {
+  beforeEach(() => installFetchMock());
+  afterEach(() => restoreFetch());
+
+  it('list reads the house route, passing the filters through', async () => {
+    fetchImpl = () => ({ ok: true, status: 200, text: JSON.stringify({ success: true, total: 0, entries: [] }) });
+    const res = await executeBeltTool('self_knowledge', { action: 'list', companion: 'Companion-A', status: 'accepted' });
+    assert.ok(res!.ok);
+    assert.equal(fetchCalls.length, 1);
+    assert.match(fetchCalls[0].url, /\/api\/internal\/self-knowledge\?companion=companion-a&status=accepted$/);
+  });
+
+  it('propose files the entry under its owner, sourced from conversation by default', async () => {
+    const res = await executeBeltTool('self_knowledge', {
+      action: 'propose', companion: 'companion-b', category: 'i_tend_to', content: '  I go quiet before I go honest.  ',
+    });
+    assert.ok(res!.ok);
+    assert.match(fetchCalls[0].url, /\/api\/internal\/self-knowledge$/);
+    assert.deepEqual(fetchCalls[0].body, {
+      companion: 'companion-b', category: 'i_tend_to', content: 'I go quiet before I go honest.', sourceType: 'conversation',
+    });
+  });
+
+  it('accept and dismiss go to the entry\'s own route with the companion who is deciding', async () => {
+    await executeBeltTool('self_knowledge', { action: 'accept', companion: 'companion-a', id: 'abc-123' });
+    await executeBeltTool('self_knowledge', { action: 'dismiss', companion: 'companion-a', id: 'abc-123' });
+    assert.match(fetchCalls[0].url, /\/api\/internal\/self-knowledge\/abc-123\/accept$/);
+    assert.match(fetchCalls[1].url, /\/api\/internal\/self-knowledge\/abc-123\/dismiss$/);
+    assert.deepEqual(fetchCalls[1].body, { companion: 'companion-a' });
+  });
+
+  it('a refusal from the route (someone else\'s entry) comes back as the error', async () => {
+    fetchImpl = () => ({ ok: false, status: 403, text: JSON.stringify({ error: 'That entry belongs to companion-a.' }) });
+    const res = await executeBeltTool('self_knowledge', { action: 'accept', companion: 'companion-b', id: 'abc-123' });
+    assert.equal(res!.ok, false);
+    assert.match(res!.result, /belongs to companion-a/);
+  });
+
+  it('missing pieces short-circuit before any HTTP', async () => {
+    for (const args of [
+      { action: 'propose', category: 'i_am', content: 'x' },
+      { action: 'propose', companion: 'companion-a', content: 'x' },
+      { action: 'propose', companion: 'companion-a', category: 'i_am', content: '   ' },
+      { action: 'accept', companion: 'companion-a' },
+      { action: 'dismiss', id: 'abc' },
+      { action: 'burn' },
+    ]) {
+      const res = await executeBeltTool('self_knowledge', args);
+      assert.equal(res!.ok, false, JSON.stringify(args));
+    }
+    assert.equal(fetchCalls.length, 0);
   });
 });

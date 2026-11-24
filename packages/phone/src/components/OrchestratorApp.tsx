@@ -276,6 +276,17 @@ export function OrchestratorApp({ onClose, themeConfig, themeMode, embedded }: O
     load();
   }, []);
 
+  // A refused or unreachable save used to vanish without a word, so the
+  // switch just sat there. Say so, the same way removing a bell does.
+  async function sayBellSaveFailed(res: Response | null, what: string) {
+    if (!res) {
+      window.alert(`Could not reach the house to save ${what}.`);
+      return;
+    }
+    const data = await res.json().catch(() => null);
+    window.alert(data?.error || `The house refused to save ${what} (${res.status}).`);
+  }
+
   async function patchTask(wakeType: string, body: Record<string, unknown>) {
     try {
       const res = await apiFetch(`/api/orchestrator/tasks/${wakeType}`, {
@@ -286,9 +297,12 @@ export function OrchestratorApp({ onClose, themeConfig, themeMode, embedded }: O
       if (res.ok) {
         const data = await res.json();
         if (data.tasks) setTasks(data.tasks);
+      } else {
+        await sayBellSaveFailed(res, 'that bell');
       }
     } catch (err) {
       console.error('Failed to update task:', err);
+      await sayBellSaveFailed(null, 'that bell');
     }
   }
 
@@ -307,9 +321,12 @@ export function OrchestratorApp({ onClose, themeConfig, themeMode, embedded }: O
           concerned: data.concerned,
           emergency: data.emergency,
         });
+      } else {
+        await sayBellSaveFailed(res, 'the failsafe');
       }
     } catch (err) {
       console.error('Failed to update failsafe:', err);
+      await sayBellSaveFailed(null, 'the failsafe');
     }
   }
 
@@ -329,9 +346,12 @@ export function OrchestratorApp({ onClose, themeConfig, themeMode, embedded }: O
           windowEnd: data.windowEnd,
           pendingToday: data.pendingToday,
         });
+      } else {
+        await sayBellSaveFailed(res, 'the surprise wakes');
       }
     } catch (err) {
       console.error('Failed to update spontaneous config:', err);
+      await sayBellSaveFailed(null, 'the surprise wakes');
     }
   }
 

@@ -9,7 +9,7 @@ import { fileURLToPath } from 'url';
 import { existsSync, mkdirSync } from 'fs';
 import { loadConfig, PROJECT_ROOT } from './config.js';
 import { initDb, deleteExpiredSessions } from './services/db.js';
-import { seedDefaultBlocks, ensureCompanionBlocks } from './services/memory-blocks.js';
+import { seedDefaultBlocks, ensureCompanionBlocks, ensureHumanBlock } from './services/memory-blocks.js';
 import { getSecret } from './services/secrets.js';
 import { loadVectorCache } from './services/vector-cache.js';
 import { createWebSocketServer, setVoiceService, setGatewayServices, registry, recoverCutOffTurns } from './services/ws.js';
@@ -93,6 +93,9 @@ const memoryCompanions = [
 try {
   seedDefaultBlocks(config.identity.user_name, memoryCompanions);
   ensureCompanionBlocks(memoryCompanions);
+  if (ensureHumanBlock(config.identity.user_name)) {
+    console.log('[MemoryBlocks] Created the shared "human" block (it was missing)');
+  }
 } catch (err) {
   console.warn('[MemoryBlocks] Companion seeding skipped:', err instanceof Error ? err.message : err);
 }

@@ -13,7 +13,7 @@ import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { PROJECT_ROOT } from '../../config.js';
 import { isHeartbeatLane } from '../compaction-log.js';
-import { getAllBlocks } from '../memory-blocks.js';
+import { getCarriedBlocks } from '../memory-blocks.js';
 import {
   BASELINE_FILE, LIVE_WALLS_FILE, driftAgainstBaseline, driftFitsInline, liveWallsText, renderDrift,
 } from './block-drift.js';
@@ -28,7 +28,9 @@ export function staleBlockText(lane: unknown, projectRoot: string = PROJECT_ROOT
     const path = join(io, BASELINE_FILE);
     if (!existsSync(path)) return '';
     const baseline = JSON.parse(readFileSync(path, 'utf8')) as Record<string, string>;
-    const { changed, removed } = driftAgainstBaseline(baseline, getAllBlocks());
+    // Carried blocks only: the room never held a shelved block in full, so an
+    // edit to one is not a stale wall to hand back after a compaction.
+    const { changed, removed } = driftAgainstBaseline(baseline, getCarriedBlocks());
     const liveFile = join(io, LIVE_WALLS_FILE);
     if (driftFitsInline(changed, removed)) {
       rmSync(liveFile, { force: true });

@@ -1545,9 +1545,9 @@ export function MessageBubble({ message, onReact, onBookmark, onDelete, onEdit, 
               aria-label={isDejavuOnly ? 'Déjà vu — something felt familiar' : 'Show surfaced memory'}
               aria-expanded={shimmerOpen}
               className={cn(
-                'inline-flex items-center gap-1 rounded-full border px-1.5 py-px text-[9px] leading-none tracking-wide transition-opacity',
-                isDejavuOnly ? 'border-dashed italic opacity-50' : 'opacity-70',
-                shimmerOpen && 'opacity-100',
+                'bytelight-glass-chip inline-flex items-center gap-1 rounded-full border px-1.5 py-px text-[9px] leading-none tracking-wide transition-colors',
+                isDejavuOnly ? 'border-dashed italic bytelight-chip-ink-50' : 'bytelight-chip-ink-70',
+                shimmerOpen && 'bytelight-chip-ink-100',
               )}
               style={{ borderColor: isDejavuOnly ? 'currentColor' : colors.accent }}
             >
@@ -1568,13 +1568,12 @@ export function MessageBubble({ message, onReact, onBookmark, onDelete, onEdit, 
         {hasShimmer && shimmerOpen && (
           <div
             className={cn(
-              'mt-1.5 rounded-md border border-l-2 px-2.5 py-2 text-[11px]',
-              isDejavuOnly && 'italic opacity-85',
+              'bytelight-glass-chip mt-1.5 rounded-md border border-l-2 px-2.5 py-2 text-[11px]',
+              isDejavuOnly && 'italic bytelight-chip-ink-85',
             )}
             style={{
               borderLeftColor: isDejavuOnly ? 'currentColor' : colors.accent,
               borderColor: `color-mix(in srgb, currentColor 15%, transparent)`,
-              background: `color-mix(in srgb, ${colors.accent} 6%, transparent)`,
             }}
           >
             {isDejavuOnly ? (

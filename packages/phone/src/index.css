@@ -1520,3 +1520,220 @@ h1, h2, h3, .micro-label {
 .bytelight-dock-scroll::-webkit-scrollbar {
   display: none;
 }
+
+/* ═══ ONE GLASS — the house's single surface material ═══════════════════════
+   The operator: "whatever opacity, color or whatever I choose needs to read the
+   same everywhere." Before this block every surface mixed its own recipe:
+     Settings cards   panel colour + 8% accent wash          -> read purple
+     App drawer tiles panel at 90% + 11% accent (mint)       -> read navy
+     Dock / widgets   panel at 72% + live blur               -> read see-through
+     App labels       9% accent over nothing                 -> a fourth look
+     Cosmos bubbles   own violet/rose at 3-13%               -> read clear
+   Now App.tsx defines the material once (--bl-glass, --bl-glass-border,
+   --bl-glass-ink) and every surface below paints with exactly that. Later
+   slices put tint / opacity / border / glow / texture on her Settings page;
+   they only have to change these variables.
+
+   Placed last and with !important on purpose: it has to beat the older
+   per-surface rules above AND the Tailwind bg-* utility each panel carries,
+   without editing 100+ call sites. Undo = delete this block (and the glass
+   lines in App.tsx's theme effect).
+
+   Fill: her opacity of her tint (Glass card; default 72% of the theme panel).
+   Frost: her blur on the big surfaces, never on bubbles (Android grey-mush
+   bug). Border colour + width and the one Glow are hers too. The numbers come
+   from lib/glass.ts via App.tsx. ═════════════════════════════════════════════ */
+.bytelight-theme-panel,
+.bytelight-theme-user-bubble,
+.bytelight-theme-comp-bubble,
+.bytelight-message-bubble:not([data-split]),
+.skin-cosmos .bytelight-message-bubble[data-user]:not([data-split]),
+.bytelight-dock,
+.bytelight-dock-tile,
+.bytelight-app-tile,
+.bytelight-glass-button,
+.bytelight-app-label,
+.bytelight-field,
+.bytelight-composer {
+  background: var(--bl-glass) !important;
+  border-color: var(--bl-glass-border) !important;
+  border-width: var(--bl-glass-border-width) !important;
+}
+
+/* One frost, the dock's (The operator: "the rest of the house follow 72% plus
+   blur"). Big surfaces only. Tiles and labels sit on the already-frosted dock,
+   and per-tile blur on dozens of drawer tiles is what made the phone slow
+   before (see .bytelight-app-tile above), so they carry none. */
+.bytelight-theme-panel,
+.bytelight-dock,
+.bytelight-field,
+.bytelight-composer {
+  -webkit-backdrop-filter: var(--bl-glass-blur) !important;
+  backdrop-filter: var(--bl-glass-blur) !important;
+}
+.bytelight-dock-tile,
+.bytelight-app-tile,
+.bytelight-glass-button,
+.bytelight-app-label {
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+}
+
+/* Bubbles NEVER get live blur: it is the Android grey-mush bug (see
+   .bytelight-message-bubble above). Same tint and opacity as everything else;
+   whether they get painted frost is the open Slice 2 question. Placed after
+   the panel rule so a bubble that also carries a panel class stays unblurred. */
+.bytelight-theme-user-bubble,
+.bytelight-theme-comp-bubble,
+.bytelight-message-bubble {
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+}
+
+/* The one sheen every glass surface shares: a hairline of light on top, a
+   soft shadow line underneath. No accent mixed into the fill any more, so
+   the accent can't tint one room and not another. */
+.bytelight-theme-panel,
+.bytelight-message-bubble:not([data-split]),
+.bytelight-dock,
+.bytelight-dock-tile,
+.bytelight-app-tile,
+.bytelight-glass-button,
+.bytelight-field,
+.bytelight-composer {
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, #ffffff 10%, transparent),
+    inset 0 -1px 0 color-mix(in srgb, #000000 12%, transparent),
+    var(--bl-glass-glow) !important;
+}
+
+/* The bubbles' old accent wash layer goes; it was only on bubbles. */
+.bytelight-theme-user-bubble::before,
+.bytelight-theme-comp-bubble::before {
+  content: none;
+}
+
+/* Ink: everything on glass reads in the theme's text colour (or her Text
+   pick), because the bubble colours it used to be contrasted against no
+   longer paint. Her messages keep one difference only: an accent edge. */
+.bytelight-theme-user-bubble,
+.bytelight-theme-comp-bubble,
+.bytelight-message-bubble:not([data-split]) {
+  color: var(--bl-glass-ink) !important;
+}
+.bytelight-message-bubble[data-user='true']:not([data-split]),
+.bytelight-theme-user-bubble {
+  border-color: color-mix(in srgb, var(--bytelight-accent) 55%, var(--bl-glass-border)) !important;
+}
+
+/* ═══ GLASS CHIPS — Slice 1c (Nov 20) ═════════════════════════════════
+   The small things in chat that sit on the wallpaper beside the bubbles:
+   tool pill + its open list (ToolRun), reflection card and the session /
+   reply-window badges (MessageSegments, StreamingReply), the "recalled"
+   chip and the "Surfaced from the archive" card (MessageBubble). They were
+   never wired to the glass, and several faded the WHOLE element to 65-75%,
+   so on her wallpaper they went see-through while bubbles didn't.
+   Now: the bubbles' exact glass (same fill, same border, and like bubbles NO
+   live blur). Inline border colours (the recall accent) still win. */
+.bytelight-glass-chip {
+  background: var(--bl-glass) !important;
+  color: var(--bl-glass-ink);
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+  border-width: var(--bl-glass-border-width);
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, #ffffff 10%, transparent),
+    inset 0 -1px 0 color-mix(in srgb, #000000 12%, transparent),
+    var(--bl-glass-glow);
+}
+/* The archive card's accent edge stays one pixel heavier than her border. */
+.bytelight-glass-chip.border-l-2 {
+  border-left-width: calc(var(--bl-glass-border-width) + 1px);
+}
+
+/* Their quieter look, moved to the ink only: the text and icons fade, the
+   glass under them stays full strength. */
+.bytelight-chip-ink-50  { color: color-mix(in srgb, var(--bl-glass-ink) 50%, transparent); }
+.bytelight-chip-ink-65  { color: color-mix(in srgb, var(--bl-glass-ink) 65%, transparent); }
+.bytelight-chip-ink-70  { color: color-mix(in srgb, var(--bl-glass-ink) 70%, transparent); }
+.bytelight-chip-ink-75  { color: color-mix(in srgb, var(--bl-glass-ink) 75%, transparent); }
+.bytelight-chip-ink-85  { color: color-mix(in srgb, var(--bl-glass-ink) 85%, transparent); }
+.bytelight-chip-ink-90,
+.bytelight-chip-ink-65:hover { color: color-mix(in srgb, var(--bl-glass-ink) 90%, transparent); }
+.bytelight-chip-ink-100 { color: var(--bl-glass-ink); }
+
+/* ═══ PAINTED FROST — Slice 2 A/B (the operator picks Plain or Painted by eye) ══════
+   Bubbles can't carry live blur (Android grey-mush bug). Painted frost fakes
+   it with ONE still picture: App.tsx's AppBackground blurs her current
+   wallpaper once into --bl-frost-image (redone when the picture changes), and
+   bubbles + chat chips show it, pinned to the screen exactly where the real
+   wallpaper sits, under their tint. No second live layer to come apart.
+   Off unless html.bl-frost-painted (her switch). The [data-user] line is there
+   to outrank the Cosmos bubble rule (.skin-cosmos ...[data-user]...), which
+   otherwise wins and paints plain glass. Undo = delete this block. */
+html.bl-frost-painted .bytelight-message-bubble:not([data-split]),
+html.bl-frost-painted .bytelight-message-bubble[data-user]:not([data-split]),
+html.bl-frost-painted .bytelight-glass-chip {
+  background:
+    linear-gradient(var(--bl-glass), var(--bl-glass)),
+    var(--bl-frost-image, none) center / cover fixed,
+    transparent !important;
+}
+
+/* ═══ GLASS TEXTURE — Slice 3 (Nov 21) ═══════════════════════════════
+   In Texture mode every glass surface is made of her uploaded image: her
+   tint at her Opacity lies OVER the texture (Opacity 0 = pure texture), and
+   the texture itself is already faded to her Texture strength (baked once in
+   lib/texture.ts, shared through --bl-tex-image). Fit (--bl-tex-size /
+   -repeat / -attach from lib/glass.ts): One sheet pins one pane to the
+   screen so every surface is a window onto it; Fill each covers each
+   surface; Tile repeats. Frost, border, glow and roundness rules above still
+   apply. Off unless html.bl-tex. Undo = delete this block. */
+html.bl-tex .bytelight-theme-panel,
+html.bl-tex .bytelight-theme-user-bubble,
+html.bl-tex .bytelight-theme-comp-bubble,
+html.bl-tex .bytelight-message-bubble:not([data-split]),
+html.bl-tex .bytelight-message-bubble[data-user]:not([data-split]),
+html.bl-tex .bytelight-dock,
+html.bl-tex .bytelight-dock-tile,
+html.bl-tex .bytelight-app-tile,
+html.bl-tex .bytelight-glass-button,
+html.bl-tex .bytelight-app-label,
+html.bl-tex .bytelight-field,
+html.bl-tex .bytelight-composer,
+html.bl-tex .bytelight-glass-chip {
+  background-color: transparent !important;
+  background-image: linear-gradient(var(--bl-glass), var(--bl-glass)), var(--bl-tex-image) !important;
+  background-size: auto, var(--bl-tex-size) !important;
+  background-position: center, center !important;
+  background-repeat: no-repeat, var(--bl-tex-repeat) !important;
+  background-attachment: scroll, var(--bl-tex-attach) !important;
+}
+
+/* Texture AND painted frost on bubbles/chips: tint, then texture, then the
+   frosted wallpaper underneath. Outranks both single rules on purpose. */
+html.bl-tex.bl-frost-painted .bytelight-message-bubble:not([data-split]),
+html.bl-tex.bl-frost-painted .bytelight-message-bubble[data-user]:not([data-split]),
+html.bl-tex.bl-frost-painted .bytelight-glass-chip {
+  background-color: transparent !important;
+  background-image:
+    linear-gradient(var(--bl-glass), var(--bl-glass)),
+    var(--bl-tex-image),
+    var(--bl-frost-image, none) !important;
+  background-size: auto, var(--bl-tex-size), cover !important;
+  background-position: center, center, center !important;
+  background-repeat: no-repeat, var(--bl-tex-repeat), no-repeat !important;
+  background-attachment: scroll, var(--bl-tex-attach), fixed !important;
+}
+
+/* ═══ TYPE — Slice 4 (Nov 21) ═════════════════════════════════════════
+   Title and Text ride the existing --font-heading / --font-body variables
+   (headings: h1-h3 + .micro-label, every skin; body: --font-sans). Her
+   messages and ours can each take their own font from the Type card's
+   Advanced fold; unset, they follow her Text font. */
+.bytelight-message-bubble[data-user='true'] {
+  font-family: var(--font-msg-user, inherit);
+}
+.bytelight-message-bubble[data-user='false'] {
+  font-family: var(--font-msg-comp, inherit);
+}

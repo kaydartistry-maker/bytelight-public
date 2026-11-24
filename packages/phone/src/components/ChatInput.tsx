@@ -62,6 +62,59 @@ function newId(): string {
   return `img-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
 
+// Extensions the picker should treat as an image even when the browser hands
+// back a blank or unfamiliar MIME type. Android's document picker routinely
+// types a photo as '' or application/octet-stream, and HEIC/HEIF arrive
+// untyped on every engine but Safari.
+const IMAGE_EXTENSIONS = [
+  '.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp', '.avif', '.heic', '.heif',
+];
+
+function looksLikeAnImage(file: File): boolean {
+  if (file.type.startsWith('image/')) return true;
+  const name = file.name.toLowerCase();
+  return IMAGE_EXTENSIONS.some((ext) => name.endsWith(ext));
+}
+
+function isHeic(file: File): boolean {
+  const name = file.name.toLowerCase();
+  return /heic|heif/i.test(file.type) || name.endsWith('.heic') || name.endsWith('.heif');
+}
+
+// Decode a picked file into something canvas can draw. <img> is the wide path;
+// createImageBitmap reaches a few formats <img> refuses, so it gets a turn
+// before we give up on a picture she has already chosen twice.
+async function decodeImage(file: File, dataUrl: string): Promise<ImageBitmap | HTMLImageElement> {
+  try {
+    return await new Promise<HTMLImageElement>((resolve, reject) => {
+      const el = new Image();
+      el.onload = () => resolve(el);
+      el.onerror = () => reject(new Error('img decode failed'));
+      el.src = dataUrl;
+    });
+  } catch {
+    if (typeof createImageBitmap !== 'function') throw undecodable(file);
+    try {
+      return await createImageBitmap(file);
+    } catch {
+      throw undecodable(file);
+    }
+  }
+}
+
+// A picture that will not decode is the one moment the app owes her a real
+// sentence — the old message was "Could not load the image", which names the
+// symptom and hides both the cause and the way out.
+function undecodable(file: File): Error {
+  if (isHeic(file)) {
+    return new Error(
+      `${file.name || 'That photo'} is a HEIC/HEIF and this browser cannot open it. ` +
+        'Send a screenshot of it instead, or turn off high-efficiency photos in your camera settings.',
+    );
+  }
+  return new Error(`Could not open ${file.name || 'that image'} — the file may be damaged or an unsupported format.`);
+}
+
 // Resize/compress a picked image to a JPEG blob for upload. Animated GIFs are
 // returned untouched so the canvas does not flatten the animation.
 async function processImage(file: File): Promise<Blob> {
@@ -71,16 +124,10 @@ async function processImage(file: File): Promise<Blob> {
   const dataUrl = await new Promise<string>((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => resolve(reader.result as string);
-    reader.onerror = () => reject(new Error('Could not read the file'));
+    reader.onerror = () => reject(new Error(`Could not read ${file.name || 'the file'}`));
     reader.readAsDataURL(file);
   });
-  if (!/^data:image\//i.test(dataUrl)) throw new Error('That file is not an image');
-  const img = await new Promise<HTMLImageElement>((resolve, reject) => {
-    const el = new Image();
-    el.onload = () => resolve(el);
-    el.onerror = () => reject(new Error('Could not load the image'));
-    el.src = dataUrl;
-  });
+  const img = await decodeImage(file, dataUrl);
   const max = 1280;
   let width = img.width;
   let height = img.height;
@@ -678,7 +725,18 @@ export function ChatInput({ onSend, onError, giphyApiKey, disabled, themeConfig,
   // Process + upload a batch of File objects. Shared by the file-picker,
   // drag-and-drop, and clipboard-paste entry points.
   const addImageFiles = async (incoming: File[]) => {
-    const onlyImages = incoming.filter((f) => f.type.startsWith('image/'));
+    if (incoming.length === 0) return;
+
+    // A dropped file is never dropped quietly. The old filter matched on MIME
+    // alone and returned in silence, so a picked photo the browser typed as ''
+    // or application/octet-stream — routine on Android's picker, and for any
+    // HEIC — simply never appeared and never said why.
+    const onlyImages = incoming.filter(looksLikeAnImage);
+    const rejected = incoming.filter((f) => !looksLikeAnImage(f));
+    if (rejected.length > 0) {
+      const names = rejected.map((f) => f.name || 'that file').join(', ');
+      onError?.(`Not an image, so ${rejected.length === 1 ? 'it was' : 'they were'} skipped: ${names}`);
+    }
     if (onlyImages.length === 0) return;
 
     const room = MAX_IMAGES - images.length;
@@ -969,11 +1027,13 @@ export function ChatInput({ onSend, onError, giphyApiKey, disabled, themeConfig,
         className="hidden"
       />
 
+      {/* .heic/.heif are spelled out because a bare image/* hides them in some
+          file pickers, which reads from her side as the photo not existing. */}
       <input
         type="file"
         id="upload-input"
         name="upload-input"
-        accept="image/*"
+        accept="image/*,.heic,.heif"
         multiple
         ref={uploadInputRef}
         onChange={handleImageSelect}

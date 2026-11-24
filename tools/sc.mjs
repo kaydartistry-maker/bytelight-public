@@ -448,6 +448,8 @@ switch (cmd) {
     if (sub === 'view') {
       const body = { action: 'view' };
       if (args[1]) body.scope = args[1];
+      // A label after the scope opens just that block (one kept on the shelf).
+      if (args[2]) body.label = args[2];
       await post('memory', body);
     } else if (sub === 'append') {
       if (!args[1] || !args[2] || args[3] === undefined) {
@@ -474,7 +476,7 @@ switch (cmd) {
       if (args[1]) body.threadId = args[1];
       await post('memory', body);
     } else {
-      console.log('Usage: sc memory view [scope] | append <scope> <label> <content> | replace <scope> <label> <old> <new> | rethink <scope> <label> <content> | extract [threadId]');
+      console.log('Usage: sc memory view [scope] [label] | append <scope> <label> <content> | replace <scope> <label> <old> <new> | rethink <scope> <label> <content> | extract [threadId]');
     }
     break;
   }

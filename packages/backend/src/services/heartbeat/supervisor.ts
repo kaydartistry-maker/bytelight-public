@@ -33,7 +33,7 @@ import { BUSY_FRESH_MS } from './constants.js';
 import { laneDirName } from './lane-dir.js';
 import { baselineFrom, BASELINE_FILE } from './block-drift.js';
 import { heldBaseline, lastInjectedClaudeMd, planHold } from './held-instructions.js';
-import { getAllBlocks } from '../memory-blocks.js';
+import { getCarriedBlocks } from '../memory-blocks.js';
 
 const IS_WIN = process.platform === 'win32';
 const WATCHDOG_TIMEOUT = (parseInt(process.env.HEARTBEAT_WATCHDOG_TIMEOUT || '300', 10)) * 1000;
@@ -1763,7 +1763,7 @@ export class HeartbeatSession {
     // its OLD copy of the walls that moved, so those keep the old text's hash
     // (heldBaseline) and still read as moved after a compaction.
     try {
-      const live = baselineFrom(getAllBlocks());
+      const live = baselineFrom(getCarriedBlocks());
       const baseline = held ? heldBaseline(live, held.roomCopy, held.changed, held.removed) : live;
       this.writeIoAtomic(BASELINE_FILE, JSON.stringify(baseline));
     } catch { /* a missing baseline reports no drift, which is the old behaviour */ }

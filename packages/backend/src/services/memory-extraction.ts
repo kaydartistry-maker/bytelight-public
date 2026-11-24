@@ -10,8 +10,9 @@
 //       ONLY mode a fresh or existing install can be in unless someone writes
 //       the exact literal 'write' into config `memext.mode` by hand. Nothing
 //       in the UI sets that key. Every proposal lands in memory_proposals,
-//       where the operator reviews it on the phone (Memory Blocks → Review) and the
-//       companions may also see it (heartbeat/whisper.ts).
+//       where it is offered to the companions (heartbeat/whisper.ts); the
+//       operator can see them on the phone (Memory Blocks → Review) but is not
+//       a required approver (see memory-proposals.ts).
 //   (b) Companions: byte-light's companion registry is services/db/rooms.ts
 //       (getThreadRoster / listCompanions, keyed by `id`, not `slug`). Only
 //       companions that own a memory scope (resolveScope) are put in play, so
@@ -36,6 +37,11 @@
 //   (i) Prompt: house name and speaker emoji are this house's; the operator's two
 //       approved house rules (games teach preferences, "that stays" is law)
 //       are kept from the previous byte-light prompt.
+//   (j) Prompt: one paragraph on the shared "human" block (2026-11-22). The
+//       live house had no such block, and because the Archivist may only use
+//       labels that exist, not one of 1,565 proposals was ever about the
+//       owner's life. The block is now guaranteed (ensureHumanBlock); this
+//       says what belongs on it.
 
 import { getDb, getConfig, setConfig } from './db.js';
 import { streamInference, loadProviderConfig, type RouterMessage } from './router.js';
@@ -240,6 +246,8 @@ Intentions: a companion promised ${userName} something with a WHEN and didn't fi
 Scopes:
 - "${SHARED_SCOPE}" — facts about ${userName}, household, people, ongoing projects, plans, status. Visible to every companion.
 - ${companionSlugs.map((s) => `"${s}"`).join(', ')} — that companion's personal continuity: self-realizations, promises they made, identity moments, inside jokes they own, relationship developments specific to them.
+
+If the shared blocks include one labelled "human", that block is the page about ${userName} as a person: her family, her work, her friendships and community, her health, what she loves, and what is hard for her right now. A durable fact about her life belongs there, in neutral third person, and not in a status or project block. Notes about building or running the house's software never belong on it.
 
 Companion-scope entries are appended to blocks the companions author themselves, in the FIRST PERSON. Write those entries in first person, in that companion's voice ("I ...", "my ..."), never third person. Shared-scope entries stay neutral third person.
 

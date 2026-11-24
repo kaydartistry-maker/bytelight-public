@@ -32,6 +32,7 @@ import {
 } from '../services/db/self-knowledge.js';
 import { semanticSearchSelfKnowledge } from '../services/self-knowledge-index.js';
 import { registry } from '../services/registry.js';
+import { selfKnowledgeCarried, setSelfKnowledgeCarried } from '../services/self-knowledge-carry.js';
 
 export function createSelfKnowledgeRoutes(): Router {
   const router = Router();
@@ -49,6 +50,22 @@ export function createSelfKnowledgeRoutes(): Router {
     const offset = parseInt(String(req.query.offset), 10) || 0;
     const { entries, total } = listSelfKnowledge({ companionId, category, status, limit, offset });
     res.json({ total, entries });
+  });
+
+  // Whether accepted entries ride into each session (services/
+  // self-knowledge-carry.ts). Off until the owner turns it on here.
+  router.get('/self-knowledge/settings', (_req, res) => {
+    res.json({ carry: selfKnowledgeCarried() });
+  });
+
+  router.put('/self-knowledge/settings', (req, res) => {
+    const carry = req.body?.carry;
+    if (typeof carry !== 'boolean') {
+      res.status(400).json({ error: 'carry (true or false) is required' });
+      return;
+    }
+    setSelfKnowledgeCarried(carry);
+    res.json({ carry: selfKnowledgeCarried() });
   });
 
   // Manual search over accepted entries. ?mode=semantic uses the embedding

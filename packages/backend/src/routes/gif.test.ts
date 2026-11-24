@@ -236,6 +236,31 @@ describe('maxBytes compatibility', () => {
     assert.ok(body.adjustments.length > 0, 'adjustments are reported');
   });
 
+  it("the phone's Make it fit pass may degrade a Discord-preset render; the preset alone may not", async (t) => {
+    if (!toolsReady()) { t.skip('ffmpeg and gifsicle are required for the render pipeline'); return; }
+    stageSession(FIT, {
+      'frame-0001.png': TINY_PNG,
+      'frame-0002.png': TINY_PNG,
+    });
+    // The phone's Discord preset sends fit (letterbox into the size), which
+    // the house reads as keep-colors: auto-fit alone is not enough.
+    const preset = { sessionId: FIT, frames: ['frame-0001.png', 'frame-0002.png'], fps: 10, width: 320, height: 320, fit: true, maxBytes: 1 };
+    const keep = await invoke('post', '/gif/create', { body: { ...preset, autoFit: true } });
+    assert.equal(keep.status, 200);
+    assert.ok(!(keep.body as { adjustments: string[] }).adjustments.some((a) => /auto-fit reduced/.test(a)), 'keep-colors forbids the ladder');
+
+    stageSession(FIT, {
+      'frame-0001.png': TINY_PNG,
+      'frame-0002.png': TINY_PNG,
+    });
+    // Make it fit: the same request, saying colors may go.
+    const fitted = await invoke('post', '/gif/create', { body: { ...preset, autoFit: true, preserveColors: false } });
+    assert.equal(fitted.status, 200);
+    const body = fitted.body as { effective: { autoFit: boolean; colors: number }; adjustments: string[] };
+    assert.equal(body.effective.autoFit, true);
+    assert.ok(body.adjustments.some((a) => /auto-fit reduced quality/.test(a) || /lowest permitted quality/.test(a)), `the ladder ran: ${body.adjustments.join(' | ')}`);
+  });
+
   it('reports a comfortable fit without touching quality', async (t) => {
     if (!toolsReady()) { t.skip('ffmpeg and gifsicle are required for the render pipeline'); return; }
     stageSession(FIT, {

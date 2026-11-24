@@ -19,6 +19,7 @@
 import { getDb } from './db.js';
 import { memoryReceipt } from './memory-ledger.js';
 import { randomUUID } from 'node:crypto';
+import { renderSelfKnowledgeForPrompt } from './self-knowledge-carry.js';
 
 export const SHARED_SCOPE = 'shared';
 
@@ -28,12 +29,22 @@ export const SHARED_SCOPE = 'shared';
 export const COMPANION_SCOPES = ['companion-a', 'companion-b'] as const;
 export type CompanionScope = (typeof COMPANION_SCOPES)[number];
 
+/** Whether a block rides into every session in full, or waits on the shelf. */
+export type BlockCarry = 'always' | 'on_demand';
+
 export interface MemoryBlock {
   scope: string;
   label: string;
   content: string;
   description?: string;
   updated_at: string;
+  /** migrations/053. Absent (a database from before it) reads as 'always'. */
+  carry?: BlockCarry;
+}
+
+/** True unless the block has been put on the shelf. */
+export function isCarried(block: { carry?: string | null }): boolean {
+  return block.carry !== 'on_demand';
 }
 
 export interface MemoryBlockIdentity {
@@ -70,6 +81,14 @@ export function getAllBlocks(): MemoryBlock[] {
   return getDb()
     .prepare('SELECT * FROM memory_blocks ORDER BY scope, label')
     .all() as MemoryBlock[];
+}
+
+// The blocks a session is handed in full. The session upkeep that reasons about
+// what a room is holding (the launch baseline, drift after a compaction, the
+// over-budget nudge) asks for these, never for every block: a shelved block was
+// never in the room, so it can neither go stale there nor weigh on it.
+export function getCarriedBlocks(): MemoryBlock[] {
+  return getAllBlocks().filter(isCarried);
 }
 
 // Blocks visible to a set of scopes, in the order the scopes are given
@@ -208,10 +227,57 @@ export interface BlockWriteMeta {
   metadata?: Record<string, unknown>;
 }
 
+// What kind of write is about to happen, for the version history.
+export type BlockVersionOp = 'set' | 'rethink' | 'replace' | 'insert' | 'delete' | 'restore';
+
+interface WriteWhy {
+  op: BlockVersionOp;
+  actor?: string;
+}
+
+// Keep the block exactly as it stands, before a write that would lose some of
+// it (migrations/052). Advisory in the same way a receipt is: a history row
+// that cannot be filed is logged loudly and the write still goes through,
+// because a memory edit must never fail on its own paper trail.
+function keepVersion(before: MemoryBlock, why: WriteWhy): void {
+  try {
+    getDb()
+      .prepare(`
+        INSERT INTO memory_block_versions (scope, label, content, description, op, actor, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+      `)
+      .run(
+        before.scope,
+        before.label,
+        before.content,
+        before.description ?? null,
+        why.op,
+        why.actor || 'house',
+        new Date().toISOString(),
+      );
+  } catch (err) {
+    console.warn(
+      `[MemoryBlocks] HISTORY NOT KEPT for ${before.scope}/${before.label} before a ${why.op} (the write itself goes ahead):`,
+      err,
+    );
+  }
+}
+
+// A write loses nothing when the new text simply continues the old: the old
+// text is still there, word for word, at the front.
+function losesText(before: string, after: string): boolean {
+  return before !== after && !after.startsWith(before);
+}
+
 // Raw upsert, no receipt. Every public writer below routes through here and
 // then files exactly ONE receipt with its own verb — so a single logical edit
-// never lands two rows in the ledger.
-function writeBlock(scope: string, label: string, content: string, description?: string): void {
+// never lands two rows in the ledger. A writer that can lose text says so with
+// `why`, and the text it is about to replace is kept first.
+function writeBlock(scope: string, label: string, content: string, description?: string, why?: WriteWhy): void {
+  if (why) {
+    const before = getBlockExact(scope, label);
+    if (before && losesText(before.content, content)) keepVersion(before, why);
+  }
   getDb()
     .prepare(`
       INSERT INTO memory_blocks (scope, label, content, description, updated_at)
@@ -258,7 +324,7 @@ export function setBlock(
 ): void {
   const identity = getDb().transaction(() => {
     const resolved = resolveBlockIdentity(scope, label, true)!;
-    writeBlock(resolved.scope, resolved.canonical_label, content, description);
+    writeBlock(resolved.scope, resolved.canonical_label, content, description, { op: 'set', actor: meta?.actor });
     return resolved;
   })();
   receipt('memory.set', identity.scope, identity.canonical_label, `Set block to ${content.length} chars.`, meta, {
@@ -270,6 +336,8 @@ export function deleteBlock(scope: string, label: string, meta?: BlockWriteMeta)
   const deleted = getDb().transaction(() => {
     const identity = resolveBlockIdentity(scope, label, false);
     if (!identity) return null;
+    const before = getBlockExact(identity.scope, identity.canonical_label);
+    if (before) keepVersion(before, { op: 'delete', actor: meta?.actor });
     const info = getDb()
       .prepare('DELETE FROM memory_blocks WHERE scope = ? AND label = ?')
       .run(identity.scope, identity.canonical_label);
@@ -279,6 +347,32 @@ export function deleteBlock(scope: string, label: string, meta?: BlockWriteMeta)
     return identity;
   })();
   if (deleted) receipt('memory.delete', deleted.scope, deleted.canonical_label, 'Deleted the block.', meta);
+}
+
+// Move a block between "carried in every session" and "on the shelf". The
+// text is untouched, so nothing is kept in the version history and the
+// block's updated_at does not move. Returns the block, or null if not found.
+export function setBlockCarry(scope: string, label: string, carry: BlockCarry, meta?: BlockWriteMeta): MemoryBlock | null {
+  if (carry !== 'always' && carry !== 'on_demand') throw new Error("carry must be 'always' or 'on_demand'");
+  const identity = resolveBlockIdentity(scope, label, false);
+  const block = identity ? getBlockExact(identity.scope, identity.canonical_label) : null;
+  if (!block) return null;
+  if ((block.carry ?? 'always') !== carry) {
+    getDb()
+      .prepare('UPDATE memory_blocks SET carry = ? WHERE scope = ? AND label = ?')
+      .run(carry, block.scope, block.label);
+    receipt(
+      'memory.carry',
+      block.scope,
+      block.label,
+      carry === 'on_demand'
+        ? 'Put on the shelf: no longer carried in full, opened when needed.'
+        : 'Taken off the shelf: carried in every session again.',
+      meta,
+      { carry, block_chars: block.content.length },
+    );
+  }
+  return getBlockExact(block.scope, block.label);
 }
 
 // Append a line to a block, creating the block if it doesn't exist
@@ -315,7 +409,7 @@ export function replaceInBlock(scope: string, label: string, oldText: string, ne
   }
 
   const newContent = block.content.replace(oldText, newText);
-  writeBlock(block.scope, block.label, newContent);
+  writeBlock(block.scope, block.label, newContent, undefined, { op: 'replace', actor: meta?.actor });
   receipt('memory.replace', block.scope, block.label, `Replaced "${oldText}" with "${newText}"`, meta, {
     block_chars: newContent.length,
   });
@@ -335,7 +429,7 @@ export function insertInBlock(scope: string, label: string, text: string, line: 
   }
 
   const newContent = lines.join('\n');
-  writeBlock(identity.scope, identity.canonical_label, newContent);
+  writeBlock(identity.scope, identity.canonical_label, newContent, undefined, { op: 'insert', actor: meta?.actor });
   receipt('memory.insert', identity.scope, identity.canonical_label, `Inserted at line ${line}: ${text}`, meta, {
     line,
     block_chars: newContent.length,
@@ -347,7 +441,7 @@ export function insertInBlock(scope: string, label: string, text: string, line: 
 export function rethinkBlock(scope: string, label: string, newContent: string, meta?: BlockWriteMeta): string {
   const identity = resolveBlockIdentity(scope, label, true)!;
   const block = getBlockExact(identity.scope, identity.canonical_label);
-  writeBlock(identity.scope, identity.canonical_label, newContent);
+  writeBlock(identity.scope, identity.canonical_label, newContent, undefined, { op: 'rethink', actor: meta?.actor });
   receipt('memory.rethink', identity.scope, identity.canonical_label, `Rewrote the whole block (${newContent.length} chars).`, meta, {
     previous_chars: block?.content.length ?? 0,
     block_chars: newContent.length,
@@ -355,11 +449,138 @@ export function rethinkBlock(scope: string, label: string, newContent: string, m
   return newContent;
 }
 
+// ─── Version history (migrations/052) ───────────────────────────────
+
+export interface BlockVersion {
+  id: number;
+  scope: string;
+  label: string;
+  /** The block as it stood BEFORE the write named by `op`. */
+  content: string;
+  description: string | null;
+  op: BlockVersionOp;
+  actor: string;
+  created_at: string;
+}
+
+/** A history row without its full text, for a list. */
+export interface BlockVersionSummary extends Omit<BlockVersion, 'content'> {
+  chars: number;
+  preview: string;
+}
+
+const VERSION_PREVIEW_CHARS = 160;
+
+function summarizeVersion(row: BlockVersion): BlockVersionSummary {
+  const { content, ...rest } = row;
+  const flat = content.replace(/\s+/g, ' ').trim();
+  return {
+    ...rest,
+    chars: content.length,
+    preview: flat.length > VERSION_PREVIEW_CHARS ? flat.slice(0, VERSION_PREVIEW_CHARS).trimEnd() + '…' : flat,
+  };
+}
+
+// The label history is filed under: the block's real label when it is still
+// reachable (so an alias finds the same history), else the label as given (a
+// deleted block has no identity left to resolve through).
+function historyLabel(scope: string, label: string): string {
+  return resolveBlockIdentity(scope, label, false)?.canonical_label ?? label;
+}
+
+/** Earlier versions of one block, newest first. */
+export function listBlockVersions(scope: string, label: string, limit = 50): BlockVersionSummary[] {
+  const rows = getDb()
+    .prepare(`SELECT * FROM memory_block_versions WHERE scope = ? AND label = ? ORDER BY id DESC LIMIT ?`)
+    .all(scope, historyLabel(scope, label), Math.max(1, Math.min(limit, 500))) as BlockVersion[];
+  return rows.map(summarizeVersion);
+}
+
+/** One earlier version, with its full text. */
+export function getBlockVersion(id: number): BlockVersion | null {
+  return (getDb().prepare('SELECT * FROM memory_block_versions WHERE id = ?').get(id) as BlockVersion | undefined) ?? null;
+}
+
+/** Blocks that were deleted and have not been made again: the newest row of each. */
+export function listDeletedBlocks(): BlockVersionSummary[] {
+  const rows = getDb()
+    .prepare(`
+      SELECT v.* FROM memory_block_versions v
+      WHERE v.op = 'delete'
+        AND v.id = (SELECT MAX(id) FROM memory_block_versions x WHERE x.scope = v.scope AND x.label = v.label)
+        AND NOT EXISTS (SELECT 1 FROM memory_blocks b WHERE b.scope = v.scope AND b.label = v.label)
+      ORDER BY v.id DESC
+    `)
+    .all() as BlockVersion[];
+  return rows.map(summarizeVersion);
+}
+
+/**
+ * Put a block back the way an earlier version had it. The text it has now is
+ * kept first, so a restore can itself be undone. A deleted block is made again
+ * with the description it had. Returns null when there is no such version.
+ */
+export function restoreBlockVersion(id: number, meta?: BlockWriteMeta): MemoryBlock | null {
+  const version = getBlockVersion(id);
+  if (!version) return null;
+  const restored = getDb().transaction(() => {
+    const identity = resolveBlockIdentity(version.scope, version.label, true)!;
+    const existing = getBlockExact(identity.scope, identity.canonical_label);
+    writeBlock(
+      identity.scope,
+      identity.canonical_label,
+      version.content,
+      existing ? undefined : version.description ?? undefined,
+      { op: 'restore', actor: meta?.actor },
+    );
+    return identity;
+  })();
+  receipt(
+    'memory.restore',
+    restored.scope,
+    restored.canonical_label,
+    `Restored the block to how it stood before the ${version.op} of ${version.created_at} (${version.content.length} chars).`,
+    meta,
+    { version_id: version.id, block_chars: version.content.length },
+  );
+  return getBlockExact(restored.scope, restored.canonical_label);
+}
+
+const SHELF_DESCRIPTION_CHARS = 180;
+
+// One line per shelved block: enough to know what it holds and how to open it.
+//
+// Like the self-knowledge section this sits inside the core-memory span AHEAD
+// of the first block, under a heading that is not a block heading, so the
+// readers that pull blocks back out of a session document skip it
+// (heartbeat/block-drift.ts parseInjectedBlocks).
+function renderShelfIndex(shelved: MemoryBlock[]): string {
+  if (shelved.length === 0) return '';
+  let out =
+    '## On the shelf\n' +
+    'These blocks are yours too, but they are not carried in full: each line below says what one holds. ' +
+    'When its subject comes up, open it with core_memory_view (give its scope and label) before you answer from memory. ' +
+    'You can append to one without opening it.\n';
+  for (const block of shelved) {
+    const about = (block.description ?? '').replace(/\s+/g, ' ').trim();
+    const shortAbout = about.length > SHELF_DESCRIPTION_CHARS ? about.slice(0, SHELF_DESCRIPTION_CHARS).trimEnd() + '…' : about;
+    const day = (block.updated_at ?? '').slice(0, 10);
+    out += `- [${block.scope}] ${JSON.stringify(block.label)}${shortAbout ? ` — ${shortAbout}` : ''}`;
+    out += ` (${block.content.length} chars${day ? `, updated ${day}` : ''})\n`;
+  }
+  return out + '\n';
+}
+
 // Format blocks for system prompt injection.
 // scopes should be ['shared', ...companion slugs active in the thread].
+//
+// Carried blocks ride in full. Shelved blocks ('on_demand', migrations/053)
+// ride as one index line each.
 export function formatBlocksForPrompt(scopes: string[]): string {
   const blocks = getBlocksForScopes(scopes);
   if (blocks.length === 0) return '';
+  const carried = blocks.filter(isCarried);
+  const shelved = blocks.filter((block) => !isCarried(block));
 
   let output = '\n<core-memory>\n';
   output +=
@@ -367,7 +588,10 @@ export function formatBlocksForPrompt(scopes: string[]): string {
     "Blocks scoped 'shared' are visible to every companion; blocks scoped to a companion slug belong to that companion alone. " +
     'Keep them current — when you learn something durable, write it down. ' +
     'The core-memory-label-json comment carries the exact label; descriptions are separate and are never part of the label.\n\n';
-  for (const block of blocks) {
+  // Both ahead of the first block on purpose: see renderSelfKnowledgeForPrompt.
+  output += renderSelfKnowledgeForPrompt(scopes);
+  output += renderShelfIndex(shelved);
+  for (const block of carried) {
     output += `## [${block.scope}] ${block.label}\n`;
     output += `<!-- core-memory-label-json: ${JSON.stringify(block.label)} -->\n`;
     if (block.description) output += `<!-- ${block.description} -->\n`;
@@ -430,6 +654,10 @@ export function formatBlocksForExtractionPrompt(blocks: Array<{
   ].join('\n')).join('\n\n');
 }
 
+// The shared block about the person the companions live with.
+export const HUMAN_BLOCK_LABEL = 'human';
+const HUMAN_BLOCK_DESCRIPTION = 'Information about the user, shared across companions';
+
 // Seed default blocks for a brand-new installation
 export function seedDefaultBlocks(
   userName: string,
@@ -438,11 +666,22 @@ export function seedDefaultBlocks(
   const existing = getAllBlocks();
   if (existing.length > 0) return;
 
-  setBlock(SHARED_SCOPE, 'human', `Name: ${userName}`, 'Information about the user, shared across companions');
+  setBlock(SHARED_SCOPE, HUMAN_BLOCK_LABEL, `Name: ${userName}`, HUMAN_BLOCK_DESCRIPTION);
   setBlock(SHARED_SCOPE, 'status', '', 'Current status, ongoing projects, open questions');
   for (const c of companions) {
     setBlock(c.slug, 'persona', `I am ${c.display_name}.`, `${c.display_name}'s self-authored persona and continuity`);
   }
+}
+
+// Non-destructive: make sure the shared block about the user exists. The seed
+// above only runs on an empty install, so a house whose blocks predate it (or
+// that lost the block since) never got one, and the Archivist had nowhere to
+// file what it learned about the person. An existing block, under its label or
+// an alias, is left exactly as it is. Returns true when it created the block.
+export function ensureHumanBlock(userName: string): boolean {
+  if (getBlock(SHARED_SCOPE, HUMAN_BLOCK_LABEL)) return false;
+  setBlock(SHARED_SCOPE, HUMAN_BLOCK_LABEL, `Name: ${userName}`, HUMAN_BLOCK_DESCRIPTION);
+  return true;
 }
 
 // Non-destructive: make sure every companion has its own persona block

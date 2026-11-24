@@ -3,6 +3,7 @@ import multer from 'multer';
 import rateLimit from 'express-rate-limit';
 import { getDb } from '../services/db.js';
 import { saveFile, getFile, deleteFile, listFiles } from '../services/files.js';
+import { referencedFileIds } from '../services/file-references.js';
 
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -44,20 +45,42 @@ export function createFilesRoutes(): Router {
     try {
       const files = listFiles();
 
-      // Scan messages for fileId references to determine in-use status
+      // A file is in use if anything in the house still points at it. Live
+      // messages are read on their own so a file attached only to a deleted
+      // message can still be cleaned. Every other table is read whole: a fixed
+      // list of tables missed a new feature's thumbnails the day it shipped,
+      // and "Clean orphans" deletes whatever this calls unused, so a new feature
+      // that stores files must never fall through. The audit log only records
+      // that something happened, so a mention there is not a use. Embedding
+      // tables hold vectors, never file ids.
+      // Every stored file id comes from crypto.randomUUID(), a v4 uuid, so it
+      // always contains "-4". Text without it cannot point at a file; skipping
+      // it before the regex roughly halves the scan on the live house.
       const db = getDb();
-      const rows = db.prepare('SELECT metadata FROM messages WHERE metadata IS NOT NULL AND deleted_at IS NULL').all() as Array<{ metadata: string }>;
-      const usedFileIds = new Set<string>();
-      for (const row of rows) {
-        try {
-          const meta = JSON.parse(row.metadata);
-          if (meta.fileId) usedFileIds.add(meta.fileId);
-        } catch { /* skip */ }
+      const known = new Set(files.map(f => f.fileId.toLowerCase()));
+      const SKIP = new Set(['messages', 'audit_log', 'sqlite_sequence']);
+      function* texts(): Generator<string | null> {
+        for (const row of db.prepare("SELECT metadata, content FROM messages WHERE deleted_at IS NULL AND (instr(metadata, '-4') > 0 OR instr(content, '-4') > 0)").iterate() as Iterable<{ metadata: string | null; content: string | null }>) {
+          yield row.metadata;
+          yield row.content;
+        }
+        const tables = db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'").all() as Array<{ name: string }>;
+        for (const { name } of tables) {
+          if (SKIP.has(name) || name.endsWith('_embeddings')) continue;
+          let rows: Iterable<unknown[]>;
+          try {
+            rows = db.prepare(`SELECT * FROM "${name.replace(/"/g, '""')}"`).raw().iterate() as Iterable<unknown[]>;
+          } catch { continue; }
+          for (const row of rows) {
+            for (const cell of row) if (typeof cell === 'string' && cell.length >= 36 && cell.includes('-4')) yield cell;
+          }
+        }
       }
+      const usedFileIds = referencedFileIds(texts(), known);
 
       const enriched = files.map(f => ({
         ...f,
-        inUse: usedFileIds.has(f.fileId),
+        inUse: usedFileIds.has(f.fileId.toLowerCase()),
       }));
 
       const totalSize = files.reduce((sum, f) => sum + f.size, 0);

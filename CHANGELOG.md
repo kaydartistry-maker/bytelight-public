@@ -6,6 +6,25 @@ byte-light is a fork of [Resonant](https://github.com/codependentai/resonant), t
 
 ---
 
+## 2026-11-24 — one glass for the whole house, a Closet for your looks, and a Mind console
+
+- **One glass for the whole house.** Every surface (chat, cards, sheets, the dock) is made of the same glass, and a Glass card in Settings drives it: tint, opacity, frost, border, glow and text-on-glass. Frost 0 keeps the tint, chat chips stay readable on any wallpaper, and an optional painted frost uses one blurred still of your wallpaper instead of live blur.
+- **Texture mode.** Upload an image and it becomes the glass everywhere, faded to your chosen strength, with a fit setting.
+- **The Type card.** Real fonts by role (titles and text, with optional overrides for messages and more), your own font uploads, and guard rails so a font that won't load says why. Fraunces now ships with its OFL license file.
+- **Moving wallpaper.** A video, GIF or animated WebP can play behind the house; your still picture and slideshow stay saved underneath.
+- **The Closet.** Save whole looks and swap between them like outfits, share a look as a `.bllook` file, and import looks other people send (off by default; imports are checked so a look can never carry anything but look settings).
+- **Your logo and nameplate** on Home and under the lock-screen clock, and as the tab icon where the browser allows.
+- **Settings.** Appearance is grouped into three collapsible sections (The Look / You / Home & Lock), Live Preview gets its own framed square with real dock icons, a text colour pick, and **Apply is the real save**: leaving Settings with changes asks first, and Discard puts back exactly what you had.
+- **App-settings sync.** Your look, house settings, fonts, Closet and moving wallpaper follow you to another device through the house (new `/api/app-settings` routes). Look files stream from disk, can seek, and are never served as a page on the house's address.
+- **Memory history.** Every core-memory block keeps what it said before a destructive write (migration 052): see earlier versions, restore one, and bring back deleted blocks from the Memory screen.
+- **The shelf.** A block can be kept "on the shelf" (migration 053): it stays out of the session document until a companion opens it with `core_memory_view` (scope + label, or `sc memory view <scope> <label>`); the core memory lists what is on the shelf.
+- **A page about the person.** The house always keeps a shared `human` block, and the Archivist knows what belongs on it.
+- **Archivist proposals go to the companions.** The operator can still read, file or drop any of them, but is never a required approver, and unclaimed proposals stop waiting in the Review list.
+- **Self-knowledge.** Accepted entries can ride in the session document beside the memory blocks (off by default, a switch on the Self-Knowledge screen), and a `self_knowledge` belt tool lists, proposes, accepts and dismisses entries.
+- **The Mind console.** The Mind app becomes a console with rooms (recent, search, feelings, entities, threads, journals, patterns, tensions, proposals, knowledge, identity, soul, dreams, health and more) onto the companions' external brain. Its buttons wait for the brain's real answer, isolated things can be linked or deliberately left alone, and two hand-pressed sends put a brain thread on the Command Center or a feeling, note or journal entry into the home chat as a quoted card.
+- **Files.** The orphan check looks for a file's id in every table, not a fixed list, so "Clean orphans" never deletes a file a newer feature still uses.
+- **Fixes.** A Bells save the house refuses now says so; a picked photo is never dropped in silence; and the GIF maker's *Make it fit* squeezes an over-limit render under Discord's size limit.
+
 ## 2026-11-18 — the Spellbook: drop a picture, cast yourselves into it
 
 - **The Spellbook lives in the Studio.** Drop any picture and the house reads it as a *spell*: the scene, the pose, the light, the wardrobe, with the people written as `[Character 1]`, `[Character 2]` so anyone can step in. Pick a cast from your reference drawers (up to four) and it renders with your faces in it. Every cast is fitted to the people actually in it, one reference picture each, so parts and wardrobe land on the right person, and a recast with more or fewer people rewrites the scene for all of them.

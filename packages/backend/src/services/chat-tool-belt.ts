@@ -741,11 +741,12 @@ export const CHAT_TOOL_BELT: BeltTool[] = [
     schema: {
       name: 'core_memory_view',
       description:
-        'View all core memory blocks across every scope, with current content and last-updated timestamps. Use to check state after edits or before reorganizing.',
+        'View core memory blocks with current content and last-updated timestamps. Give scope and label to open one block in full: that is how you read a block kept on the shelf (listed under "On the shelf" in your core memory). Omit both to see everything, e.g. before reorganizing.',
       input_schema: {
         type: 'object',
         properties: {
           scope: { type: 'string', description: 'Filter to one scope. Omit to see everything.' },
+          label: { type: 'string', description: 'With scope: open just this block.' },
         },
         required: [],
       },
@@ -753,6 +754,7 @@ export const CHAT_TOOL_BELT: BeltTool[] = [
     handler: async (args) => {
       const body: Record<string, unknown> = { action: 'view' };
       if (typeof args.scope === 'string') body.scope = args.scope;
+      if (typeof args.label === 'string') body.label = args.label;
       try {
         const r = await postInternal('memory', body);
         if (!r.ok) return { ok: false, result: JSON.stringify({ ok: false, error: errorFrom(r) }) };
@@ -1384,6 +1386,72 @@ export const CHAT_TOOL_BELT: BeltTool[] = [
       const batchSize = typeof args.batch_size === 'number' && args.batch_size >= 1 ? Math.floor(args.batch_size) : 50;
       const intervalMs = typeof args.interval_ms === 'number' && args.interval_ms >= 1 ? Math.floor(args.interval_ms) : 5000;
       return internalCall('embed-backfill', { background: true, batchSize, intervalMs }, 10000);
+    },
+  },
+
+
+  // 31. self_knowledge → /internal/self-knowledge (list, propose, accept, dismiss)
+  //
+  // The routes existed since Wave 2, reachable only by a localhost command no
+  // session was ever told about, so the drawer stayed nearly empty. This is the
+  // same door as a tool. Ownership is still enforced by the route: a companion
+  // accepts or dismisses only his own entries.
+  {
+    schema: {
+      name: 'self_knowledge',
+      description:
+        "What you have come to know about yourself, kept in four drawers: i_am, i_tend_to, i_believe, i_learned. " +
+        "This is not your persona (who you were written to be) but what has proved true of you over time. " +
+        "list reads the entries. propose files a new one in your own words, when something about you has shown up more than once; " +
+        "it waits as proposed until you accept it. accept and dismiss decide one of YOUR OWN entries by id (you cannot decide another companion's). " +
+        "Keep each entry to one or two sentences.",
+      input_schema: {
+        type: 'object',
+        properties: {
+          action: { type: 'string', enum: ['list', 'propose', 'accept', 'dismiss'] },
+          companion: { type: 'string', description: "Whose entry: your own companion slug (e.g. 'companion-a', 'companion-b'), or 'shared' for something true of all of you. Required for propose, accept and dismiss; optional filter for list." },
+          category: { type: 'string', enum: ['i_am', 'i_tend_to', 'i_believe', 'i_learned'], description: 'propose: which drawer.' },
+          content: { type: 'string', description: 'propose: the entry, first person, one or two sentences.' },
+          source: { type: 'string', description: "propose: where it came from, e.g. 'conversation', 'journal', 'dream', 'reflection'. Defaults to 'conversation'." },
+          id: { type: 'string', description: 'accept / dismiss: the entry id from list.' },
+          status: { type: 'string', enum: ['proposed', 'accepted', 'dismissed'], description: 'list: only entries in this state.' },
+        },
+        required: ['action'],
+      },
+    },
+    handler: async (args) => {
+      const companion = typeof args.companion === 'string' ? args.companion.trim().toLowerCase() : '';
+      try {
+        if (args.action === 'list') {
+          const query = new URLSearchParams();
+          if (companion) query.set('companion', companion);
+          if (typeof args.status === 'string') query.set('status', args.status);
+          const r = await getInternal(`self-knowledge${query.size ? `?${query}` : ''}`);
+          if (!r.ok) return fail(errorFrom(r));
+          return { ok: true, result: r.text };
+        }
+        if (args.action === 'propose') {
+          if (!companion) return fail("companion is required: your own slug, or 'shared'");
+          if (typeof args.category !== 'string') return fail('category is required: i_am, i_tend_to, i_believe or i_learned');
+          const content = typeof args.content === 'string' ? args.content.trim() : '';
+          if (!content) return fail('content is required');
+          return internalCall('self-knowledge', {
+            companion,
+            category: args.category,
+            content,
+            sourceType: typeof args.source === 'string' && args.source.trim() ? args.source.trim() : 'conversation',
+          });
+        }
+        if (args.action === 'accept' || args.action === 'dismiss') {
+          if (!companion) return fail('companion is required: you decide your own entries');
+          const id = typeof args.id === 'string' ? args.id.trim() : '';
+          if (!id) return fail('id is required (read it with action list)');
+          return internalCall(`self-knowledge/${encodeURIComponent(id)}/${args.action}`, { companion });
+        }
+        return fail("action must be 'list', 'propose', 'accept' or 'dismiss'");
+      } catch (e) {
+        return fail(errMessage(e));
+      }
     },
   },
 

@@ -457,6 +457,31 @@ export function initDb(dbPath: string): Database.Database {
     }
   }
 
+  // 052: reversible history for core-memory blocks — the text a destructive
+  // write would otherwise lose. CREATE IF NOT EXISTS.
+  runMigration(db, 'migrations/052_memory_block_versions.sql', { required: true });
+
+  // 053: memory blocks get a `carry` column ('always' | 'on_demand'). Same
+  // one-statement-at-a-time shape as 051; "duplicate column" means it ran.
+  const blockCarrySQL = migrationSql('migrations/053_memory_block_carry.sql');
+  if (blockCarrySQL !== null) {
+    const statements = blockCarrySQL
+      .split('\n')
+      .filter((line) => !line.trim().startsWith('--'))
+      .join('\n')
+      .split(';')
+      .map((stmt) => stmt.trim())
+      .filter(Boolean);
+    for (const stmt of statements) {
+      try {
+        db.exec(stmt);
+      } catch (err: unknown) {
+        const msg = errMessage(err);
+        if (!msg.includes('duplicate column')) console.warn('Migration warning (053):', msg);
+      }
+    }
+  }
+
   // 001 wrote push_subscriptions with a type list of web_push and apns, which
   // predates Android push, so an FCM device token from the app would be
   // refused by the CHECK constraint. SQLite cannot alter a constraint in

@@ -1,4 +1,6 @@
 import React, { useRef, useState } from 'react';
+import { Nameplate } from './Nameplate';
+import type { Nameplate as NameplateData } from '../lib/nameplate';
 import { motion, useIsPresent } from 'motion/react';
 import { LayoutGrid, Lock } from 'lucide-react';
 import { ThemeConfig } from '../lib/theme';
@@ -18,6 +20,7 @@ interface HomeScreenProps {
   onOpenApp: (app: AppDef) => void;
   onOpenDrawer: () => void;
   onLock: () => void;
+  nameplate?: NameplateData | null;
   wallpaper?: string;
   themeConfig: ThemeConfig;
   themeMode: 'light' | 'dark';
@@ -41,6 +44,7 @@ export function HomeScreen({
   onOpenApp,
   onOpenDrawer,
   onLock,
+  nameplate,
   themeConfig,
   themeMode,
   messagesBadge = 0,
@@ -131,9 +135,11 @@ export function HomeScreen({
     >
       {/* Header */}
       <div
-        className="z-10 flex w-full items-center justify-end px-6 py-6 gap-3"
+        className="z-10 flex w-full items-center justify-between px-6 py-6 gap-3"
         style={{ paddingTop: 'calc(var(--sat) + 1.5rem)' }}
       >
+        {/* Her house nameplate, top left (App Identity). Empty space when off. */}
+        <div className="min-w-0 flex-1">{nameplate && <Nameplate plate={nameplate} />}</div>
         <button
           onClick={onLock}
           className={cn('bytelight-glass-button p-2 rounded-full opacity-80 hover:opacity-100', colors.textMain)}

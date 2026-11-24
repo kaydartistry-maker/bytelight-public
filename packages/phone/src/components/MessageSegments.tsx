@@ -136,8 +136,7 @@ export function MessageSegments({ segments, themeConfig, themeMode, customEmojis
             return (
               <div
                 key={`recycle-${i}`}
-                className={cn('my-0.5 flex items-center gap-1.5 self-start rounded-full border px-2.5 py-1 text-[11px] opacity-75', colors.panelBorder)}
-                style={{ background: 'rgba(127,127,127,0.08)' }}
+                className={cn('bytelight-glass-chip bytelight-chip-ink-75 my-0.5 flex items-center gap-1.5 self-start rounded-full border px-2.5 py-1 text-[11px]', colors.panelBorder)}
               >
                 <RefreshCw size={11} className="shrink-0" />
                 <span>Session recycled — re-primed with recent history</span>
@@ -149,8 +148,7 @@ export function MessageSegments({ segments, themeConfig, themeMode, customEmojis
             return (
               <div
                 key={`timeout-${i}`}
-                className={cn('my-0.5 flex items-center gap-1.5 self-start rounded-full border px-2.5 py-1 text-[11px] opacity-75', colors.panelBorder)}
-                style={{ background: 'rgba(127,127,127,0.08)' }}
+                className={cn('bytelight-glass-chip bytelight-chip-ink-75 my-0.5 flex items-center gap-1.5 self-start rounded-full border px-2.5 py-1 text-[11px]', colors.panelBorder)}
               >
                 <RefreshCw size={11} className="shrink-0" />
                 <span>Reply window closed before my final line — it arrived with the next turn</span>
@@ -166,8 +164,7 @@ export function MessageSegments({ segments, themeConfig, themeMode, customEmojis
           return (
             <div
               key={`think-${i}`}
-              className={cn('my-0.5 rounded-lg border', colors.panelBorder)}
-              style={{ background: 'rgba(127,127,127,0.06)' }}
+              className={cn('bytelight-glass-chip my-0.5 rounded-lg border', colors.panelBorder)}
             >
               <button
                 onClick={(e) => { e.stopPropagation(); toggleThinking(i); }}

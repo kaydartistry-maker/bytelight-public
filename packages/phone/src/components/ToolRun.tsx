@@ -83,8 +83,7 @@ export function ToolRun({ tools, themeConfig, themeMode, live = false }: ToolRun
     <div className={cn('my-0.5 flex flex-col', open ? 'self-stretch' : 'self-start')}>
       <button
         onClick={(e) => { e.stopPropagation(); setOpen((o) => !o); }}
-        className={cn('flex items-center gap-1.5 self-start rounded-full border px-2.5 py-1 text-[11px] transition-opacity', colors.panelBorder, open ? 'opacity-90' : 'opacity-65 hover:opacity-90')}
-        style={{ background: 'rgba(127,127,127,0.08)' }}
+        className={cn('bytelight-glass-chip flex items-center gap-1.5 self-start rounded-full border px-2.5 py-1 text-[11px] transition-colors', colors.panelBorder, open ? 'bytelight-chip-ink-90' : 'bytelight-chip-ink-65')}
         aria-expanded={open}
       >
         <span className="flex items-center gap-0.5">
@@ -97,7 +96,7 @@ export function ToolRun({ tools, themeConfig, themeMode, live = false }: ToolRun
       </button>
 
       {open && (
-        <div className={cn('mt-1 flex flex-col overflow-hidden rounded-xl border', colors.panelBorder)} style={{ background: 'rgba(127,127,127,0.06)' }}>
+        <div className={cn('bytelight-glass-chip mt-1 flex flex-col overflow-hidden rounded-xl border', colors.panelBorder)}>
           {tools.map((t, i) => {
             const family = toolFamily(t.toolName);
             const expanded = openTools.has(i);

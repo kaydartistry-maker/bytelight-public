@@ -854,6 +854,34 @@ export function withAccentOverride(config: ThemeConfig, accent?: string | null, 
   };
 }
 
+/** Her Text color pick (same behavior as classic's Appearance → Text):
+ *  one hex sets the main text, the muted shade is derived from it so the
+ *  hierarchy stays readable. Screens consume class strings, so the classes
+ *  point at root vars that App sets from the hex (textOverrideVars). */
+export function withTextOverride(config: ThemeConfig, text?: string | null): ThemeConfig {
+  if (!text) return config;
+  const textMain = 'text-[var(--bl-text-override)]';
+  const textMuted = 'text-[var(--bl-text-override-muted)]';
+  return {
+    ...config,
+    light: { ...config.light, textMain, textMuted },
+    dark: { ...config.dark, textMain, textMuted },
+  };
+}
+
+/** The real colors behind withTextOverride's vars (muted = 60%, as classic). */
+export function textOverrideColors(text: string): { main: string; muted: string } {
+  return { main: text, muted: applyOpacity(text, '60') };
+}
+
+/** Accent + text overrides together — the one way every screen builds its theme. */
+export function activeThemeFor(theme: { id: ThemeId; accentOverride?: string | null; accentPalette?: string | null; textOverride?: string | null }): ThemeConfig {
+  return withTextOverride(
+    withAccentOverride(THEMES[theme.id] || THEMES['monochrome'], theme.accentOverride, theme.accentPalette),
+    theme.textOverride,
+  );
+}
+
 
 /** BL's accent registry — copied verbatim from main
  *  (frontend/src/lib/stores/theme.svelte.ts ACCENT_PALETTES). */

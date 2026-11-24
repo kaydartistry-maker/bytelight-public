@@ -223,6 +223,9 @@ export function GifApp({ onClose, themeConfig, themeMode, embedded = false, acti
   // the background cutout do not.
   const gifToolsReady = gifTools.kind === 'ready';
   const [outputSize, setOutputSize] = useState<{ kb: number; ok: boolean; limitKb?: number } | null>(null);
+  // What "Make it fit" had to give up, as the house reports it (fewer colors,
+  // more lossy), shown under the result so nothing is degraded silently.
+  const [fitNotes, setFitNotes] = useState<string[]>([]);
   const [preserveColorPreset, setPreserveColorPreset] = useState(false);
   const [playing, setPlaying] = useState(false);
   const [previewFrame, setPreviewFrame] = useState(0);
@@ -507,6 +510,7 @@ export function GifApp({ onClose, themeConfig, themeMode, embedded = false, acti
     setOutputUrl(null);
     setGifOutput({ kind: 'none' });
     setOutputSize(null);
+    setFitNotes([]);
     setOptimizeStats(null);
     setOutputWidth(undefined);
     setOutputHeight(undefined);
@@ -523,6 +527,7 @@ export function GifApp({ onClose, themeConfig, themeMode, embedded = false, acti
     setError(null);
     setOutputUrl(null);
     setOutputSize(null);
+    setFitNotes([]);
 
     try {
       const formData = new FormData();
@@ -1175,13 +1180,20 @@ export function GifApp({ onClose, themeConfig, themeMode, embedded = false, acti
   }, [sessionId, frames, selectedFrames, chromaColor, chromaTolerance, chromaBlend, greenScreen]);
 
   // Create GIF
-  const createGif = useCallback(async () => {
+  // `fit`: the "Make it fit" pass. Same frames and settings, but the house is
+  // allowed to cut colors and raise lossy (its auto-fit ladder) until the file
+  // is under the limit. The Discord preset otherwise reads as keep-colors on
+  // the house, which forbids exactly that, so the pass says so explicitly.
+  const createGif = useCallback(async (opts?: { fit?: boolean }) => {
     if (frames.length === 0) return;
+    const fitPass = opts?.fit === true;
+    const targetBytes = preserveColorPreset ? discordLaneFor(outputWidth, outputHeight).maxBytes : 256 * 1024;
 
     setLoading(true);
     setError(null);
     setOutputUrl(null);
     setOutputSize(null);
+    setFitNotes([]);
 
     try {
       const selectedFrameFiles = Array.from(selectedFrames)
@@ -1210,6 +1222,7 @@ export function GifApp({ onClose, themeConfig, themeMode, embedded = false, acti
           lossy: preserveColorPreset ? undefined : (lossyLevel > 0 ? lossyLevel : undefined),
           colors: preserveColorPreset ? undefined : (colorCount < 256 ? colorCount : undefined),
           dither: preserveColorPreset ? false : dither,
+          ...(fitPass ? { maxBytes: targetBytes, autoFit: true, preserveColors: false } : {}),
           text: overlayText.trim() ? {
             content: overlayText,
             position: textPosition,
@@ -1228,8 +1241,11 @@ export function GifApp({ onClose, themeConfig, themeMode, embedded = false, acti
       }
 
       let data = await res.json();
+      if (fitPass && Array.isArray(data.adjustments)) setFitNotes(data.adjustments as string[]);
 
-      if (preserveColorPreset) {
+      // A fitted render is already under the limit; running the preset's lossy
+      // pass over it again would only cost more quality.
+      if (preserveColorPreset && !(fitPass && data.fitMet === true)) {
         const optimized = await apiFetch(`/api/gif/optimize/${sessionId}/${data.filename}`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -1261,6 +1277,7 @@ export function GifApp({ onClose, themeConfig, themeMode, embedded = false, acti
 
       setOutputUrl(data.url);
       if (sessionId) setGifOutput(outputFromResponse(sessionId, data));
+      if (fitPass && data.fitMet === true) setOptimizeStats(null);
       setOutputSize({
         kb: data.sizeKb,
         ok: data.discordOk,
@@ -2695,7 +2712,7 @@ export function GifApp({ onClose, themeConfig, themeMode, embedded = false, acti
               </button>
             </div>
             <button
-              onClick={createGif}
+              onClick={() => void createGif()}
               disabled={loading || selectedFrames.size === 0 || !gifToolsReady}
               className={cn("w-full py-3 rounded-xl font-semibold text-sm flex items-center justify-center gap-2 disabled:opacity-50")}
               style={{ backgroundColor: colors.accent, color: 'var(--bytelight-on-accent)' }}
@@ -2824,10 +2841,24 @@ export function GifApp({ onClose, themeConfig, themeMode, embedded = false, acti
                 {gifOutput.keep.kind === 'failed' && <p className="text-xs text-center text-red-400">{gifOutput.keep.error}</p>}
               </>
             )}
+            {fitNotes.length > 0 && (
+              <p className={cn("text-xs text-center", colors.textMuted)}>{fitNotes.join(' · ')}</p>
+            )}
             {outputSize && !outputSize.ok && (
-              <p className={cn("text-xs text-center", colors.textMuted)}>
-                Adjust optimization settings above and create again to reduce size
-              </p>
+              <>
+                <button
+                  onClick={() => void createGif({ fit: true })}
+                  disabled={loading}
+                  className="w-full py-2.5 rounded-xl font-semibold text-sm flex items-center justify-center gap-2 disabled:opacity-50"
+                  style={{ background: colors.accent, color: 'var(--bytelight-on-accent)' }}
+                  title="Render these frames again, letting the house cut colors and raise lossy until it is under the limit"
+                >
+                  Make it fit {outputSize.limitKb ?? 256}KB
+                </button>
+                <p className={cn("text-xs text-center", colors.textMuted)}>
+                  Make it fit trades some color and detail for size, and says what it changed. Or adjust the settings above and create again.
+                </p>
+              </>
             )}
           </div>
         )}

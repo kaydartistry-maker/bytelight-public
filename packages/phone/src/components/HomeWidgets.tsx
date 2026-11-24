@@ -39,6 +39,9 @@ export interface WidgetCompanion {
 
 const surface: React.CSSProperties = {
   background: 'var(--bytelight-surface)',
+  // The house's one frost (App.tsx --bl-glass-blur), same as the dock.
+  backdropFilter: 'var(--bl-glass-blur)',
+  WebkitBackdropFilter: 'var(--bl-glass-blur)',
   border: '1px solid var(--bytelight-hairline)',
   color: 'var(--bytelight-text)',
 };

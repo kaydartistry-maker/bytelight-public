@@ -17,13 +17,16 @@ import {
   LogOut,
   UserRound,
   Trash2,
+  MessageCircle,
+  BookOpen,
+  Music,
 } from "lucide-react";
 import { AppShell } from "./AppShell";
 import Cropper from "react-easy-crop";
 import { PushNotifications } from "@capacitor/push-notifications";
 import { Capacitor } from "@capacitor/core";
 import { AppTheme, ThemeId, ThemeMode, AppSettings } from "../types";
-import { THEMES, themeRadiusPx, withAccentOverride, ACCENT_PALETTES, TYPOGRAPHY_PRESETS, fontStack } from "../lib/theme";
+import { THEMES, themeRadiusPx, activeThemeFor, ACCENT_PALETTES, TYPOGRAPHY_PRESETS, fontStack } from "../lib/theme";
 import { APPS, migrateAppIds } from "../lib/apps";
 import { noteColorsForAccent } from '../lib/note-colors';
 import { LockPreview } from "./LockClock";
@@ -39,6 +42,12 @@ import { SetupSync } from "./SetupSync";
 import { AppUpdate } from "./AppUpdate";
 import { SEND_ICONS, DEFAULT_SEND_ICON_ID } from "../lib/sendIcons";
 import { Toggle } from "./Toggle";
+import { GlassCard } from "./GlassCard";
+import { TypeCard } from "./TypeCard";
+import { ClosetCard } from "./ClosetCard";
+import { makeLogo } from "../lib/nameplate";
+import { MovingWallpaperRow } from "./MovingWallpaperRow";
+import { SettingsGroup } from "./SettingsGroup";
 import { apiFetch } from "../bytelight";
 import { subscribeWebPush, unsubscribeWebPush, sendTestPush, webPushSupported } from "../bytelight/push";
 
@@ -66,6 +75,8 @@ interface SettingsDashboardProps {
     settings: Partial<Omit<AppSettings, "theme" | "contacts">>,
   ) => void;
   onClose: () => void;
+  /** Slice 7: the real save. Keeps every change made since Settings opened. */
+  onApply?: () => void;
 }
 
 export const SettingsDashboard: React.FC<SettingsDashboardProps> = ({
@@ -74,10 +85,11 @@ export const SettingsDashboard: React.FC<SettingsDashboardProps> = ({
   onThemeChange,
   onSettingsChange,
   onClose,
+  onApply,
 }) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const avatarInputRef = useRef<HTMLInputElement>(null);
-  const activeTheme = withAccentOverride(THEMES[theme.id] || THEMES["monochrome"], theme.accentOverride, theme.accentPalette);
+  const activeTheme = activeThemeFor(theme);
   const colors = activeTheme[theme.mode];
 
   // These five used to be five pale hex values written into this file, saved on
@@ -523,1315 +535,1313 @@ export const SettingsDashboard: React.FC<SettingsDashboardProps> = ({
         <div className="space-y-8">
           {activeTab === "appearance" && (
             <>
-              {/* Live Preview — BL's appearance panel, first thing: the vibe
-                  check. Bubbles + buttons drawn with the live theme/skin. */}
-              <section className={cn("space-y-3 p-4 rounded-2xl border backdrop-blur-md", colors.panelBg, colors.panelBorder)}>
-                <div className="flex items-center justify-between">
-                  <h3 className={cn("micro-label", colors.accentText)}>Live Preview</h3>
-                  <span className="h-2 w-2 rounded-full" style={{ background: resolvedAccent }} />
-                </div>
-                <div className="space-y-2">
-                  <div className="flex justify-start">
-                    <div data-user="false" className={cn("bytelight-message-bubble border px-3.5 py-2 rounded-[var(--shape-bubble)] rounded-tl-none text-[13px]", colors.compBubbleBg, colors.compBubbleText, colors.panelBorder)}>
-                      How's the vibe looking?
-                    </div>
-                  </div>
-                  <div className="flex justify-end">
-                    <div data-user="true" className={cn("bytelight-message-bubble border px-3.5 py-2 rounded-[var(--shape-bubble)] rounded-tr-none text-[13px]", colors.userBubbleBg, colors.userBubbleText, colors.panelBorder)}>
-                      Cosmic. ✨
-                    </div>
-                  </div>
-                </div>
-                <div className="flex gap-2 pt-1">
-                  <button className="bytelight-on-accent rounded-full px-4 py-1.5 text-[12px] font-bold" style={{ background: resolvedAccent }}>
-                    Primary
-                  </button>
-                  <button className={cn("rounded-full border px-4 py-1.5 text-[12px] font-bold", colors.panelBorder, colors.textMain)}>
-                    Ghost
-                  </button>
-                </div>
-              </section>
+              {/* Slice 2b: three collapsible groups (Nov 21). Cards are moved, not changed. */}
+              <SettingsGroup id="look" title="The Look" summary="Wallpaper, glass, colours, skin, type" colors={colors} defaultOpen>
+                  {/* Slice 6: the Closet, top of The Look. */}
+                  <ClosetCard theme={theme} onThemeChange={onThemeChange} colors={colors} accent={resolvedAccent} allowImport={appSettings.allowLookImport === true} onAllowImport={(on) => onSettingsChange({ allowLookImport: on })} />
 
-              {/* Appearance Mode */}
-              <section className={cn("space-y-4 p-4 rounded-2xl border backdrop-blur-md", colors.panelBg, colors.panelBorder)}>
-                <div className="grid grid-cols-2 gap-4">
-                  <button
-                    onClick={() => onThemeChange({ mode: "light" })}
-                    className={cn(
-                      "flex items-center justify-center gap-2 px-4 py-2.5 rounded-2xl border transition-all duration-500",
-                      theme.mode === "light"
-                        ? `border-transparent scale-105`
-                        : `${colors.panelBg} ${colors.panelBorder} ${colors.accentText} hover:opacity-80`,
-                    )}
-                    style={
-                      theme.mode === "light"
-                        ? {
-                            backgroundColor:
-                              theme.id === "monochrome" || theme.id === "custom"
-                                ? "#000000"
-                                : THEMES[theme.id].light.accent,
-                            color: "#FFFFFF",
-                          }
-                        : undefined
-                    }
-                  >
-                    <Sun size={16} strokeWidth={1.5} />
-                    <span className="text-[11px] font-bold uppercase tracking-widest">
-                      Daylight
-                    </span>
-                  </button>
-                  <button
-                    onClick={() => onThemeChange({ mode: "dark" })}
-                    className={cn(
-                      "flex items-center justify-center gap-2 px-4 py-2.5 rounded-2xl border transition-all duration-500",
-                      theme.mode === "dark"
-                        ? `border-transparent scale-105`
-                        : `${colors.panelBg} ${colors.panelBorder} ${colors.accentText} hover:opacity-80`,
-                    )}
-                    style={
-                      theme.mode === "dark"
-                        ? {
-                            backgroundColor:
-                              theme.id === "monochrome" || theme.id === "custom"
-                                ? "#FFFFFF"
-                                : THEMES[theme.id].dark.accent,
-                            color: "#000000",
-                          }
-                        : undefined
-                    }
-                  >
-                    <Moon size={16} strokeWidth={1.5} />
-                    <span className="text-[11px] font-bold uppercase tracking-widest">
-                      Midnight
-                    </span>
-                  </button>
-                </div>
-              </section>
-
-              {/* Skin — BL: the atmosphere layer, its own section */}
-              <section className={cn("space-y-3 p-4 rounded-2xl border backdrop-blur-md", colors.panelBg, colors.panelBorder)}>
-                <h3 className={cn("micro-label", colors.accentText)}>Skin</h3>
-                <div className="flex gap-2">
-                  {([
-                    { id: "none", label: "Classic" },
-                    { id: "cosmos", label: "Cosmos" },
-                  ] as const).map((sk) => {
-                    const active = (theme.skin ?? "none") === sk.id;
-                    return (
-                      <button
-                        key={sk.id}
-                        onClick={() => onThemeChange({ skin: sk.id })}
-                        className={cn(
-                          "rounded-full border px-4 py-2 text-[11px] font-bold uppercase tracking-widest transition-all duration-300",
-                          colors.panelBorder,
-                          active ? cn(colors.accentText, "shadow-md") : cn(colors.textMuted, "opacity-70 hover:opacity-100"),
-                        )}
-                        style={active ? { background: resolvedAccent + "33" } : undefined}
-                      >
-                        {sk.label}
-                      </button>
-                    );
-                  })}
-                </div>
-              </section>
-
-              {/* Accent Color — BL's own section: Custom picker, Use palette,
-                  and the sixteen named accents (ACCENT_PALETTES, verbatim). */}
-              <section className={cn("space-y-3 p-4 rounded-2xl border backdrop-blur-md", colors.panelBg, colors.panelBorder)}>
-                <h3 className={cn("micro-label", colors.accentText)}>Accent Color</h3>
-                <div className="flex items-center gap-2">
-                  <label className={cn("flex cursor-pointer items-center gap-2 rounded-full border px-3 py-1.5 text-[11px] font-semibold", colors.panelBorder, colors.textMain)}>
-                    <span className="relative h-5 w-5 overflow-hidden rounded-md border border-white/20" style={{ background: theme.accentOverride || resolvedAccent }}>
-                      <input
-                        type="color"
-                        value={theme.accentOverride || resolvedAccent}
-                        onChange={(e) => onThemeChange({ accentOverride: e.target.value, accentPalette: null })}
-                        className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
-                      />
-                    </span>
-                    Custom
-                  </label>
-                  {(theme.accentOverride || theme.accentPalette) && (
-                    <button
-                      onClick={() => onThemeChange({ accentOverride: null, accentPalette: null })}
-                      className={cn("rounded-full border px-3 py-1.5 text-[11px] font-semibold opacity-80 hover:opacity-100", colors.panelBorder, colors.textMuted)}
-                    >
-                      Use palette
-                    </button>
-                  )}
-                </div>
-                <div className="flex flex-wrap gap-3 pt-1">
-                  {ACCENT_PALETTES.map((p) => {
-                    const active = theme.accentPalette === p.name && !theme.accentOverride;
-                    const swatch = p[theme.mode].main;
-                    return (
-                      <button
-                        key={p.name}
-                        onClick={() => onThemeChange({ accentPalette: p.name, accentOverride: null })}
-                        className="flex flex-col items-center gap-1"
-                        title={p.name}
-                      >
-                        <span
-                          className={cn("h-9 w-9 rounded-full border-2 transition-all", active ? "scale-110 border-white/70" : "border-transparent opacity-85 hover:opacity-100")}
-                          style={{ background: swatch, boxShadow: active ? `0 0 14px ${swatch}88` : undefined }}
-                        />
-                        <span className={cn("text-[9px] font-semibold uppercase tracking-wide", active ? colors.textMain : colors.textMuted)}>
-                          {p.name}
-                        </span>
-                      </button>
-                    );
-                  })}
-                </div>
-              </section>
-
-              {/* Typography — BL's five presets, each label wearing its
-                  own heading face */}
-              <section className={cn("space-y-3 p-4 rounded-2xl border backdrop-blur-md", colors.panelBg, colors.panelBorder)}>
-                <h3 className={cn("micro-label", colors.accentText)}>Typography</h3>
-                <div className="flex flex-wrap gap-2">
-                  {TYPOGRAPHY_PRESETS.map((t) => {
-                    const active = theme.typography === t.name;
-                    return (
-                      <button
-                        key={t.name}
-                        onClick={() => onThemeChange({ typography: active ? null : t.name })}
-                        className={cn(
-                          "rounded-xl border px-3 py-2 text-[12px] transition-all",
-                          colors.panelBorder,
-                          active ? cn(colors.textMain, "shadow-md") : cn(colors.textMuted, "opacity-80 hover:opacity-100"),
-                        )}
-                        style={{
-                          fontFamily: fontStack(t.heading),
-                          background: active ? resolvedAccent + "22" : undefined,
-                          borderColor: active ? resolvedAccent : undefined,
-                        }}
-                        title={`${t.heading} / ${t.body} / ${t.mono}`}
-                      >
-                        {t.name}
-                      </button>
-                    );
-                  })}
-                </div>
-                <p className={cn("text-[10px]", colors.textMuted)}>
-                  Tap again to hand fonts back to the skin.
-                </p>
-              </section>
-
-              {/* Layout — BL: Roundness */}
-              <section className={cn("space-y-4 p-4 rounded-2xl border backdrop-blur-md", colors.panelBg, colors.panelBorder)}>
-                <h3 className={cn("micro-label", colors.accentText)}>Layout</h3>
-                <div className="flex items-center justify-between">
-                  <span className={cn("text-[12px] font-semibold", colors.textMain)}>Roundness</span>
-                  <span className={cn("text-[11px]", colors.textMuted)}>
-                    {(theme.shapeRadius ?? themeRadiusPx(activeTheme.radius)) <= 6 ? "Sharp" : (theme.shapeRadius ?? themeRadiusPx(activeTheme.radius)) >= 18 ? "Round" : "Soft"}
-                  </span>
-                </div>
-                <input
-                  type="range"
-                  min={0}
-                  max={24}
-                  step={2}
-                  value={theme.shapeRadius ?? themeRadiusPx(activeTheme.radius)}
-                  onChange={(e) => onThemeChange({ shapeRadius: Number(e.target.value) })}
-                  className="w-full cursor-pointer"
-                  style={{ accentColor: resolvedAccent }}
-                />
-              </section>
-
-              {/* Effects — BL: Aura & Glow shape the Cosmos skin; Motion
-                  scales its transitions. 100% = default. */}
-              <section className={cn("space-y-4 p-4 rounded-2xl border backdrop-blur-md", colors.panelBg, colors.panelBorder)}>
-                <h3 className={cn("micro-label", colors.accentText)}>Effects</h3>
-                <p className={cn("text-[11px]", colors.textMuted)}>
-                  Aura &amp; Glow shape the Cosmos skin. 100% = default.
-                </p>
-                {([
-                  { key: "aura", label: "Aura" },
-                  { key: "glow", label: "Glow" },
-                  { key: "motion", label: "Motion" },
-                ] as const).map((fx) => (
-                  <div key={fx.key} className="space-y-1">
+                  {/* Live Preview — BL's appearance panel, first thing: the vibe
+                      check. Slice 2: no glass of its own, so every piece inside
+                      sits straight on HER wallpaper, the way it does in the house.
+                      The operator: it lives in its own little framed square (a
+                      window onto the wallpaper, no fill of its own), and the dock
+                      strip shows real app icons, not four blank circles. */}
+                  <section className="space-y-2.5 rounded-3xl border-2 p-3" style={{ borderColor: "var(--bl-glass-border)" }}>
                     <div className="flex items-center justify-between">
-                      <span className={cn("text-[12px] font-semibold", colors.textMain)}>{fx.label}</span>
-                      <span className={cn("text-[11px]", colors.textMuted)}>{theme.fx?.[fx.key] ?? 100}%</span>
+                      <span className="bytelight-glass-chip rounded-full border px-3 py-1">
+                        <span className={cn("micro-label", colors.accentText)}>Live Preview</span>
+                      </span>
+                      <span className="h-2 w-2 rounded-full" style={{ background: resolvedAccent }} />
                     </div>
-                    <input
-                      type="range"
-                      min={0}
-                      max={200}
-                      step={10}
-                      value={theme.fx?.[fx.key] ?? 100}
-                      onChange={(e) => onThemeChange({ fx: { ...theme.fx, [fx.key]: Number(e.target.value) } })}
-                      className="w-full cursor-pointer"
-                      style={{ accentColor: resolvedAccent }}
-                    />
-                  </div>
-                ))}
-                <button
-                  onClick={() => onThemeChange({ fx: { aura: 100, glow: 100, motion: 100 } })}
-                  className="text-[10px] font-bold uppercase tracking-widest opacity-80 transition-colors hover:opacity-100"
-                  style={{ color: resolvedAccent }}
-                >
-                  Reset to defaults
-                </button>
-              </section>
-
-
-              {/* Your Avatar — the owner's bubble face + ring color, the
-                  user-side counterpart of the companion voice avatars */}
-              <section className={cn("space-y-4 p-4 rounded-2xl border backdrop-blur-md", colors.panelBg, colors.panelBorder)}>
-                <h3 className={cn("micro-label", colors.accentText)}>
-                  Your Avatar
-                </h3>
-                <div className="flex items-center gap-4">
-                  <div
-                    className="w-14 h-14 rounded-full overflow-hidden border-2 flex items-center justify-center shrink-0"
-                    style={{
-                      borderColor: appSettings.userAvatarColor || "transparent",
-                      background: "rgba(127,127,127,0.15)",
-                    }}
-                  >
-                    {appSettings.userAvatar ? (
-                      <img src={appSettings.userAvatar} alt="Your avatar" className="w-full h-full object-cover" />
-                    ) : (
-                      <UserRound size={24} className="opacity-50" />
-                    )}
-                  </div>
-                  <div className="flex flex-col gap-2 flex-1 min-w-0">
-                    <div className="flex items-center gap-2">
-                      <button
-                        onClick={() => avatarInputRef.current?.click()}
-                        className={cn(
-                          "flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-[11px] font-bold uppercase tracking-widest",
-                          colors.panelBg, colors.panelBorder, colors.accentText, "hover:opacity-80",
-                        )}
-                      >
-                        <Upload size={12} strokeWidth={2} />
-                        Upload
+                    <div className={cn("rounded-2xl border p-3 text-[12px] bytelight-theme-panel", colors.panelBorder)}>
+                      <p className="m-0 text-[9px] uppercase tracking-widest opacity-70">A card</p>
+                      <p className="m-0 mt-1">Settings, widgets and sheets look like this.</p>
+                    </div>
+                    <div className="bytelight-glass-chip bytelight-chip-ink-75 self-start inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px]">
+                      ↗ 3 tools
+                    </div>
+                    <div className="flex justify-start">
+                      <div data-user="false" className={cn("bytelight-message-bubble border px-3.5 py-2 rounded-[var(--shape-bubble)] rounded-tl-none text-[13px]", colors.compBubbleBg, colors.compBubbleText, colors.panelBorder)}>
+                        How's the vibe looking?
+                      </div>
+                    </div>
+                    <div className="flex justify-end">
+                      <div data-user="true" className={cn("bytelight-message-bubble border px-3.5 py-2 rounded-[var(--shape-bubble)] rounded-tr-none text-[13px]", colors.userBubbleBg, colors.userBubbleText, colors.panelBorder)}>
+                        Cosmic. ✨
+                      </div>
+                    </div>
+                    <div className="bytelight-dock flex items-center justify-around rounded-[1.4rem] px-3 py-2">
+                      {[MessageCircle, ImageIcon, BookOpen, Music].map((Icon, i) => (
+                        <span key={i} className="bytelight-dock-tile flex h-9 w-9 items-center justify-center rounded-xl">
+                          <Icon size={18} style={{ color: "var(--bl-glass-ink)" }} />
+                        </span>
+                      ))}
+                    </div>
+                    <div className="flex gap-2 pt-1">
+                      <button className="bytelight-on-accent rounded-full px-4 py-1.5 text-[12px] font-bold" style={{ background: resolvedAccent }}>
+                        Primary
                       </button>
-                      {appSettings.userAvatar && (
-                        <button
-                          onClick={() => onSettingsChange({ userAvatar: undefined })}
-                          className={cn(
-                            "flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-[11px] font-bold uppercase tracking-widest opacity-70",
-                            colors.panelBg, colors.panelBorder, colors.textMain, "hover:opacity-100",
-                          )}
-                        >
-                          <Trash2 size={12} strokeWidth={2} />
-                          Remove
-                        </button>
-                      )}
+                      <button className={cn("bytelight-glass-chip rounded-full border px-4 py-1.5 text-[12px] font-bold", colors.panelBorder)}>
+                        Ghost
+                      </button>
                     </div>
-                    <label className="flex items-center gap-2 text-[11px] font-bold uppercase tracking-widest cursor-pointer">
-                      <span className={cn(colors.textMuted)}>Ring color</span>
-                      <input
-                        type="color"
-                        value={appSettings.userAvatarColor || "#f97316"}
-                        onChange={(e) => onSettingsChange({ userAvatarColor: e.target.value })}
-                        className="h-6 w-10 cursor-pointer rounded border-0 bg-transparent p-0"
-                      />
-                    </label>
-                  </div>
-                </div>
-                <input
-                  ref={avatarInputRef}
-                  type="file"
-                  accept="image/*"
-                  className="hidden"
-                  onChange={(e) => handleImageUpload(e, "avatar")}
-                />
-              </section>
+                  </section>
 
-              {/* Accent Color */}
-              <section className={cn("space-y-6 p-4 rounded-2xl border backdrop-blur-md", colors.panelBg, colors.panelBorder)}>
-                <h3 className={cn("micro-label", colors.accentText)}>
-                  Palette
-                </h3>
-                <div className="flex flex-wrap justify-center gap-4 sm:gap-6">
-                  {(
-                    [
-                      "burgundy",
-                      "crimson",
-                      "orange",
-                      "forest",
-                      "emerald",
-                      "teal",
-                      "ocean",
-                      "sky",
-                      "cobalt",
-                      "sapphire",
-                      "lavender",
-                      "cosmos",
-                      "plum",
-                      "blush",
-                      "rose",
-                      "magenta",
-                      "mocha",
-                      "monochrome",
-                      "custom",
-                    ] as ThemeId[]
-                  ).map((themeId, index) => {
-                    const t = THEMES[themeId];
-                    const isSelected = isColorSelected(themeId);
-                    const swatchColor =
-                      themeId === "custom"
-                        ? theme.customColors?.[theme.mode]?.accent || "#888888"
-                        : t[theme.mode].accent;
-
-                    return (
+                  {/* Appearance Mode */}
+                  <section className={cn("space-y-4 p-4 rounded-2xl border backdrop-blur-md", colors.panelBg, colors.panelBorder)}>
+                    <div className="grid grid-cols-2 gap-4">
                       <button
-                        key={themeId}
-                        onClick={() => handleColorSelect(themeId)}
+                        onClick={() => onThemeChange({ mode: "light" })}
                         className={cn(
-                          "group relative flex flex-col items-center gap-3 transition-all duration-500 w-[calc(25%-12px)] sm:w-[calc(16.666%-20px)]",
-                          isSelected
-                            ? "scale-110"
-                            : "opacity-60 hover:opacity-100",
+                          "flex items-center justify-center gap-2 px-4 py-2.5 rounded-2xl border transition-all duration-500",
+                          theme.mode === "light"
+                            ? `border-transparent scale-105`
+                            : `${colors.panelBg} ${colors.panelBorder} ${colors.accentText} hover:opacity-80`,
                         )}
+                        style={
+                          theme.mode === "light"
+                            ? {
+                                backgroundColor:
+                                  theme.id === "monochrome" || theme.id === "custom"
+                                    ? "#000000"
+                                    : THEMES[theme.id].light.accent,
+                                color: "#FFFFFF",
+                              }
+                            : undefined
+                        }
                       >
-                        <div
-                          className={cn(
-                            "w-12 h-12 rounded-full border-2 transition-all duration-500 flex items-center justify-center",
-                            isSelected
-                              ? "border-current"
-                              : "border-transparent",
-                          )}
-                          style={{
-                            backgroundColor: swatchColor,
-                            borderColor: isSelected
-                              ? theme.mode === "light"
-                                ? "#FFFFFF"
-                                : "#000000"
-                              : "transparent",
-                            boxShadow: isSelected
-                              ? `0 0 25px ${swatchColor}40`
-                              : undefined,
-                          }}
-                        >
-                          {isSelected && (
-                            <Check
-                              size={18}
-                              strokeWidth={3}
-                              className="bytelight-on-accent"
-                            />
-                          )}
-                        </div>
+                        <Sun size={16} strokeWidth={1.5} />
+                        <span className="text-[11px] font-bold uppercase tracking-widest">
+                          Daylight
+                        </span>
+                      </button>
+                      <button
+                        onClick={() => onThemeChange({ mode: "dark" })}
+                        className={cn(
+                          "flex items-center justify-center gap-2 px-4 py-2.5 rounded-2xl border transition-all duration-500",
+                          theme.mode === "dark"
+                            ? `border-transparent scale-105`
+                            : `${colors.panelBg} ${colors.panelBorder} ${colors.accentText} hover:opacity-80`,
+                        )}
+                        style={
+                          theme.mode === "dark"
+                            ? {
+                                backgroundColor:
+                                  theme.id === "monochrome" || theme.id === "custom"
+                                    ? "#FFFFFF"
+                                    : THEMES[theme.id].dark.accent,
+                                color: "#000000",
+                              }
+                            : undefined
+                        }
+                      >
+                        <Moon size={16} strokeWidth={1.5} />
+                        <span className="text-[11px] font-bold uppercase tracking-widest">
+                          Midnight
+                        </span>
+                      </button>
+                    </div>
+                  </section>
+
+                  {/* Wallpaper */}
+                  <section className={cn("space-y-4 p-4 rounded-2xl border backdrop-blur-md", colors.panelBg, colors.panelBorder)}>
+                    <div className="flex items-center justify-between">
+                      <h3 className={cn("micro-label", colors.accentText)}>
+                        Atmosphere
+                      </h3>
+                      <div className="flex items-center gap-2">
                         <span
                           className={cn(
-                            "text-[9px] font-bold uppercase tracking-widest transition-all duration-300",
-                            isSelected
-                              ? colors.accentText
-                              : cn(
-                                  colors.accentText,
-                                  "brightness-75 opacity-70",
-                                ),
-                          )}
-                        >
-                          {t.name}
-                        </span>
-                      </button>
-                    );
-                  })}
-                </div>
-
-              </section>
-
-              {/* Custom Theme Editor */}
-              {theme.id === "custom" && (
-                <section
-                  className={cn(
-                    "space-y-4 p-4 rounded-2xl border",
-                    colors.panelBorder,
-                    colors.panelBg,
-                  )}
-                >
-                  <div className="flex items-center justify-between">
-                    <h3 className={cn("micro-label", colors.accentText)}>
-                      Custom Theme Builder ({theme.mode} mode)
-                    </h3>
-                    <div className="flex items-center gap-2">
-                      <button
-                        onClick={() => {
-                          onThemeChange({
-                            customColors: {
-                              light: {
-                                pageBg: "#F4F4F5",
-                                panelBg: "#FFFFFF",
-                                panelBorder: "#E4E4E7",
-                                textMain: "#18181B",
-                                textMuted: "#71717A",
-                                userBubbleBg: "#A1A1AA99",
-                                userBubbleText: "#000000",
-                                compBubbleBg: "#E4E4E799",
-                                compBubbleText: "#000000",
-                                accent: "#18181B",
-                                accentText: "#18181B",
-                              },
-                              dark: {
-                                pageBg: "#09090B",
-                                panelBg: "#18181B",
-                                panelBorder: "#27272A",
-                                textMain: "#FAFAFA",
-                                textMuted: "#A1A1AA",
-                                userBubbleBg: "#52525B99",
-                                userBubbleText: "#FFFFFF",
-                                compBubbleBg: "#27272A99",
-                                compBubbleText: "#FFFFFF",
-                                accent: "#FAFAFA",
-                                accentText: "#FAFAFA",
-                              },
-                            },
-                          });
-                        }}
-                        className={cn(
-                          "text-[10px] font-bold uppercase tracking-widest px-3 py-1.5 rounded-full border transition-colors",
-                          colors.panelBorder,
-                          colors.textMuted,
-                          "hover:opacity-80",
-                        )}
-                      >
-                        Reset
-                      </button>
-                      <button
-                        onClick={onClose}
-                        className="text-[10px] font-bold uppercase tracking-widest px-3 py-1.5 rounded-full transition-colors"
-                        style={{
-                          backgroundColor: 'var(--bytelight-text)',
-                          color: 'var(--bytelight-page)',
-                        }}
-                      >
-                        Save
-                      </button>
-                    </div>
-                  </div>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                    {[
-                      { key: "pageBg", label: "Page Background" },
-                      { key: "panelBg", label: "Panel Background" },
-                      { key: "panelBorder", label: "Panel Border" },
-                      { key: "textMain", label: "Main Text" },
-                      { key: "textMuted", label: "Muted Text" },
-                      { key: "userBubbleBg", label: "User Bubble Background" },
-                      { key: "userBubbleText", label: "User Bubble Text" },
-                      {
-                        key: "compBubbleBg",
-                        label: "Companion Bubble Background",
-                      },
-                      { key: "compBubbleText", label: "Companion Bubble Text" },
-                      { key: "accent", label: "Accent Background" },
-                      { key: "accentText", label: "Accent Text Color" },
-                    ].map(({ key, label }) => {
-                      const currentColor =
-                        theme.customColors?.[theme.mode]?.[key] || "#000000";
-                      const isValidHex = /^#[0-9A-F]{6}$/i.test(currentColor);
-                      const colorPickerValue = isValidHex
-                        ? currentColor
-                        : "#000000";
-
-                      return (
-                        <div
-                          key={key}
-                          className="flex items-center justify-between"
-                        >
-                          <span className={cn("text-xs", colors.textMain)}>
-                            {label}
-                          </span>
-                          <div className="flex items-center gap-2">
-                            <input
-                              type="text"
-                              value={currentColor}
-                              onChange={(e) => {
-                                const newColors = {
-                                  ...theme.customColors,
-                                  [theme.mode]: {
-                                    ...(theme.customColors?.[theme.mode] || {}),
-                                    [key]: e.target.value,
-                                  },
-                                };
-                                if (!newColors.light) newColors.light = {};
-                                if (!newColors.dark) newColors.dark = {};
-                                onThemeChange({
-                                  customColors: newColors as any,
-                                });
-                              }}
-                              className={cn(
-                                "text-[10px] font-mono bg-transparent border-none w-16 focus:outline-none text-center",
-                                colors.textMuted,
-                                colors.panelBorder,
-                              )}
-                            />
-                            <input
-                              type="color"
-                              value={colorPickerValue}
-                              onChange={(e) => {
-                                const newColors = {
-                                  ...theme.customColors,
-                                  [theme.mode]: {
-                                    ...(theme.customColors?.[theme.mode] || {}),
-                                    [key]: e.target.value,
-                                  },
-                                };
-                                // Ensure both modes exist
-                                if (!newColors.light) newColors.light = {};
-                                if (!newColors.dark) newColors.dark = {};
-                                onThemeChange({
-                                  customColors: newColors as any,
-                                });
-                              }}
-                              className="w-8 h-8 rounded cursor-pointer border-0 p-0 bg-transparent"
-                            />
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </section>
-              )}
-
-              {/* Sticky Note Colors */}
-              <section className={cn("space-y-4 p-4 rounded-2xl border backdrop-blur-md", colors.panelBg, colors.panelBorder)}>
-                <div className="flex items-center justify-between">
-                  <h3 className={cn("micro-label", colors.accentText)}>
-                    Sticky Note Colors
-                  </h3>
-                  <button
-                    onClick={() => {
-                      // Clear the override rather than writing five fixed
-                      // colours back over it, so the notes follow the theme.
-                      onThemeChange({ stickyNoteColors: undefined });
-                    }}
-                    className={cn(
-                      "text-[10px] font-bold uppercase tracking-wider px-2 py-1 rounded border opacity-70 hover:opacity-100 transition-opacity",
-                      colors.textMain,
-                      colors.panelBorder,
-                    )}
-                  >
-                    Use theme colors
-                  </button>
-                </div>
-                <div className="flex items-center justify-center gap-3">
-                  {shownNoteColors.map((color, index) => (
-                    <div key={index} className="relative group">
-                      <div
-                        className={cn(
-                          "w-10 h-10 rounded-lg border flex items-center justify-center overflow-hidden",
-                          colors.panelBorder,
-                        )}
-                        style={{ backgroundColor: color }}
-                      >
-                        <input
-                          type="color"
-                          value={color}
-                          onChange={(e) => {
-                            // Start from what is on screen, which is the
-                            // theme's own set until she overrides one.
-                            const newColors = [...shownNoteColors];
-                            newColors[index] = e.target.value;
-                            onThemeChange({ stickyNoteColors: newColors });
-                          }}
-                          className="absolute inset-0 w-[200%] h-[200%] -top-1/2 -left-1/2 cursor-pointer opacity-0"
-                        />
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </section>
-
-              {/* App Identity */}
-              <section className={cn("space-y-4 p-4 rounded-2xl border backdrop-blur-md", colors.panelBg, colors.panelBorder)}>
-                <h3 className={cn("micro-label", colors.accentText)}>
-                  App Identity
-                </h3>
-                <div className="flex flex-col gap-6">
-                  <div className="flex items-center gap-4 sm:gap-6">
-                    <div
-                      className="w-16 h-16 sm:w-20 sm:h-20 rounded-[20px] sm:rounded-[24px] flex items-center justify-center transition-all duration-500 shrink-0"
-                      style={{ backgroundColor: colors.accent }}
-                    >
-                      <Smartphone
-                        className="bytelight-on-accent w-8 h-8 sm:w-10 sm:h-10"
-                        strokeWidth={1.5}
-                      />
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <input
-                        type="text"
-                        value={appSettings.osName ?? ""}
-                        onChange={(e) =>
-                          onSettingsChange({ osName: e.target.value })
-                        }
-                        className={cn(
-                          "bytelight-field w-full rounded-xl px-3 py-2 focus:outline-none text-lg italic tracking-tight mb-1",
-                          colors.textMain,
-                        )}
-                        placeholder="e.g. Bytelight OS"
-                      />
-                      <p
-                        className={cn(
-                          "text-[10px] sm:text-[11px] leading-relaxed font-medium break-words whitespace-normal text-left",
-                          colors.textMuted,
-                        )}
-                      >
-                        Your personal OS name.
-                      </p>
-                    </div>
-                  </div>
-
-                  <div className="pt-4">
-                    <h3 className={cn("micro-label mb-3", colors.accentText)}>
-                      Group Chat Name
-                    </h3>
-                    <input
-                      type="text"
-                      value={appSettings.groupChatName ?? ""}
-                      onChange={(e) =>
-                        onSettingsChange({ groupChatName: e.target.value })
-                      }
-                      className={cn(
-                        "bytelight-field w-full rounded-xl px-3 py-2 focus:outline-none text-sm",
-                        colors.textMain,
-                      )}
-                      placeholder="Bytelight"
-                    />
-                    <p
-                      className={cn(
-                        "text-[10px] sm:text-[11px] leading-relaxed font-medium mt-1",
-                        colors.textMuted,
-                      )}
-                    >
-                      Appears at the top of your chat interface.
-                    </p>
-                  </div>
-
-                  <div className="pt-4">
-                    <h3 className={cn("micro-label mb-4", colors.accentText)}>
-                      System Font
-                    </h3>
-                    <div className="grid grid-cols-3 gap-3">
-                      <button
-                        onClick={() =>
-                          onSettingsChange({ fontFamily: "font-sans" })
-                        }
-                        className={cn(
-                          "flex items-center justify-center p-4 rounded-[24px] border transition-all duration-500 font-sans",
-                          appSettings.fontFamily === "font-sans" ||
-                            !appSettings.fontFamily
-                            ? "bytelight-on-accent border-transparent scale-105"
-                            : `${colors.panelBg} ${colors.panelBorder} ${colors.textMuted} hover:opacity-80`,
-                        )}
-                        style={
-                          appSettings.fontFamily === "font-sans" || !appSettings.fontFamily
-                            ? { background: colors.accent, color: 'var(--bytelight-on-accent)' }
-                            : undefined
-                        }
-                      >
-                        <span className="text-[10px] sm:text-xs font-bold uppercase tracking-widest">
-                          Sans
-                        </span>
-                      </button>
-                      <button
-                        onClick={() =>
-                          onSettingsChange({ fontFamily: "font-serif" })
-                        }
-                        className={cn(
-                          "flex items-center justify-center p-4 rounded-[24px] border transition-all duration-500 font-serif",
-                          appSettings.fontFamily === "font-serif"
-                            ? "bytelight-on-accent border-transparent scale-105"
-                            : `${colors.panelBg} ${colors.panelBorder} ${colors.textMuted} hover:opacity-80`,
-                        )}
-                        style={
-                          appSettings.fontFamily === "font-serif"
-                            ? { background: colors.accent, color: 'var(--bytelight-on-accent)' }
-                            : undefined
-                        }
-                      >
-                        <span className="text-[10px] sm:text-xs font-bold uppercase tracking-widest">
-                          Serif
-                        </span>
-                      </button>
-                      <button
-                        onClick={() =>
-                          onSettingsChange({ fontFamily: "font-mono" })
-                        }
-                        className={cn(
-                          "flex items-center justify-center p-4 rounded-[24px] border transition-all duration-500 font-mono",
-                          appSettings.fontFamily === "font-mono"
-                            ? "bytelight-on-accent border-transparent scale-105"
-                            : `${colors.panelBg} ${colors.panelBorder} ${colors.textMuted} hover:opacity-80`,
-                        )}
-                        style={
-                          appSettings.fontFamily === "font-mono"
-                            ? { background: colors.accent, color: 'var(--bytelight-on-accent)' }
-                            : undefined
-                        }
-                      >
-                        <span className="text-[10px] sm:text-xs font-bold uppercase tracking-widest">
-                          Mono
-                        </span>
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              </section>
-
-              {/* Send button icon */}
-              <section className={cn("space-y-4 p-4 rounded-2xl border backdrop-blur-md", colors.panelBg, colors.panelBorder)}>
-                <h3 className={cn("micro-label", colors.accentText)}>
-                  Send Button
-                </h3>
-                <div className="space-y-3">
-                  <p
-                    className={cn(
-                      "text-[10px] leading-relaxed",
-                      colors.textMuted,
-                    )}
-                  >
-                    Choose the icon that sits on the send button in your chat composer.
-                  </p>
-                  <div className="grid grid-cols-4 sm:grid-cols-6 gap-2">
-                    {SEND_ICONS.map(({ id, label, icon: Icon }) => {
-                      const isActive =
-                        (appSettings.sendIconId ?? DEFAULT_SEND_ICON_ID) === id;
-                      return (
-                        <button
-                          key={id}
-                          onClick={() => onSettingsChange({ sendIconId: id })}
-                          className={cn(
-                            "flex flex-col items-center justify-center gap-1 p-2.5 rounded-2xl border transition-all duration-300",
-                            isActive
-                              ? "scale-105"
-                              : cn(colors.panelBg, colors.panelBorder, "opacity-70 hover:opacity-100"),
-                          )}
-                          style={
-                            isActive
-                              ? {
-                                  background: colors.accent,
-                                  borderColor: colors.accent,
-                                  color: 'var(--bytelight-on-accent)',
-                                }
-                              : undefined
-                          }
-                          title={label}
-                        >
-                          <Icon size={18} strokeWidth={2} />
-                          <span className="text-[8px] uppercase tracking-wider font-bold truncate w-full text-center">
-                            {label}
-                          </span>
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-              </section>
-
-              {/* Wallpaper */}
-              <section className={cn("space-y-4 p-4 rounded-2xl border backdrop-blur-md", colors.panelBg, colors.panelBorder)}>
-                <div className="flex items-center justify-between">
-                  <h3 className={cn("micro-label", colors.accentText)}>
-                    Atmosphere
-                  </h3>
-                  <div className="flex items-center gap-2">
-                    <span
-                      className={cn(
-                        "text-[10px] font-bold uppercase tracking-widest",
-                        colors.textMuted,
-                      )}
-                    >
-                      Slideshow
-                    </span>
-                    <Toggle
-                      on={!!theme.slideshowEnabled}
-                      onClick={() =>
-                        onThemeChange({
-                          slideshowEnabled: !theme.slideshowEnabled,
-                        })
-                      }
-                      colors={colors}
-                      ariaLabel="Toggle slideshow"
-                    />
-                  </div>
-                </div>
-
-                <div className="flex flex-col gap-6">
-                  {!theme.slideshowEnabled ? (
-                    <div className="flex gap-6 items-center">
-                      <div
-                        className={cn(
-                          "w-24 h-32 shrink-0 rounded-[24px] border-2 border-dashed flex items-center justify-center overflow-hidden relative group transition-all duration-500",
-                          colors.panelBg,
-                          colors.panelBorder,
-                          "hover:border-opacity-50",
-                        )}
-                      >
-                        <label className="absolute inset-0 cursor-pointer z-10">
-                          <input
-                            type="file"
-                            onChange={(e) => handleImageUpload(e, "single")}
-                            className="hidden"
-                            accept="image/*"
-                          />
-                        </label>
-                        {theme.wallpaper ? (
-                          <>
-                            <img
-                              src={theme.wallpaper}
-                              className="w-full h-full object-cover opacity-60"
-                              alt="Wallpaper"
-                            />
-                            <div className="absolute inset-0 flex items-center justify-center bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity">
-                              <Upload size={24} className="text-white" />
-                            </div>
-                          </>
-                        ) : (
-                          <ImageIcon
-                            size={28}
-                            className={colors.textMuted}
-                            strokeWidth={1.5}
-                          />
-                        )}
-                      </div>
-                      <div className="flex-1 space-y-3">
-                        <p
-                          className={cn(
-                            "text-xs leading-relaxed font-medium text-left",
+                            "text-[10px] font-bold uppercase tracking-widest",
                             colors.textMuted,
                           )}
                         >
-                          Home Screen Background
-                        </p>
-                        {theme.wallpaper && (
-                          <button
-                            onClick={() =>
-                              onThemeChange({ wallpaper: undefined })
-                            }
-                            className="text-[10px] font-bold uppercase tracking-widest transition-colors opacity-80 hover:opacity-100"
-                            style={{ color: colors.accent }}
-                          >
-                            Reset Home Screen
-                          </button>
-                        )}
+                          Slideshow
+                        </span>
+                        <Toggle
+                          on={!!theme.slideshowEnabled}
+                          onClick={() =>
+                            onThemeChange({
+                              slideshowEnabled: !theme.slideshowEnabled,
+                            })
+                          }
+                          colors={colors}
+                          ariaLabel="Toggle slideshow"
+                        />
                       </div>
                     </div>
-                  ) : (
-                    <div className="space-y-3">
-                      <p
-                        className={cn(
-                          "text-xs leading-relaxed font-medium text-center",
-                          colors.textMuted,
-                        )}
-                      >
-                        Home Screen Slideshow (up to 10 images)
-                      </p>
-                      <div className="grid grid-cols-4 gap-3 pb-2">
-                        {[0, 1, 2, 3, 4, 5, 6, 7, 8, 9].map((index) => {
-                          const wp = theme.wallpapers?.[index];
-                          return (
-                            <div
-                              key={index}
+
+                    {/* Slice 5: Moving wallpaper. When on, it plays instead of the
+                        still / slideshow below, which stay saved. */}
+                    <MovingWallpaperRow theme={theme} onThemeChange={onThemeChange} colors={colors} accent={resolvedAccent} />
+
+                    <div className="flex flex-col gap-6">
+                      {!theme.slideshowEnabled ? (
+                        <div className="flex gap-6 items-center">
+                          <div
+                            className={cn(
+                              "w-24 h-32 shrink-0 rounded-[24px] border-2 border-dashed flex items-center justify-center overflow-hidden relative group transition-all duration-500",
+                              colors.panelBg,
+                              colors.panelBorder,
+                              "hover:border-opacity-50",
+                            )}
+                          >
+                            <label className="absolute inset-0 cursor-pointer z-10">
+                              <input
+                                type="file"
+                                onChange={(e) => handleImageUpload(e, "single")}
+                                className="hidden"
+                                accept="image/*"
+                              />
+                            </label>
+                            {theme.wallpaper ? (
+                              <>
+                                <img
+                                  src={theme.wallpaper}
+                                  className="w-full h-full object-cover opacity-60"
+                                  alt="Wallpaper"
+                                />
+                                <div className="absolute inset-0 flex items-center justify-center bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity">
+                                  <Upload size={24} className="text-white" />
+                                </div>
+                              </>
+                            ) : (
+                              <ImageIcon
+                                size={28}
+                                className={colors.textMuted}
+                                strokeWidth={1.5}
+                              />
+                            )}
+                          </div>
+                          <div className="flex-1 space-y-3">
+                            <p
                               className={cn(
-                                "w-full h-28 rounded-[16px] border-2 border-dashed flex items-center justify-center overflow-hidden relative group transition-all duration-500",
-                                colors.panelBg,
-                                colors.panelBorder,
-                                "hover:border-opacity-50",
-                                index === 8 ? "col-start-2" : "",
-                                index === 9 ? "col-start-3" : "",
+                                "text-xs leading-relaxed font-medium text-left",
+                                colors.textMuted,
                               )}
                             >
-                              <label className="absolute inset-0 cursor-pointer z-10">
-                                <input
-                                  type="file"
-                                  onChange={(e) => handleImageUpload(e, index)}
-                                  className="hidden"
-                                  accept="image/*"
-                                />
-                              </label>
-                              {wp ? (
-                                <>
-                                  <img
-                                    src={wp}
-                                    className="w-full h-full object-cover opacity-60"
-                                    alt={`Wallpaper ${index + 1}`}
-                                  />
-                                  <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity gap-2">
-                                    <Upload size={16} className="text-white" />
-                                    <button
-                                      onClick={(e) => {
-                                        e.preventDefault();
-                                        e.stopPropagation();
-                                        removeSlideshowImage(index);
-                                      }}
-                                      className={cn(
-                                        "bytelight-on-accent p-1 rounded-full relative z-20 hover:scale-110 transition-transform",
-                                      )}
-                                      style={{ backgroundColor: colors.accent }}
-                                    >
-                                      <X size={12} />
-                                    </button>
-                                  </div>
-                                </>
-                              ) : (
-                                <ImageIcon
-                                  size={20}
-                                  className={colors.textMuted}
-                                  strokeWidth={1.5}
+                              Home Screen Background
+                            </p>
+                            {theme.wallpaper && (
+                              <button
+                                onClick={() =>
+                                  onThemeChange({ wallpaper: undefined })
+                                }
+                                className="text-[10px] font-bold uppercase tracking-widest transition-colors opacity-80 hover:opacity-100"
+                                style={{ color: colors.accent }}
+                              >
+                                Reset Home Screen
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="space-y-3">
+                          <p
+                            className={cn(
+                              "text-xs leading-relaxed font-medium text-center",
+                              colors.textMuted,
+                            )}
+                          >
+                            Home Screen Slideshow (up to 10 images)
+                          </p>
+                          <div className="grid grid-cols-4 gap-3 pb-2">
+                            {[0, 1, 2, 3, 4, 5, 6, 7, 8, 9].map((index) => {
+                              const wp = theme.wallpapers?.[index];
+                              return (
+                                <div
+                                  key={index}
+                                  className={cn(
+                                    "w-full h-28 rounded-[16px] border-2 border-dashed flex items-center justify-center overflow-hidden relative group transition-all duration-500",
+                                    colors.panelBg,
+                                    colors.panelBorder,
+                                    "hover:border-opacity-50",
+                                    index === 8 ? "col-start-2" : "",
+                                    index === 9 ? "col-start-3" : "",
+                                  )}
+                                >
+                                  <label className="absolute inset-0 cursor-pointer z-10">
+                                    <input
+                                      type="file"
+                                      onChange={(e) => handleImageUpload(e, index)}
+                                      className="hidden"
+                                      accept="image/*"
+                                    />
+                                  </label>
+                                  {wp ? (
+                                    <>
+                                      <img
+                                        src={wp}
+                                        className="w-full h-full object-cover opacity-60"
+                                        alt={`Wallpaper ${index + 1}`}
+                                      />
+                                      <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity gap-2">
+                                        <Upload size={16} className="text-white" />
+                                        <button
+                                          onClick={(e) => {
+                                            e.preventDefault();
+                                            e.stopPropagation();
+                                            removeSlideshowImage(index);
+                                          }}
+                                          className={cn(
+                                            "bytelight-on-accent p-1 rounded-full relative z-20 hover:scale-110 transition-transform",
+                                          )}
+                                          style={{ backgroundColor: colors.accent }}
+                                        >
+                                          <X size={12} />
+                                        </button>
+                                      </div>
+                                    </>
+                                  ) : (
+                                    <ImageIcon
+                                      size={20}
+                                      className={colors.textMuted}
+                                      strokeWidth={1.5}
+                                    />
+                                  )}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </section>
+
+                  {/* Glass (Slice 2): the one material every surface is made of.
+                      Right under Daylight/Midnight, the operator's placement. Roundness
+                      moved in from Layout; the one Glow lives here. */}
+                  <GlassCard
+                    theme={theme}
+                    onThemeChange={onThemeChange}
+                    colors={colors}
+                    accent={resolvedAccent}
+                    roundness={theme.shapeRadius ?? themeRadiusPx(activeTheme.radius)}
+                  />
+
+                  {/* Accent Color */}
+                  <section className={cn("space-y-6 p-4 rounded-2xl border backdrop-blur-md", colors.panelBg, colors.panelBorder)}>
+                    <h3 className={cn("micro-label", colors.accentText)}>
+                      Palette
+                    </h3>
+                    <div className="flex flex-wrap justify-center gap-4 sm:gap-6">
+                      {(
+                        [
+                          "burgundy",
+                          "crimson",
+                          "orange",
+                          "forest",
+                          "emerald",
+                          "teal",
+                          "ocean",
+                          "sky",
+                          "cobalt",
+                          "sapphire",
+                          "lavender",
+                          "cosmos",
+                          "plum",
+                          "blush",
+                          "rose",
+                          "magenta",
+                          "mocha",
+                          "monochrome",
+                          "custom",
+                        ] as ThemeId[]
+                      ).map((themeId, index) => {
+                        const t = THEMES[themeId];
+                        const isSelected = isColorSelected(themeId);
+                        const swatchColor =
+                          themeId === "custom"
+                            ? theme.customColors?.[theme.mode]?.accent || "#888888"
+                            : t[theme.mode].accent;
+
+                        return (
+                          <button
+                            key={themeId}
+                            onClick={() => handleColorSelect(themeId)}
+                            className={cn(
+                              "group relative flex flex-col items-center gap-3 transition-all duration-500 w-[calc(25%-12px)] sm:w-[calc(16.666%-20px)]",
+                              isSelected
+                                ? "scale-110"
+                                : "opacity-60 hover:opacity-100",
+                            )}
+                          >
+                            <div
+                              className={cn(
+                                "w-12 h-12 rounded-full border-2 transition-all duration-500 flex items-center justify-center",
+                                isSelected
+                                  ? "border-current"
+                                  : "border-transparent",
+                              )}
+                              style={{
+                                backgroundColor: swatchColor,
+                                borderColor: isSelected
+                                  ? theme.mode === "light"
+                                    ? "#FFFFFF"
+                                    : "#000000"
+                                  : "transparent",
+                                boxShadow: isSelected
+                                  ? `0 0 25px ${swatchColor}40`
+                                  : undefined,
+                              }}
+                            >
+                              {isSelected && (
+                                <Check
+                                  size={18}
+                                  strokeWidth={3}
+                                  className="bytelight-on-accent"
                                 />
                               )}
                             </div>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              </section>
-
-              {/* Lock screen (ported from Aerie's Settings > Lock screen pane). */}
-              {(() => {
-                const face = lockFaceOf(theme.lockFace);
-                const position = lockPositionOf(theme.lockClockPosition);
-                const size = lockSizeOf(theme.lockClockSize);
-                const wallpaper = theme.lockScreenWallpaper || theme.wallpaper;
-                // Set once this face's clock, or the weather, has been dragged
-                // somewhere by hand.
-                const movedAt = lockClockAtOf(theme.lockClockAt, face);
-                const weatherMoved = lockWeatherAtOf(theme.lockWeatherAt);
-                // What has been tucked away; its chip brings it back.
-                const hidden = lockHiddenOf(theme.lockHidden);
-                const chip = (on: boolean) => cn(
-                  "flex items-center justify-center px-3 py-2.5 rounded-2xl border text-[11px] font-bold uppercase tracking-widest transition-all duration-300",
-                  on ? "border-transparent" : `${colors.panelBg} ${colors.panelBorder} ${colors.accentText} hover:opacity-80`,
-                );
-                const chipStyle = (on: boolean) => on ? { background: colors.accent, color: 'var(--bytelight-on-accent)' } : undefined;
-                const FACES: { id: LockFace; label: string; hint: string }[] = [
-                  { id: "stacked", label: "Stacked", hint: "Hour over minute, big" },
-                  { id: "dateline", label: "Dateline", hint: "Your picture up top, time along the bottom" },
-                  { id: "classic", label: "Classic", hint: "Today's clock, moved and sized your way" },
-                ];
-                return (<>
-                  <section className={cn("space-y-4 p-4 rounded-2xl border backdrop-blur-md", colors.panelBg, colors.panelBorder)}>
-                    <h3 className={cn("micro-label", colors.accentText)}>Lock screen</h3>
-                    {/* Its own picture, which falls back to the home wallpaper when unset. */}
-                    <div className="flex gap-6 items-center">
-                      <div
-                        className={cn(
-                          "w-24 h-32 shrink-0 rounded-[24px] border-2 border-dashed flex items-center justify-center overflow-hidden relative group transition-all duration-500",
-                          colors.panelBg,
-                          colors.panelBorder,
-                          "hover:border-opacity-50",
-                        )}
-                      >
-                        <label className="absolute inset-0 cursor-pointer z-10">
-                          <input
-                            type="file"
-                            onChange={(e) => handleImageUpload(e, "lockscreen")}
-                            className="hidden"
-                            accept="image/*"
-                          />
-                        </label>
-                        {theme.lockScreenWallpaper ? (
-                          <>
-                            <img
-                              src={theme.lockScreenWallpaper}
-                              className="w-full h-full object-cover opacity-60"
-                              alt="Lock Screen Wallpaper"
-                            />
-                            <div className="absolute inset-0 flex items-center justify-center bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity">
-                              <Upload size={24} className="text-white" />
-                            </div>
-                          </>
-                        ) : (
-                          <ImageIcon
-                            size={28}
-                            className={colors.textMuted}
-                            strokeWidth={1.5}
-                          />
-                        )}
-                      </div>
-                      <div className="flex-1 space-y-3">
-                        <p
-                          className={cn(
-                            "text-xs leading-relaxed font-medium text-left",
-                            colors.textMuted,
-                          )}
-                        >
-                          Lock Screen Background
-                        </p>
-                        {theme.lockScreenWallpaper && (
-                          <button
-                            onClick={() =>
-                              onThemeChange({ lockScreenWallpaper: undefined })
-                            }
-                            className="text-[10px] font-bold uppercase tracking-widest transition-colors opacity-80 hover:opacity-100"
-                            style={{ color: colors.accent }}
-                          >
-                            Reset Lock Screen
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                  </section>
-                  <section className={cn("space-y-4 p-4 rounded-2xl border backdrop-blur-md", colors.panelBg, colors.panelBorder)}>
-                    <h3 className={cn("micro-label", colors.accentText)}>Clock face</h3>
-                    <div className="grid grid-cols-3 gap-3">
-                      {FACES.map((f) => (
-                        <button
-                          key={f.id}
-                          onClick={() => onThemeChange({ lockFace: f.id })}
-                          className="flex flex-col items-center gap-2 text-center"
-                          aria-pressed={face === f.id}
-                        >
-                          <span
-                            className="rounded-[18px] p-[3px]"
-                            style={{ background: face === f.id ? colors.accent : 'transparent' }}
-                          >
-                            <LockPreview face={f.id} position={position} size={size} wallpaper={wallpaper} width={88} at={lockClockAtOf(theme.lockClockAt, f.id)} />
-                          </span>
-                          <span className={chip(face === f.id)} style={chipStyle(face === f.id)}>{f.label}</span>
-                          <span className={cn("text-[10px] leading-snug", colors.textMuted)}>{f.hint}</span>
-                        </button>
-                      ))}
-                    </div>
-                  </section>
-                  {/* Holding the clock or the weather on the lock screen moves it,
-                      so every face takes a size instead of a Top / Middle / Low
-                      row. Each face keeps its own spot. */}
-                  <section className={cn("space-y-3 p-4 rounded-2xl border backdrop-blur-md", colors.panelBg, colors.panelBorder)}>
-                    <h3 className={cn("micro-label", colors.accentText)}>Size</h3>
-                    <div className="grid grid-cols-3 gap-2">
-                      {([["s", "Small"], ["m", "Medium"], ["l", "Large"]] as [LockSize, string][]).map(([id, label]) => (
-                        <button key={id} onClick={() => onThemeChange({ lockClockSize: id })} className={chip(size === id)} style={chipStyle(size === id)}>
-                          {label}
-                        </button>
-                      ))}
-                    </div>
-                    <h3 className={cn("micro-label pt-1", colors.accentText)}>On the lock screen</h3>
-                    <p className={cn("text-[10px] leading-relaxed", colors.textMuted)}>
-                      Hold the clock or the weather until it lifts, drag it anywhere, and let go. Drag it up to the top to hide it, and tap it here to show it again. Each face remembers where its clock sits; Clock home and Weather home send them back to where they started.
-                    </p>
-                    <div className="grid grid-cols-2 gap-2">
-                      {([["clock", "Clock"], ["weather", "Weather"]] as [LockPiece, string][]).map(([piece, label]) => {
-                        const on = !hidden.has(piece);
-                        return (
-                          <button
-                            key={piece}
-                            onClick={() => onThemeChange({ lockHidden: withHidden(theme.lockHidden, piece, on) })}
-                            className={chip(on)}
-                            style={chipStyle(on)}
-                            aria-pressed={on}
-                          >
-                            {label}
+                            <span
+                              className={cn(
+                                "text-[9px] font-bold uppercase tracking-widest transition-all duration-300",
+                                isSelected
+                                  ? colors.accentText
+                                  : cn(
+                                      colors.accentText,
+                                      "brightness-75 opacity-70",
+                                    ),
+                              )}
+                            >
+                              {t.name}
+                            </span>
                           </button>
                         );
                       })}
                     </div>
-                    {(movedAt || weatherMoved) && (
-                      <div className="grid grid-cols-2 gap-2">
-                        {movedAt && (
-                          <button onClick={() => onThemeChange({ lockClockAt: withClockAt(theme.lockClockAt, face, null) })} className={chip(false)}>
-                            Clock home
+
+                  </section>
+
+                  {/* Custom Theme Editor */}
+                  {theme.id === "custom" && (
+                    <section
+                      className={cn(
+                        "space-y-4 p-4 rounded-2xl border",
+                        colors.panelBorder,
+                        colors.panelBg,
+                      )}
+                    >
+                      <div className="flex items-center justify-between">
+                        <h3 className={cn("micro-label", colors.accentText)}>
+                          Custom Theme Builder ({theme.mode} mode)
+                        </h3>
+                        <div className="flex items-center gap-2">
+                          <button
+                            onClick={() => {
+                              onThemeChange({
+                                customColors: {
+                                  light: {
+                                    pageBg: "#F4F4F5",
+                                    panelBg: "#FFFFFF",
+                                    panelBorder: "#E4E4E7",
+                                    textMain: "#18181B",
+                                    textMuted: "#71717A",
+                                    userBubbleBg: "#A1A1AA99",
+                                    userBubbleText: "#000000",
+                                    compBubbleBg: "#E4E4E799",
+                                    compBubbleText: "#000000",
+                                    accent: "#18181B",
+                                    accentText: "#18181B",
+                                  },
+                                  dark: {
+                                    pageBg: "#09090B",
+                                    panelBg: "#18181B",
+                                    panelBorder: "#27272A",
+                                    textMain: "#FAFAFA",
+                                    textMuted: "#A1A1AA",
+                                    userBubbleBg: "#52525B99",
+                                    userBubbleText: "#FFFFFF",
+                                    compBubbleBg: "#27272A99",
+                                    compBubbleText: "#FFFFFF",
+                                    accent: "#FAFAFA",
+                                    accentText: "#FAFAFA",
+                                  },
+                                },
+                              });
+                            }}
+                            className={cn(
+                              "text-[10px] font-bold uppercase tracking-widest px-3 py-1.5 rounded-full border transition-colors",
+                              colors.panelBorder,
+                              colors.textMuted,
+                              "hover:opacity-80",
+                            )}
+                          >
+                            Reset
                           </button>
-                        )}
-                        {weatherMoved && (
-                          <button onClick={() => onThemeChange({ lockWeatherAt: undefined })} className={chip(false)}>
-                            Weather home
+                          <button
+                            onClick={onApply ?? onClose}
+                            className="text-[10px] font-bold uppercase tracking-widest px-3 py-1.5 rounded-full transition-colors"
+                            style={{
+                              backgroundColor: 'var(--bytelight-text)',
+                              color: 'var(--bytelight-page)',
+                            }}
+                          >
+                            Save
+                          </button>
+                        </div>
+                      </div>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        {[
+                          { key: "pageBg", label: "Page Background" },
+                          { key: "panelBg", label: "Panel Background" },
+                          { key: "panelBorder", label: "Panel Border" },
+                          { key: "textMain", label: "Main Text" },
+                          { key: "textMuted", label: "Muted Text" },
+                          { key: "userBubbleBg", label: "User Bubble Background" },
+                          { key: "userBubbleText", label: "User Bubble Text" },
+                          {
+                            key: "compBubbleBg",
+                            label: "Companion Bubble Background",
+                          },
+                          { key: "compBubbleText", label: "Companion Bubble Text" },
+                          { key: "accent", label: "Accent Background" },
+                          { key: "accentText", label: "Accent Text Color" },
+                        ].map(({ key, label }) => {
+                          const currentColor =
+                            theme.customColors?.[theme.mode]?.[key] || "#000000";
+                          const isValidHex = /^#[0-9A-F]{6}$/i.test(currentColor);
+                          const colorPickerValue = isValidHex
+                            ? currentColor
+                            : "#000000";
+
+                          return (
+                            <div
+                              key={key}
+                              className="flex items-center justify-between"
+                            >
+                              <span className={cn("text-xs", colors.textMain)}>
+                                {label}
+                              </span>
+                              <div className="flex items-center gap-2">
+                                <input
+                                  type="text"
+                                  value={currentColor}
+                                  onChange={(e) => {
+                                    const newColors = {
+                                      ...theme.customColors,
+                                      [theme.mode]: {
+                                        ...(theme.customColors?.[theme.mode] || {}),
+                                        [key]: e.target.value,
+                                      },
+                                    };
+                                    if (!newColors.light) newColors.light = {};
+                                    if (!newColors.dark) newColors.dark = {};
+                                    onThemeChange({
+                                      customColors: newColors as any,
+                                    });
+                                  }}
+                                  className={cn(
+                                    "text-[10px] font-mono bg-transparent border-none w-16 focus:outline-none text-center",
+                                    colors.textMuted,
+                                    colors.panelBorder,
+                                  )}
+                                />
+                                <input
+                                  type="color"
+                                  value={colorPickerValue}
+                                  onChange={(e) => {
+                                    const newColors = {
+                                      ...theme.customColors,
+                                      [theme.mode]: {
+                                        ...(theme.customColors?.[theme.mode] || {}),
+                                        [key]: e.target.value,
+                                      },
+                                    };
+                                    // Ensure both modes exist
+                                    if (!newColors.light) newColors.light = {};
+                                    if (!newColors.dark) newColors.dark = {};
+                                    onThemeChange({
+                                      customColors: newColors as any,
+                                    });
+                                  }}
+                                  className="w-8 h-8 rounded cursor-pointer border-0 p-0 bg-transparent"
+                                />
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </section>
+                  )}
+
+                  {/* Accent Color — BL's own section: Custom picker, Use palette,
+                      and the sixteen named accents (ACCENT_PALETTES, verbatim). */}
+                  <section className={cn("space-y-3 p-4 rounded-2xl border backdrop-blur-md", colors.panelBg, colors.panelBorder)}>
+                    <h3 className={cn("micro-label", colors.accentText)}>Accent Color</h3>
+                    <div className="flex items-center gap-2">
+                      <label className={cn("flex cursor-pointer items-center gap-2 rounded-full border px-3 py-1.5 text-[11px] font-semibold", colors.panelBorder, colors.textMain)}>
+                        <span className="relative h-5 w-5 overflow-hidden rounded-md border border-white/20" style={{ background: theme.accentOverride || resolvedAccent }}>
+                          <input
+                            type="color"
+                            value={theme.accentOverride || resolvedAccent}
+                            onChange={(e) => onThemeChange({ accentOverride: e.target.value, accentPalette: null })}
+                            className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
+                          />
+                        </span>
+                        Custom
+                      </label>
+                      {(theme.accentOverride || theme.accentPalette) && (
+                        <button
+                          onClick={() => onThemeChange({ accentOverride: null, accentPalette: null })}
+                          className={cn("rounded-full border px-3 py-1.5 text-[11px] font-semibold opacity-80 hover:opacity-100", colors.panelBorder, colors.textMuted)}
+                        >
+                          Use palette
+                        </button>
+                      )}
+                    </div>
+                    <div className="flex flex-wrap gap-3 pt-1">
+                      {ACCENT_PALETTES.map((p) => {
+                        const active = theme.accentPalette === p.name && !theme.accentOverride;
+                        const swatch = p[theme.mode].main;
+                        return (
+                          <button
+                            key={p.name}
+                            onClick={() => onThemeChange({ accentPalette: p.name, accentOverride: null })}
+                            className="flex flex-col items-center gap-1"
+                            title={p.name}
+                          >
+                            <span
+                              className={cn("h-9 w-9 rounded-full border-2 transition-all", active ? "scale-110 border-white/70" : "border-transparent opacity-85 hover:opacity-100")}
+                              style={{ background: swatch, boxShadow: active ? `0 0 14px ${swatch}88` : undefined }}
+                            />
+                            <span className={cn("text-[9px] font-semibold uppercase tracking-wide", active ? colors.textMain : colors.textMuted)}>
+                              {p.name}
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </section>
+
+                  {/* Skin — BL: the atmosphere layer, its own section */}
+                  <section className={cn("space-y-3 p-4 rounded-2xl border backdrop-blur-md", colors.panelBg, colors.panelBorder)}>
+                    <h3 className={cn("micro-label", colors.accentText)}>Skin</h3>
+                    <div className="flex gap-2">
+                      {([
+                        { id: "none", label: "Classic" },
+                        { id: "cosmos", label: "Cosmos" },
+                      ] as const).map((sk) => {
+                        const active = (theme.skin ?? "none") === sk.id;
+                        return (
+                          <button
+                            key={sk.id}
+                            onClick={() => onThemeChange({ skin: sk.id })}
+                            className={cn(
+                              "rounded-full border px-4 py-2 text-[11px] font-bold uppercase tracking-widest transition-all duration-300",
+                              colors.panelBorder,
+                              active ? cn(colors.accentText, "shadow-md") : cn(colors.textMuted, "opacity-70 hover:opacity-100"),
+                            )}
+                            style={active ? { background: resolvedAccent + "33" } : undefined}
+                          >
+                            {sk.label}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </section>
+
+                  {/* Effects — BL: Aura & Glow shape the Cosmos skin; Motion
+                      scales its transitions. 100% = default. */}
+                  <section className={cn("space-y-4 p-4 rounded-2xl border backdrop-blur-md", colors.panelBg, colors.panelBorder)}>
+                    <h3 className={cn("micro-label", colors.accentText)}>Effects</h3>
+                    <p className={cn("text-[11px]", colors.textMuted)}>
+                      Aura shapes the Cosmos skin, Motion its transitions. 100% = default. Glow moved to Glass.
+                    </p>
+                    {([
+                      { key: "aura", label: "Aura" },
+                      { key: "motion", label: "Motion" },
+                    ] as const).map((fx) => (
+                      <div key={fx.key} className="space-y-1">
+                        <div className="flex items-center justify-between">
+                          <span className={cn("text-[12px] font-semibold", colors.textMain)}>{fx.label}</span>
+                          <span className={cn("text-[11px]", colors.textMuted)}>{theme.fx?.[fx.key] ?? 100}%</span>
+                        </div>
+                        <input
+                          type="range"
+                          min={0}
+                          max={200}
+                          step={10}
+                          value={theme.fx?.[fx.key] ?? 100}
+                          onChange={(e) => onThemeChange({ fx: { ...theme.fx, [fx.key]: Number(e.target.value) } })}
+                          className="w-full cursor-pointer"
+                          style={{ accentColor: resolvedAccent }}
+                        />
+                      </div>
+                    ))}
+                    <button
+                      onClick={() => onThemeChange({ fx: { ...theme.fx, aura: 100, motion: 100 } })}
+                      className="text-[10px] font-bold uppercase tracking-widest opacity-80 transition-colors hover:opacity-100"
+                      style={{ color: resolvedAccent }}
+                    >
+                      Reset to defaults
+                    </button>
+                  </section>
+
+                  {/* Type (Slice 4): replaces the Typography presets and System Font. The Text
+                      color control from the old Typography card rides inside it, unchanged. */}
+                  <TypeCard
+                    theme={theme}
+                    legacySystemFont={appSettings.fontFamily}
+                    onThemeChange={onThemeChange}
+                    colors={colors}
+                    accent={resolvedAccent}
+                  >
+                      {/* Text color — one pick sets the main text; the muted shade
+                          is derived from it (as classic's Appearance → Text). */}
+                      <div className="flex items-center gap-2 pt-1">
+                        <label className={cn("flex cursor-pointer items-center gap-2 rounded-full border px-3 py-1.5 text-[11px] font-semibold", colors.panelBorder, colors.textMain)}>
+                          <span
+                            className="relative h-5 w-5 overflow-hidden rounded-md border border-white/20"
+                            style={{ background: theme.textOverride || "var(--bytelight-text)" }}
+                          >
+                            <input
+                              type="color"
+                              value={theme.textOverride || (theme.mode === "dark" ? "#fafafa" : "#1c1a17")}
+                              onChange={(e) => onThemeChange({ textOverride: e.target.value })}
+                              className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
+                            />
+                          </span>
+                          Text color
+                        </label>
+                        {theme.textOverride && (
+                          <button
+                            onClick={() => onThemeChange({ textOverride: null })}
+                            className={cn("rounded-full border px-3 py-1.5 text-[11px] font-semibold opacity-80 hover:opacity-100", colors.panelBorder, colors.textMuted)}
+                          >
+                            Use theme default
                           </button>
                         )}
                       </div>
-                    )}
-                  </section>
-                  {(() => {
-                    const corners = lockShortcutsOf(theme.lockShortcuts);
-                    const current = corners[lockCorner];
-                    const setCorner = (id: string | null) => {
-                      const next: [string | null, string | null] = [corners[0], corners[1]];
-                      next[lockCorner] = id;
-                      onThemeChange({ lockShortcuts: next });
-                    };
-                    return (
-                      <section className={cn("space-y-3 p-4 rounded-2xl border backdrop-blur-md", colors.panelBg, colors.panelBorder)}>
-                        <h3 className={cn("micro-label", colors.accentText)}>Shortcuts</h3>
-                        <p className={cn("text-[10px] leading-relaxed", colors.textMuted)}>
-                          Two circles in the bottom corners of the lock screen. Each one opens its app straight away.
-                        </p>
-                        <div className="grid grid-cols-2 gap-2">
-                          {([[0, "Left corner"], [1, "Right corner"]] as [0 | 1, string][]).map(([c, label]) => (
-                            <button key={label} onClick={() => setLockCorner(c)} className={chip(lockCorner === c)} style={chipStyle(lockCorner === c)}>
-                              {label}
-                            </button>
-                          ))}
-                        </div>
-                        <div className="grid grid-cols-2 gap-2">
+                  </TypeCard>
+              </SettingsGroup>
+
+              <SettingsGroup id="you" title="You" summary="Avatar, names, send button, sticky notes" colors={colors}>
+                  {/* Your Avatar — the owner's bubble face + ring color, the
+                      user-side counterpart of the companion voice avatars */}
+                  <section className={cn("space-y-4 p-4 rounded-2xl border backdrop-blur-md", colors.panelBg, colors.panelBorder)}>
+                    <h3 className={cn("micro-label", colors.accentText)}>
+                      Your Avatar
+                    </h3>
+                    <div className="flex items-center gap-4">
+                      <div
+                        className="w-14 h-14 rounded-full overflow-hidden border-2 flex items-center justify-center shrink-0"
+                        style={{
+                          borderColor: appSettings.userAvatarColor || "transparent",
+                          background: "rgba(127,127,127,0.15)",
+                        }}
+                      >
+                        {appSettings.userAvatar ? (
+                          <img src={appSettings.userAvatar} alt="Your avatar" className="w-full h-full object-cover" />
+                        ) : (
+                          <UserRound size={24} className="opacity-50" />
+                        )}
+                      </div>
+                      <div className="flex flex-col gap-2 flex-1 min-w-0">
+                        <div className="flex items-center gap-2">
                           <button
-                            onClick={() => setCorner(null)}
-                            className={cn('flex items-center gap-2 px-3 py-2 rounded-xl border text-xs text-left', colors.panelBorder, colors.textMain)}
-                            style={current === null ? { background: colors.accent, color: 'var(--bytelight-on-accent)', borderColor: colors.accent } : undefined}
+                            onClick={() => avatarInputRef.current?.click()}
+                            className={cn(
+                              "flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-[11px] font-bold uppercase tracking-widest",
+                              colors.panelBg, colors.panelBorder, colors.accentText, "hover:opacity-80",
+                            )}
                           >
-                            <span className="flex-1 truncate">Nothing there</span>
+                            <Upload size={12} strokeWidth={2} />
+                            Upload
                           </button>
-                          {[...APPS].filter((a) => a.id !== 'settings').sort((a, b) => a.name.localeCompare(b.name)).map((app) => (
+                          {appSettings.userAvatar && (
                             <button
-                              key={`lock-corner-${app.id}`}
-                              onClick={() => setCorner(app.id)}
-                              className={cn('flex items-center gap-2 px-3 py-2 rounded-xl border text-xs text-left', colors.panelBorder, colors.textMain)}
-                              style={current === app.id ? { background: colors.accent, color: 'var(--bytelight-on-accent)', borderColor: colors.accent } : undefined}
+                              onClick={() => onSettingsChange({ userAvatar: undefined })}
+                              className={cn(
+                                "flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-[11px] font-bold uppercase tracking-widest opacity-70",
+                                colors.panelBg, colors.panelBorder, colors.textMain, "hover:opacity-100",
+                              )}
                             >
-                              <app.icon size={14} />
-                              <span className="flex-1 truncate">{app.name}</span>
+                              <Trash2 size={12} strokeWidth={2} />
+                              Remove
+                            </button>
+                          )}
+                        </div>
+                        <label className="flex items-center gap-2 text-[11px] font-bold uppercase tracking-widest cursor-pointer">
+                          <span className={cn(colors.textMuted)}>Ring color</span>
+                          <input
+                            type="color"
+                            value={appSettings.userAvatarColor || "#f97316"}
+                            onChange={(e) => onSettingsChange({ userAvatarColor: e.target.value })}
+                            className="h-6 w-10 cursor-pointer rounded border-0 bg-transparent p-0"
+                          />
+                        </label>
+                      </div>
+                    </div>
+                    <input
+                      ref={avatarInputRef}
+                      type="file"
+                      accept="image/*"
+                      className="hidden"
+                      onChange={(e) => handleImageUpload(e, "avatar")}
+                    />
+                  </section>
+
+                  {/* App Identity */}
+                  <section className={cn("space-y-4 p-4 rounded-2xl border backdrop-blur-md", colors.panelBg, colors.panelBorder)}>
+                    <h3 className={cn("micro-label", colors.accentText)}>
+                      App Identity
+                    </h3>
+                    <div className="flex flex-col gap-6">
+                      <div className="flex items-center gap-4 sm:gap-6">
+                        {/* App Identity: tap the square to upload her logo
+                            (centre-cropped, 512px). House setting, not a look. */}
+                        <label
+                          className="relative w-16 h-16 sm:w-20 sm:h-20 rounded-[20px] sm:rounded-[24px] flex items-center justify-center overflow-hidden transition-all duration-500 shrink-0 cursor-pointer"
+                          style={{ backgroundColor: appSettings.appLogo ? "transparent" : colors.accent }}
+                          title={appSettings.appLogo ? "Replace your logo" : "Upload your logo"}
+                        >
+                          <input
+                            type="file"
+                            accept="image/png,image/jpeg,image/webp,image/gif"
+                            className="hidden"
+                            onChange={(e) => {
+                              const f = e.target.files?.[0];
+                              e.target.value = "";
+                              if (!f) return;
+                              const r = new FileReader();
+                              r.onload = () => {
+                                void makeLogo(typeof r.result === "string" ? r.result : "").then((logo) => {
+                                  if (logo) onSettingsChange({ appLogo: logo });
+                                });
+                              };
+                              r.readAsDataURL(f);
+                            }}
+                          />
+                          {appSettings.appLogo ? (
+                            <img src={appSettings.appLogo} alt="Your logo" className="h-full w-full object-cover" />
+                          ) : (
+                            <Smartphone
+                              className="bytelight-on-accent w-8 h-8 sm:w-10 sm:h-10"
+                              strokeWidth={1.5}
+                            />
+                          )}
+                        </label>
+                        <div className="flex-1 min-w-0">
+                          <input
+                            type="text"
+                            value={appSettings.osName ?? ""}
+                            onChange={(e) =>
+                              onSettingsChange({ osName: e.target.value })
+                            }
+                            className={cn(
+                              "bytelight-field w-full rounded-xl px-3 py-2 focus:outline-none text-lg italic tracking-tight mb-1",
+                              colors.textMain,
+                            )}
+                            placeholder="e.g. Bytelight OS"
+                          />
+                          <p
+                            className={cn(
+                              "text-[10px] sm:text-[11px] leading-relaxed font-medium break-words whitespace-normal text-left",
+                              colors.textMuted,
+                            )}
+                          >
+                            Your personal OS name.
+                          </p>
+                        </div>
+                      </div>
+
+                      {/* Nameplate on Home (top left) and under the lock-screen clock. */}
+                      <div className="space-y-3">
+                        <div className="flex items-center justify-between gap-3">
+                          <span className={cn("text-[12px] font-semibold", colors.textMain)}>Show logo</span>
+                          <Toggle on={appSettings.nameplateLogo !== false} onClick={() => onSettingsChange({ nameplateLogo: appSettings.nameplateLogo === false })} colors={colors} ariaLabel="Show logo on Home and lock screen" />
+                        </div>
+                        <div className="flex items-center justify-between gap-3">
+                          <span className={cn("text-[12px] font-semibold", colors.textMain)}>Show name</span>
+                          <Toggle on={appSettings.nameplateName === true} onClick={() => onSettingsChange({ nameplateName: appSettings.nameplateName !== true })} colors={colors} ariaLabel="Show name on Home and lock screen" />
+                        </div>
+                        <p className={cn("text-[11px]", colors.textMuted)}>
+                          {appSettings.appLogo ? "Tap your logo to replace it. " : "Tap the square to upload your logo. "}
+                          Shows on Home (top left) and under the lock screen clock.
+                        </p>
+                        {appSettings.appLogo && (
+                          <button type="button" onClick={() => onSettingsChange({ appLogo: undefined })} className={cn("rounded-full border px-3 py-1 text-[11px] font-semibold", colors.panelBorder, colors.textMain)}>
+                            Remove logo
+                          </button>
+                        )}
+                      </div>
+
+                      <div className="pt-4">
+                        <h3 className={cn("micro-label mb-3", colors.accentText)}>
+                          Group Chat Name
+                        </h3>
+                        <input
+                          type="text"
+                          value={appSettings.groupChatName ?? ""}
+                          onChange={(e) =>
+                            onSettingsChange({ groupChatName: e.target.value })
+                          }
+                          className={cn(
+                            "bytelight-field w-full rounded-xl px-3 py-2 focus:outline-none text-sm",
+                            colors.textMain,
+                          )}
+                          placeholder="Bytelight"
+                        />
+                        <p
+                          className={cn(
+                            "text-[10px] sm:text-[11px] leading-relaxed font-medium mt-1",
+                            colors.textMuted,
+                          )}
+                        >
+                          Appears at the top of your chat interface.
+                        </p>
+                      </div>
+
+                    </div>
+                  </section>
+
+                  {/* Send button icon */}
+                  <section className={cn("space-y-4 p-4 rounded-2xl border backdrop-blur-md", colors.panelBg, colors.panelBorder)}>
+                    <h3 className={cn("micro-label", colors.accentText)}>
+                      Send Button
+                    </h3>
+                    <div className="space-y-3">
+                      <p
+                        className={cn(
+                          "text-[10px] leading-relaxed",
+                          colors.textMuted,
+                        )}
+                      >
+                        Choose the icon that sits on the send button in your chat composer.
+                      </p>
+                      <div className="grid grid-cols-4 sm:grid-cols-6 gap-2">
+                        {SEND_ICONS.map(({ id, label, icon: Icon }) => {
+                          const isActive =
+                            (appSettings.sendIconId ?? DEFAULT_SEND_ICON_ID) === id;
+                          return (
+                            <button
+                              key={id}
+                              onClick={() => onSettingsChange({ sendIconId: id })}
+                              className={cn(
+                                "flex flex-col items-center justify-center gap-1 p-2.5 rounded-2xl border transition-all duration-300",
+                                isActive
+                                  ? "scale-105"
+                                  : cn(colors.panelBg, colors.panelBorder, "opacity-70 hover:opacity-100"),
+                              )}
+                              style={
+                                isActive
+                                  ? {
+                                      background: colors.accent,
+                                      borderColor: colors.accent,
+                                      color: 'var(--bytelight-on-accent)',
+                                    }
+                                  : undefined
+                              }
+                              title={label}
+                            >
+                              <Icon size={18} strokeWidth={2} />
+                              <span className="text-[8px] uppercase tracking-wider font-bold truncate w-full text-center">
+                                {label}
+                              </span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  </section>
+
+                  {/* Sticky Note Colors */}
+                  <section className={cn("space-y-4 p-4 rounded-2xl border backdrop-blur-md", colors.panelBg, colors.panelBorder)}>
+                    <div className="flex items-center justify-between">
+                      <h3 className={cn("micro-label", colors.accentText)}>
+                        Sticky Note Colors
+                      </h3>
+                      <button
+                        onClick={() => {
+                          // Clear the override rather than writing five fixed
+                          // colours back over it, so the notes follow the theme.
+                          onThemeChange({ stickyNoteColors: undefined });
+                        }}
+                        className={cn(
+                          "text-[10px] font-bold uppercase tracking-wider px-2 py-1 rounded border opacity-70 hover:opacity-100 transition-opacity",
+                          colors.textMain,
+                          colors.panelBorder,
+                        )}
+                      >
+                        Use theme colors
+                      </button>
+                    </div>
+                    <div className="flex items-center justify-center gap-3">
+                      {shownNoteColors.map((color, index) => (
+                        <div key={index} className="relative group">
+                          <div
+                            className={cn(
+                              "w-10 h-10 rounded-lg border flex items-center justify-center overflow-hidden",
+                              colors.panelBorder,
+                            )}
+                            style={{ backgroundColor: color }}
+                          >
+                            <input
+                              type="color"
+                              value={color}
+                              onChange={(e) => {
+                                // Start from what is on screen, which is the
+                                // theme's own set until she overrides one.
+                                const newColors = [...shownNoteColors];
+                                newColors[index] = e.target.value;
+                                onThemeChange({ stickyNoteColors: newColors });
+                              }}
+                              className="absolute inset-0 w-[200%] h-[200%] -top-1/2 -left-1/2 cursor-pointer opacity-0"
+                            />
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </section>
+              </SettingsGroup>
+
+              <SettingsGroup id="home" title="Home & Lock" summary="Lock screen, widgets, home dock" colors={colors}>
+                  {/* Lock screen (ported from Aerie's Settings > Lock screen pane). */}
+                  {(() => {
+                    const face = lockFaceOf(theme.lockFace);
+                    const position = lockPositionOf(theme.lockClockPosition);
+                    const size = lockSizeOf(theme.lockClockSize);
+                    const wallpaper = theme.lockScreenWallpaper || theme.wallpaper;
+                    // Set once this face's clock, or the weather, has been dragged
+                    // somewhere by hand.
+                    const movedAt = lockClockAtOf(theme.lockClockAt, face);
+                    const weatherMoved = lockWeatherAtOf(theme.lockWeatherAt);
+                    // What has been tucked away; its chip brings it back.
+                    const hidden = lockHiddenOf(theme.lockHidden);
+                    const chip = (on: boolean) => cn(
+                      "flex items-center justify-center px-3 py-2.5 rounded-2xl border text-[11px] font-bold uppercase tracking-widest transition-all duration-300",
+                      on ? "border-transparent" : `${colors.panelBg} ${colors.panelBorder} ${colors.accentText} hover:opacity-80`,
+                    );
+                    const chipStyle = (on: boolean) => on ? { background: colors.accent, color: 'var(--bytelight-on-accent)' } : undefined;
+                    const FACES: { id: LockFace; label: string; hint: string }[] = [
+                      { id: "stacked", label: "Stacked", hint: "Hour over minute, big" },
+                      { id: "dateline", label: "Dateline", hint: "Your picture up top, time along the bottom" },
+                      { id: "classic", label: "Classic", hint: "Today's clock, moved and sized your way" },
+                    ];
+                    return (<>
+                      <section className={cn("space-y-4 p-4 rounded-2xl border backdrop-blur-md", colors.panelBg, colors.panelBorder)}>
+                        <h3 className={cn("micro-label", colors.accentText)}>Lock screen</h3>
+                        {/* Its own picture, which falls back to the home wallpaper when unset. */}
+                        <div className="flex gap-6 items-center">
+                          <div
+                            className={cn(
+                              "w-24 h-32 shrink-0 rounded-[24px] border-2 border-dashed flex items-center justify-center overflow-hidden relative group transition-all duration-500",
+                              colors.panelBg,
+                              colors.panelBorder,
+                              "hover:border-opacity-50",
+                            )}
+                          >
+                            <label className="absolute inset-0 cursor-pointer z-10">
+                              <input
+                                type="file"
+                                onChange={(e) => handleImageUpload(e, "lockscreen")}
+                                className="hidden"
+                                accept="image/*"
+                              />
+                            </label>
+                            {theme.lockScreenWallpaper ? (
+                              <>
+                                <img
+                                  src={theme.lockScreenWallpaper}
+                                  className="w-full h-full object-cover opacity-60"
+                                  alt="Lock Screen Wallpaper"
+                                />
+                                <div className="absolute inset-0 flex items-center justify-center bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity">
+                                  <Upload size={24} className="text-white" />
+                                </div>
+                              </>
+                            ) : (
+                              <ImageIcon
+                                size={28}
+                                className={colors.textMuted}
+                                strokeWidth={1.5}
+                              />
+                            )}
+                          </div>
+                          <div className="flex-1 space-y-3">
+                            <p
+                              className={cn(
+                                "text-xs leading-relaxed font-medium text-left",
+                                colors.textMuted,
+                              )}
+                            >
+                              Lock Screen Background
+                            </p>
+                            {theme.lockScreenWallpaper && (
+                              <button
+                                onClick={() =>
+                                  onThemeChange({ lockScreenWallpaper: undefined })
+                                }
+                                className="text-[10px] font-bold uppercase tracking-widest transition-colors opacity-80 hover:opacity-100"
+                                style={{ color: colors.accent }}
+                              >
+                                Reset Lock Screen
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      </section>
+                      <section className={cn("space-y-4 p-4 rounded-2xl border backdrop-blur-md", colors.panelBg, colors.panelBorder)}>
+                        <h3 className={cn("micro-label", colors.accentText)}>Clock face</h3>
+                        <div className="grid grid-cols-3 gap-3">
+                          {FACES.map((f) => (
+                            <button
+                              key={f.id}
+                              onClick={() => onThemeChange({ lockFace: f.id })}
+                              className="flex flex-col items-center gap-2 text-center"
+                              aria-pressed={face === f.id}
+                            >
+                              <span
+                                className="rounded-[18px] p-[3px]"
+                                style={{ background: face === f.id ? colors.accent : 'transparent' }}
+                              >
+                                <LockPreview face={f.id} position={position} size={size} wallpaper={wallpaper} width={88} at={lockClockAtOf(theme.lockClockAt, f.id)} />
+                              </span>
+                              <span className={chip(face === f.id)} style={chipStyle(face === f.id)}>{f.label}</span>
+                              <span className={cn("text-[10px] leading-snug", colors.textMuted)}>{f.hint}</span>
                             </button>
                           ))}
                         </div>
                       </section>
-                    );
+                      {/* Holding the clock or the weather on the lock screen moves it,
+                          so every face takes a size instead of a Top / Middle / Low
+                          row. Each face keeps its own spot. */}
+                      <section className={cn("space-y-3 p-4 rounded-2xl border backdrop-blur-md", colors.panelBg, colors.panelBorder)}>
+                        <h3 className={cn("micro-label", colors.accentText)}>Size</h3>
+                        <div className="grid grid-cols-3 gap-2">
+                          {([["s", "Small"], ["m", "Medium"], ["l", "Large"]] as [LockSize, string][]).map(([id, label]) => (
+                            <button key={id} onClick={() => onThemeChange({ lockClockSize: id })} className={chip(size === id)} style={chipStyle(size === id)}>
+                              {label}
+                            </button>
+                          ))}
+                        </div>
+                        <h3 className={cn("micro-label pt-1", colors.accentText)}>On the lock screen</h3>
+                        <p className={cn("text-[10px] leading-relaxed", colors.textMuted)}>
+                          Hold the clock or the weather until it lifts, drag it anywhere, and let go. Drag it up to the top to hide it, and tap it here to show it again. Each face remembers where its clock sits; Clock home and Weather home send them back to where they started.
+                        </p>
+                        <div className="grid grid-cols-2 gap-2">
+                          {([["clock", "Clock"], ["weather", "Weather"]] as [LockPiece, string][]).map(([piece, label]) => {
+                            const on = !hidden.has(piece);
+                            return (
+                              <button
+                                key={piece}
+                                onClick={() => onThemeChange({ lockHidden: withHidden(theme.lockHidden, piece, on) })}
+                                className={chip(on)}
+                                style={chipStyle(on)}
+                                aria-pressed={on}
+                              >
+                                {label}
+                              </button>
+                            );
+                          })}
+                        </div>
+                        {(movedAt || weatherMoved) && (
+                          <div className="grid grid-cols-2 gap-2">
+                            {movedAt && (
+                              <button onClick={() => onThemeChange({ lockClockAt: withClockAt(theme.lockClockAt, face, null) })} className={chip(false)}>
+                                Clock home
+                              </button>
+                            )}
+                            {weatherMoved && (
+                              <button onClick={() => onThemeChange({ lockWeatherAt: undefined })} className={chip(false)}>
+                                Weather home
+                              </button>
+                            )}
+                          </div>
+                        )}
+                      </section>
+                      {(() => {
+                        const corners = lockShortcutsOf(theme.lockShortcuts);
+                        const current = corners[lockCorner];
+                        const setCorner = (id: string | null) => {
+                          const next: [string | null, string | null] = [corners[0], corners[1]];
+                          next[lockCorner] = id;
+                          onThemeChange({ lockShortcuts: next });
+                        };
+                        return (
+                          <section className={cn("space-y-3 p-4 rounded-2xl border backdrop-blur-md", colors.panelBg, colors.panelBorder)}>
+                            <h3 className={cn("micro-label", colors.accentText)}>Shortcuts</h3>
+                            <p className={cn("text-[10px] leading-relaxed", colors.textMuted)}>
+                              Two circles in the bottom corners of the lock screen. Each one opens its app straight away.
+                            </p>
+                            <div className="grid grid-cols-2 gap-2">
+                              {([[0, "Left corner"], [1, "Right corner"]] as [0 | 1, string][]).map(([c, label]) => (
+                                <button key={label} onClick={() => setLockCorner(c)} className={chip(lockCorner === c)} style={chipStyle(lockCorner === c)}>
+                                  {label}
+                                </button>
+                              ))}
+                            </div>
+                            <div className="grid grid-cols-2 gap-2">
+                              <button
+                                onClick={() => setCorner(null)}
+                                className={cn('flex items-center gap-2 px-3 py-2 rounded-xl border text-xs text-left', colors.panelBorder, colors.textMain)}
+                                style={current === null ? { background: colors.accent, color: 'var(--bytelight-on-accent)', borderColor: colors.accent } : undefined}
+                              >
+                                <span className="flex-1 truncate">Nothing there</span>
+                              </button>
+                              {[...APPS].filter((a) => a.id !== 'settings').sort((a, b) => a.name.localeCompare(b.name)).map((app) => (
+                                <button
+                                  key={`lock-corner-${app.id}`}
+                                  onClick={() => setCorner(app.id)}
+                                  className={cn('flex items-center gap-2 px-3 py-2 rounded-xl border text-xs text-left', colors.panelBorder, colors.textMain)}
+                                  style={current === app.id ? { background: colors.accent, color: 'var(--bytelight-on-accent)', borderColor: colors.accent } : undefined}
+                                >
+                                  <app.icon size={14} />
+                                  <span className="flex-1 truncate">{app.name}</span>
+                                </button>
+                              ))}
+                            </div>
+                          </section>
+                        );
+                      })()}
+                      <section className={cn("space-y-3 p-4 rounded-2xl border backdrop-blur-md", colors.panelBg, colors.panelBorder)}>
+                        <h3 className={cn("micro-label", colors.accentText)}>Who's written you</h3>
+                        <p className={cn("text-[10px] leading-relaxed", colors.textMuted)}>
+                          A card on the lock screen when there's something new. Names keeps the words off it, for when your phone is face up at work.
+                        </p>
+                        <div className="grid grid-cols-3 gap-2">
+                          {([["names", "Names"], ["first-line", "First line"], ["nothing", "Nothing"]] as [LockShow, string][]).map(([id, label]) => (
+                            <button key={id} onClick={() => onThemeChange({ lockShow: id })} className={chip(lockShowOf(theme.lockShow) === id)} style={chipStyle(lockShowOf(theme.lockShow) === id)}>
+                              {label}
+                            </button>
+                          ))}
+                        </div>
+                      </section>
+                      <section className={cn("space-y-3 p-4 rounded-2xl border backdrop-blur-md", colors.panelBg, colors.panelBorder)}>
+                        <h3 className={cn("micro-label", colors.accentText)}>Spotify</h3>
+                        <p className={cn("text-[10px] leading-relaxed", colors.textMuted)}>
+                          A card on the lock screen while a song is playing or paused: its cover, the song and the artist, with previous, play or pause, and next. Tap the cover to open Spotify.
+                        </p>
+                        <div className="grid grid-cols-2 gap-2">
+                          {([[true, "On"], [false, "Off"]] as [boolean, string][]).map(([on, label]) => (
+                            <button key={label} onClick={() => onThemeChange({ lockSpotify: on })} className={chip(lockSpotifyOf(theme.lockSpotify) === on)} style={chipStyle(lockSpotifyOf(theme.lockSpotify) === on)} aria-pressed={lockSpotifyOf(theme.lockSpotify) === on}>
+                              {label}
+                            </button>
+                          ))}
+                        </div>
+                      </section>
+                      {/* One look for every card on the lock screen. */}
+                      <section className={cn("space-y-3 p-4 rounded-2xl border backdrop-blur-md", colors.panelBg, colors.panelBorder)}>
+                        <h3 className={cn("micro-label", colors.accentText)}>Cards</h3>
+                        <p className={cn("text-[10px] leading-relaxed", colors.textMuted)}>
+                          How the message, note and Spotify cards look on the lock screen. Light suits a light wallpaper, with dark words on it. Auto looks at your wallpaper behind the cards and picks.
+                        </p>
+                        <div className="grid grid-cols-3 gap-2">
+                          {([["dark", "Dark"], ["light", "Light"], ["auto", "Auto"]] as [LockCardChoice, string][]).map(([id, label]) => (
+                            <button key={id} onClick={() => onThemeChange({ lockCards: id })} className={chip(lockCardsOf(theme.lockCards) === id)} style={chipStyle(lockCardsOf(theme.lockCards) === id)} aria-pressed={lockCardsOf(theme.lockCards) === id}>
+                              {label}
+                            </button>
+                          ))}
+                        </div>
+                      </section>
+                    </>);
                   })()}
-                  <section className={cn("space-y-3 p-4 rounded-2xl border backdrop-blur-md", colors.panelBg, colors.panelBorder)}>
-                    <h3 className={cn("micro-label", colors.accentText)}>Who's written you</h3>
-                    <p className={cn("text-[10px] leading-relaxed", colors.textMuted)}>
-                      A card on the lock screen when there's something new. Names keeps the words off it, for when your phone is face up at work.
-                    </p>
-                    <div className="grid grid-cols-3 gap-2">
-                      {([["names", "Names"], ["first-line", "First line"], ["nothing", "Nothing"]] as [LockShow, string][]).map(([id, label]) => (
-                        <button key={id} onClick={() => onThemeChange({ lockShow: id })} className={chip(lockShowOf(theme.lockShow) === id)} style={chipStyle(lockShowOf(theme.lockShow) === id)}>
-                          {label}
-                        </button>
-                      ))}
-                    </div>
-                  </section>
-                  <section className={cn("space-y-3 p-4 rounded-2xl border backdrop-blur-md", colors.panelBg, colors.panelBorder)}>
-                    <h3 className={cn("micro-label", colors.accentText)}>Spotify</h3>
-                    <p className={cn("text-[10px] leading-relaxed", colors.textMuted)}>
-                      A card on the lock screen while a song is playing or paused: its cover, the song and the artist, with previous, play or pause, and next. Tap the cover to open Spotify.
-                    </p>
-                    <div className="grid grid-cols-2 gap-2">
-                      {([[true, "On"], [false, "Off"]] as [boolean, string][]).map(([on, label]) => (
-                        <button key={label} onClick={() => onThemeChange({ lockSpotify: on })} className={chip(lockSpotifyOf(theme.lockSpotify) === on)} style={chipStyle(lockSpotifyOf(theme.lockSpotify) === on)} aria-pressed={lockSpotifyOf(theme.lockSpotify) === on}>
-                          {label}
-                        </button>
-                      ))}
-                    </div>
-                  </section>
-                  {/* One look for every card on the lock screen. */}
-                  <section className={cn("space-y-3 p-4 rounded-2xl border backdrop-blur-md", colors.panelBg, colors.panelBorder)}>
-                    <h3 className={cn("micro-label", colors.accentText)}>Cards</h3>
-                    <p className={cn("text-[10px] leading-relaxed", colors.textMuted)}>
-                      How the message, note and Spotify cards look on the lock screen. Light suits a light wallpaper, with dark words on it. Auto looks at your wallpaper behind the cards and picks.
-                    </p>
-                    <div className="grid grid-cols-3 gap-2">
-                      {([["dark", "Dark"], ["light", "Light"], ["auto", "Auto"]] as [LockCardChoice, string][]).map(([id, label]) => (
-                        <button key={id} onClick={() => onThemeChange({ lockCards: id })} className={chip(lockCardsOf(theme.lockCards) === id)} style={chipStyle(lockCardsOf(theme.lockCards) === id)} aria-pressed={lockCardsOf(theme.lockCards) === id}>
-                          {label}
-                        </button>
-                      ))}
-                    </div>
-                  </section>
-                </>);
-              })()}
 
-              {/* Home widgets. A long press on the home screen
-                  opens the same choices. */}
-              <section className={cn("space-y-3 p-4 rounded-2xl border backdrop-blur-md", colors.panelBg, colors.panelBorder)}>
-                <h3 className={cn("micro-label", colors.accentText)}>Widgets</h3>
-                <p className={cn("text-[10px] leading-relaxed", colors.textMuted)}>
-                  They sit low on your home screen so your wallpaper keeps the top. Holding an empty spot on the home screen opens these too, and holding a widget lets you put it anywhere on the grid.
-                </p>
-                <div className="space-y-2">
-                  {HOME_WIDGETS.map((w) => {
-                    const on = homeWidgetsOf(theme.homeWidgets).includes(w.id);
-                    return (
+                  {/* Home widgets. A long press on the home screen
+                      opens the same choices. */}
+                  <section className={cn("space-y-3 p-4 rounded-2xl border backdrop-blur-md", colors.panelBg, colors.panelBorder)}>
+                    <h3 className={cn("micro-label", colors.accentText)}>Widgets</h3>
+                    <p className={cn("text-[10px] leading-relaxed", colors.textMuted)}>
+                      They sit low on your home screen so your wallpaper keeps the top. Holding an empty spot on the home screen opens these too, and holding a widget lets you put it anywhere on the grid.
+                    </p>
+                    <div className="space-y-2">
+                      {HOME_WIDGETS.map((w) => {
+                        const on = homeWidgetsOf(theme.homeWidgets).includes(w.id);
+                        return (
+                          <button
+                            key={`widget-${w.id}`}
+                            onClick={() => onThemeChange({ homeWidgets: toggleWidget(homeWidgetsOf(theme.homeWidgets), w.id) })}
+                            className={cn('flex w-full items-center justify-between gap-3 px-3 py-2.5 rounded-xl border text-left', colors.panelBorder, colors.textMain)}
+                            style={on ? { background: colors.accent, color: 'var(--bytelight-on-accent)', borderColor: colors.accent } : undefined}
+                          >
+                            <span className="flex flex-col">
+                              <span className="text-xs font-bold">{w.label}</span>
+                              <span className="text-[10px] opacity-75">{w.hint}</span>
+                            </span>
+                            <span className="text-[10px] font-bold tracking-widest">{w.cols}×{w.rows}</span>
+                          </button>
+                        );
+                      })}
                       <button
-                        key={`widget-${w.id}`}
-                        onClick={() => onThemeChange({ homeWidgets: toggleWidget(homeWidgetsOf(theme.homeWidgets), w.id) })}
+                        onClick={() => onThemeChange({ homeQuietLine: !theme.homeQuietLine })}
                         className={cn('flex w-full items-center justify-between gap-3 px-3 py-2.5 rounded-xl border text-left', colors.panelBorder, colors.textMain)}
-                        style={on ? { background: colors.accent, color: 'var(--bytelight-on-accent)', borderColor: colors.accent } : undefined}
+                        style={theme.homeQuietLine ? { background: colors.accent, color: 'var(--bytelight-on-accent)', borderColor: colors.accent } : undefined}
                       >
                         <span className="flex flex-col">
-                          <span className="text-xs font-bold">{w.label}</span>
-                          <span className="text-[10px] opacity-75">{w.hint}</span>
+                          <span className="text-xs font-bold">Quiet line</span>
+                          <span className="text-[10px] opacity-75">One line of the latest reply, riding on the dock</span>
                         </span>
-                        <span className="text-[10px] font-bold tracking-widest">{w.cols}×{w.rows}</span>
                       </button>
-                    );
-                  })}
-                  <button
-                    onClick={() => onThemeChange({ homeQuietLine: !theme.homeQuietLine })}
-                    className={cn('flex w-full items-center justify-between gap-3 px-3 py-2.5 rounded-xl border text-left', colors.panelBorder, colors.textMain)}
-                    style={theme.homeQuietLine ? { background: colors.accent, color: 'var(--bytelight-on-accent)', borderColor: colors.accent } : undefined}
-                  >
-                    <span className="flex flex-col">
-                      <span className="text-xs font-bold">Quiet line</span>
-                      <span className="text-[10px] opacity-75">One line of the latest reply, riding on the dock</span>
-                    </span>
-                  </button>
-                  {theme.homeWidgetSpots && Object.keys(theme.homeWidgetSpots).length > 0 && (
-                    <button
-                      onClick={() => onThemeChange({ homeWidgetSpots: undefined })}
-                      className={cn('flex w-full items-center justify-center px-3 py-2.5 rounded-xl border text-[11px] font-bold uppercase tracking-widest', colors.panelBorder, colors.accentText)}
-                    >
-                      Put the widgets back
-                    </button>
+                      {theme.homeWidgetSpots && Object.keys(theme.homeWidgetSpots).length > 0 && (
+                        <button
+                          onClick={() => onThemeChange({ homeWidgetSpots: undefined })}
+                          className={cn('flex w-full items-center justify-center px-3 py-2.5 rounded-xl border text-[11px] font-bold uppercase tracking-widest', colors.panelBorder, colors.accentText)}
+                        >
+                          Put the widgets back
+                        </button>
+                      )}
+                    </div>
+                  </section>
+
+                  {/* Dock apps */}
+                  <section className={cn("space-y-3 p-4 rounded-2xl border backdrop-blur-md", colors.panelBg, colors.panelBorder)}>
+                    <h3 className={cn("micro-label", colors.accentText)}>
+                      Home dock
+                    </h3>
+                    <p className={cn("text-[10px] leading-relaxed", colors.textMuted)}>
+                      Pick as many as you like. The dock scrolls sideways, and the App Drawer launcher is always last.
+                    </p>
+                    <div className="grid grid-cols-2 gap-2">
+                      {[...APPS].filter((a) => a.id !== 'settings').sort((a, b) => a.name.localeCompare(b.name)).map((app) => {
+                        const current = migrateAppIds(appSettings.dockAppIds ?? APPS.filter((x) => x.dock).map((x) => x.id));
+                        const isOn = current.includes(app.id);
+                        return (
+                          <button
+                            key={`dock-${app.id}`}
+                            onClick={() => {
+                              const next = isOn
+                                ? current.filter((id) => id !== app.id)
+                                : [...current, app.id];
+                              onSettingsChange({ dockAppIds: next });
+                            }}
+                            className={cn(
+                              'flex items-center gap-2 px-3 py-2 rounded-xl border text-xs text-left',
+                              colors.panelBorder,
+                              colors.textMain,
+                            )}
+                            style={isOn ? { background: colors.accent, color: 'var(--bytelight-on-accent)', borderColor: colors.accent } : undefined}
+                          >
+                            <app.icon size={14} />
+                            <span className="flex-1 truncate">{app.name}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </section>
+              </SettingsGroup>
+
+              {/* Apply Settings + Version. Apply is the real save (Slice 7). */}
+              <div className="pt-4 flex flex-col items-center gap-3">
+                <button
+                  onClick={onApply ?? onClose}
+                  className="w-full py-3 rounded-2xl font-bold text-sm transition-all duration-500 hover:scale-[1.02] active:scale-[0.98]"
+                  style={{
+                    backgroundColor: colors.accent,
+                    color: 'var(--bytelight-on-accent)',
+                  }}
+                >
+                  Apply Settings
+                </button>
+                <div
+                  className={cn(
+                    "text-[10px] font-mono tracking-widest uppercase opacity-40",
+                    colors.textMuted,
                   )}
+                >
+                  Bytelight v3.2.5
                 </div>
-              </section>
-
-              {/* Dock apps */}
-              <section className={cn("space-y-3 p-4 rounded-2xl border backdrop-blur-md", colors.panelBg, colors.panelBorder)}>
-                <h3 className={cn("micro-label", colors.accentText)}>
-                  Home dock
-                </h3>
-                <p className={cn("text-[10px] leading-relaxed", colors.textMuted)}>
-                  Up to 4 apps. The App Drawer launcher is always last.
-                </p>
-                <div className="grid grid-cols-2 gap-2">
-                  {[...APPS].filter((a) => a.id !== 'settings').sort((a, b) => a.name.localeCompare(b.name)).map((app) => {
-                    const current = migrateAppIds(appSettings.dockAppIds ?? APPS.filter((x) => x.dock).map((x) => x.id));
-                    const isOn = current.includes(app.id);
-                    const atCap = !isOn && current.length >= 4;
-                    return (
-                      <button
-                        key={`dock-${app.id}`}
-                        onClick={() => {
-                          if (atCap) return;
-                          const next = isOn
-                            ? current.filter((id) => id !== app.id)
-                            : [...current, app.id];
-                          onSettingsChange({ dockAppIds: next });
-                        }}
-                        disabled={atCap}
-                        className={cn(
-                          'flex items-center gap-2 px-3 py-2 rounded-xl border text-xs text-left disabled:opacity-40',
-                          colors.panelBorder,
-                          colors.textMain,
-                        )}
-                        style={isOn ? { background: colors.accent, color: 'var(--bytelight-on-accent)', borderColor: colors.accent } : undefined}
-                      >
-                        <app.icon size={14} />
-                        <span className="flex-1 truncate">{app.name}</span>
-                      </button>
-                    );
-                  })}
-                </div>
-
-                {/* Apply Settings + Version */}
-                <div className="pt-4 flex flex-col items-center gap-3">
-                  <button
-                    onClick={onClose}
-                    className="w-full py-3 rounded-2xl font-bold text-sm transition-all duration-500 hover:scale-[1.02] active:scale-[0.98]"
-                    style={{
-                      backgroundColor: colors.accent,
-                      color: 'var(--bytelight-on-accent)',
-                    }}
-                  >
-                    Apply Settings
-                  </button>
-                  <div
-                    className={cn(
-                      "text-[10px] font-mono tracking-widest uppercase opacity-40",
-                      colors.textMuted,
-                    )}
-                  >
-                    Bytelight v3.2.5
-                  </div>
-                </div>
-              </section>
+              </div>
             </>
           )}
 

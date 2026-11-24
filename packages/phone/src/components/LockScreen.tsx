@@ -2,6 +2,8 @@
 import React, { useState, useEffect } from 'react';
 import { motion, useAnimation, PanInfo } from 'motion/react';
 import { LockClock } from './LockClock';
+import { Nameplate } from './Nameplate';
+import type { Nameplate as NameplateData } from '../lib/nameplate';
 import { useWeather } from './useWeather';
 import { ageLabel, type ClockAt, type LockFace, type LockPiece, type LockPosition, type LockShow, type LockSize, type UnreadSummary } from '../lib/lock-clock';
 import type { AppDef } from '../lib/apps';
@@ -45,6 +47,8 @@ function notesSeenAt(): number | null {
 }
 
 interface LockScreenProps {
+  /** Her house nameplate (logo and/or name), under the clock. */
+  nameplate?: NameplateData | null;
   onUnlock: () => void;
   wallpaper?: string;
   face: LockFace;
@@ -83,7 +87,7 @@ interface LockScreenProps {
   onHide?: (piece: LockPiece) => void;
 }
 
-export function LockScreen({ onUnlock, wallpaper, face, position, size, shortcuts, onOpenApp, show, unread, faces, messagesApp, writers = [], notesApp, spotify = true, spotifyApp, cards = 'dark', clockAt = null, onMoveClock, weatherAt = null, onMoveWeather, showClock = true, showWeather = true, onHide }: LockScreenProps) {
+export function LockScreen({ onUnlock, wallpaper, face, position, size, shortcuts, onOpenApp, show, unread, faces, messagesApp, writers = [], notesApp, spotify = true, spotifyApp, cards = 'dark', clockAt = null, onMoveClock, weatherAt = null, onMoveWeather, showClock = true, showWeather = true, onHide, nameplate }: LockScreenProps) {
   const [time, setTime] = useState(new Date());
   const weather = useWeather();
   const controls = useAnimation();
@@ -155,7 +159,7 @@ export function LockScreen({ onUnlock, wallpaper, face, position, size, shortcut
 
       {/* The clock, in the chosen face (components/LockClock.tsx). Holding it, or
           the weather pill, lifts it, and letting go leaves it there. */}
-      <LockClock face={face} position={position} size={size} now={time} weather={weather} at={clockAt} onMove={onMoveClock} weatherAt={weatherAt} onMoveWeather={onMoveWeather} showClock={showClock} showWeather={showWeather} onHide={onHide} />
+      <LockClock face={face} position={position} size={size} now={time} weather={weather} at={clockAt} onMove={onMoveClock} weatherAt={weatherAt} onMoveWeather={onMoveWeather} showClock={showClock} showWeather={showWeather} onHide={onHide} nameplate={nameplate ? <Nameplate plate={nameplate} /> : null} />
 
       {/* Who's written: names only unless the first line is chosen, and
           nothing at all if nothing is chosen. Sits above the dateline row when

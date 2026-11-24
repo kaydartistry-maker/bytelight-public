@@ -16,13 +16,20 @@
 // after SURFACE_LIMIT passes without anyone picking it up, the proposal retires
 // itself. A memory nobody reached for three times over was not load-bearing.
 //
-// OPERATOR'S GATE. Since the Aerie Archivist swap, 'propose' is the default
+// THE OWNER'S WINDOW. Since the Aerie Archivist swap, 'propose' is the default
 // (`archivistMode()` in memory-extraction.ts): every Archivist edit lands here.
-// The operator sees every row — pending, faded, filed, dropped — on the phone (Memory
-// Blocks → Review) and can approve one (`approveProposalForOwner`: the line is
-// written onto its block and the row closes as 'filed' by her) or reject it
-// ('dropped' by her). A faded row is still in her queue: fading only stops it
-// riding into the companions' turns, it does not take it away from her.
+//
+// The proposals are offered to the COMPANIONS, not to the owner. The owner
+// reads and corrects memory but is never a required approver. Before this, a
+// faded row stayed in her review queue forever, which contradicted the
+// paragraph above — unclaimed proposals retired for the companions and piled
+// up for her, every one already faded.
+//
+// So her Review list is the LIVE proposals only: what is riding into turns
+// right now. A faded row has had its answer and leaves the list; it is still
+// there under "All", and she can still file or drop any open row herself
+// (`approveProposalForOwner` writes the line and closes it 'filed' by her,
+// `rejectProposalForOwner` closes it 'dropped' by her). Nothing is deleted.
 //
 // Ported from an reference implementation, Apache 2.0 — adapted for byte-light.
 // Adaptations vs. the source:
@@ -178,26 +185,23 @@ export function countPending(): number {
   return row?.n ?? 0;
 }
 
-// --- Owner review (the operator's gate) ---------------------------------------------
+// --- The owner's window ------------------------------------------------------
 
-/** Statuses still waiting on the operator: never chosen by anyone. */
+/** Rows the owner may still file or drop herself: never chosen by anyone. */
 const OWNER_REVIEWABLE = ['pending', 'faded'] as const;
 
-/** The operator's queue: everything nobody has filed or dropped yet, oldest first. */
+/**
+ * The owner's Review list: the live proposals, oldest first. Faded rows are
+ * not here — nobody reached for them, and that was their answer — but they
+ * stay listable under 'all' / 'faded' and stay fileable by id.
+ */
 export function listForOwnerReview(limit = 200): MemoryProposal[] {
-  return getDb()
-    .prepare(
-      `SELECT * FROM memory_proposals WHERE status IN ('pending', 'faded')
-        ORDER BY created_at ASC, id ASC LIMIT ?`
-    )
-    .all(limit) as MemoryProposal[];
+  return listPendingProposals(limit);
 }
 
+/** How many proposals are live. The Review badge on the phone. */
 export function countForOwnerReview(): number {
-  const row = getDb()
-    .prepare(`SELECT COUNT(*) AS n FROM memory_proposals WHERE status IN ('pending', 'faded')`)
-    .get() as { n: number };
-  return row?.n ?? 0;
+  return countPending();
 }
 
 function ownerResolve(id: number, status: 'filed' | 'dropped', by: string): boolean {

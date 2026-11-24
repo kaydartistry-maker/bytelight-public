@@ -68,7 +68,18 @@ import { App as CapacitorApp } from '@capacitor/app';
 import { Capacitor } from '@capacitor/core';
 import { Filesystem, Directory, Encoding } from '@capacitor/filesystem';
 
-import { THEMES, contrastTextColor, resolveThemeColors, themeRadiusPx, shapeVarsFor, withAccentOverride, TYPOGRAPHY_PRESETS, fontStack, monoStack } from './lib/theme';
+import { THEMES, contrastTextColor, resolveThemeColors, themeRadiusPx, shapeVarsFor, activeThemeFor, textOverrideColors, TYPOGRAPHY_PRESETS, fontStack, monoStack } from './lib/theme';
+import { glassVars, textureAlpha, textureFitVars, textureOn } from './lib/glass';
+import { bakeTexture } from './lib/texture';
+import { effectiveType, typeVars } from './lib/fonts';
+import { loadUserFonts } from './lib/font-store';
+import { useMovingWallpaper } from './lib/moving-wallpaper';
+import { nameplateOf } from './lib/nameplate';
+import { hasUnapplied, type SettingsSnapshot } from './lib/apply';
+import { beginMovingDraft, commitMovingDraft, discardMovingDraft } from './lib/moving-wallpaper';
+import { pullSetup, pushSetup, registerSyncHandlers, type Pulled } from './lib/sync';
+import { libraryDirty } from './lib/sync-local';
+import { paintFrost } from './lib/frost';
 import {
   BytelightLoginGate,
   useMessages,
@@ -98,8 +109,6 @@ import {
   loadThread,
   loadThreadAround,
   loadOlderMessages,
-  fetchServerSettings,
-  pushServerSettings,
   useBytelight,
   markRead,
   unlockVoicePlayback,
@@ -115,7 +124,7 @@ import {
 import { subscribeStickers } from './bytelight/stickers';
 import { fetchOwnerFromPreferences, ownerFromCompanionsPayload } from './lib/owner';
 import { StreamingReply } from './components/StreamingReply';
-import { collectLocalExtras } from './components/SetupSync';
+import { applyLocalExtras, collectLocalExtras } from './components/SetupSync';
 import { ContextIndicator } from './components/ContextIndicator';
 import { CompactionBanner } from './components/CompactionBanner';
 import { RateLimitBanner } from './components/RateLimitBanner';
@@ -187,6 +196,78 @@ function AppBackground({ theme }: { theme: AppTheme }) {
     return () => clearInterval(interval);
   }, [theme.slideshowEnabled, theme.wallpapers]);
 
+  // Painted frost (Glass card, Slice 2): one blurred still of whatever
+  // wallpaper is showing right now, for bubbles and chat chips to wear.
+  const frostOn = theme.glass?.bubbleFrost === 'painted';
+  // Moving wallpaper (Slice 5): plays instead of still/slideshow when on and
+  // its file is on this device. Everything that needs a still reads its poster.
+  const moving = useMovingWallpaper();
+  const movingOn = Boolean(theme.movingWallpaper && moving);
+  const frostSrc = movingOn
+    ? theme.movingPoster
+    : theme.slideshowEnabled && theme.wallpapers && theme.wallpapers.length > 0
+      ? theme.wallpapers[slideshowIndex % theme.wallpapers.length]
+      : theme.wallpaper;
+  const frostBlur = Math.max(6, theme.glass?.blur ?? 14);
+  useEffect(() => {
+    const root = document.documentElement;
+    if (!frostOn || !frostSrc) {
+      root.style.removeProperty('--bl-frost-image');
+      return;
+    }
+    let cancelled = false;
+    const page = getComputedStyle(root).getPropertyValue('--bytelight-page').trim() || '#000000';
+    void paintFrost(frostSrc, { page, blurPx: frostBlur }).then((url) => {
+      if (cancelled) return;
+      if (url) root.style.setProperty('--bl-frost-image', `url("${url}")`);
+      else root.style.removeProperty('--bl-frost-image');
+    });
+    return () => { cancelled = true; };
+  }, [frostOn, frostSrc, frostBlur, theme.mode, theme.id]);
+
+  // Her glass texture (Slice 3): baked once at her strength and shared by
+  // every glass surface through --bl-tex-image; html.bl-tex switches the
+  // texture rules in index.css on. Fit sets size / repeat / attachment.
+  const texOn = textureOn(theme.glass);
+  const texSrc = texOn ? theme.glass!.texture! : null;
+  const texAlpha = textureAlpha(theme.glass);
+  const texFit = theme.glass?.textureFit;
+  useEffect(() => {
+    const root = document.documentElement;
+    for (const [k, v] of Object.entries(textureFitVars(theme.glass))) root.style.setProperty(k, v);
+    if (!texSrc) {
+      root.classList.remove('bl-tex');
+      root.style.removeProperty('--bl-tex-image');
+      return;
+    }
+    let cancelled = false;
+    let made: string | null = null;
+    // A short wait so dragging the strength slider doesn't bake on every step.
+    const t = setTimeout(() => {
+      void bakeTexture(texSrc, texAlpha).then((url) => {
+        if (cancelled) { if (url) URL.revokeObjectURL(url); return; }
+        made = url;
+        if (url) {
+          root.style.setProperty('--bl-tex-image', `url("${url}")`);
+          root.classList.add('bl-tex');
+        } else {
+          root.classList.remove('bl-tex');
+          root.style.removeProperty('--bl-tex-image');
+        }
+      });
+    }, 120);
+    return () => {
+      cancelled = true;
+      clearTimeout(t);
+      // Free the previous copy once the next one has had a moment to land.
+      if (made) { const old = made; setTimeout(() => URL.revokeObjectURL(old), 3000); }
+    };
+  }, [texSrc, texAlpha, texFit]);
+
+  if (movingOn && moving) {
+    return <MovingBackground url={moving.url} kind={moving.kind} poster={theme.movingPoster} />;
+  }
+
   if (theme.slideshowEnabled && theme.wallpapers && theme.wallpapers.length > 0) {
     return (
       <AnimatePresence>
@@ -217,6 +298,37 @@ function AppBackground({ theme }: { theme: AppTheme }) {
   }
 
   return null;
+}
+
+// Slice 5: the moving wallpaper itself. Muted, looping, inline, no controls;
+// paused whenever the app is hidden (battery), and a still poster instead if
+// the phone asks for reduced motion. Same place and fade as the still one.
+function MovingBackground({ url, kind, poster }: { url: string; kind: 'video' | 'image'; poster?: string }) {
+  const ref = useRef<HTMLVideoElement>(null);
+  const [reduce, setReduce] = useState(() =>
+    typeof window !== 'undefined' && !!window.matchMedia?.('(prefers-reduced-motion: reduce)').matches);
+  useEffect(() => {
+    const mq = window.matchMedia?.('(prefers-reduced-motion: reduce)');
+    if (!mq) return;
+    const on = () => setReduce(mq.matches);
+    mq.addEventListener?.('change', on);
+    return () => mq.removeEventListener?.('change', on);
+  }, []);
+  useEffect(() => {
+    const v = ref.current;
+    if (!v) return;
+    const sync = () => {
+      if (document.hidden) v.pause();
+      else void v.play().catch(() => { /* autoplay refused: the poster stays */ });
+    };
+    sync();
+    document.addEventListener('visibilitychange', sync);
+    return () => document.removeEventListener('visibilitychange', sync);
+  }, [url, reduce]);
+  const cls = 'absolute inset-0 z-0 opacity-80 pointer-events-none w-full h-full object-cover';
+  if (reduce && poster) return <img className={cls} src={poster} alt="Wallpaper" />;
+  if (kind === 'image') return <img className={cls} src={url} alt="Wallpaper" />;
+  return <video ref={ref} className={cls} src={url} poster={poster} autoPlay muted loop playsInline preload="auto" disablePictureInPicture aria-hidden="true" />;
 }
 
 export type OsScreen =
@@ -411,6 +523,10 @@ export default function App() {
   
   // Modals
   const [showSettings, setShowSettings] = useState(false);
+  // Slice 7 (Apply = real save): what she had when Settings opened, and a
+  // pending "leave Settings" waiting on Apply / Discard / Keep editing.
+  const settingsSnap = useRef<SettingsSnapshot<AppTheme, AppSettings> | null>(null);
+  const [pendingClose, setPendingClose] = useState<null | { then?: () => void }>(null);
   const [showContactInfo, setShowContactInfo] = useState(false);
 
   // Theme State
@@ -433,6 +549,7 @@ export default function App() {
         // that failed to update due to quota limits
         delete parsed.wallpaper;
         delete parsed.lockScreenWallpaper;
+        delete parsed.movingPoster;
         delete parsed.wallpapers;
         return parsed;
       } catch (e) {}
@@ -444,7 +561,7 @@ export default function App() {
 
   // Update theme-color meta tag, Native Status Bar, and Body Background
   useEffect(() => {
-    const activeTheme = withAccentOverride(THEMES[theme.id] || THEMES['monochrome'], theme.accentOverride, theme.accentPalette);
+    const activeTheme = activeThemeFor(theme);
     const colors = activeTheme[theme.mode];
     const resolved = resolveThemeColors(colors);
     const pageBgColor = theme.id === 'custom'
@@ -456,7 +573,7 @@ export default function App() {
     // When Settings is open (showSettings), always use pageBgColor since
     // Settings has an opaque header that needs the status bar to match.
     let themeColor = pageBgColor;
-    if (!showSettings && osState === 'home' && theme.wallpaper) {
+    if (!showSettings && osState === 'home' && (theme.wallpaper || (theme.movingWallpaper && theme.movingPoster))) {
       themeColor = '#000000';
     } else if (theme.mode === 'light') {
       // Daylight status bar stays clean white (owner's call, Jul 2026) —
@@ -634,6 +751,17 @@ export default function App() {
     document.title = appSettings.osName || 'Bytelight OS';
   }, [appSettings.osName]);
 
+  // Her logo as the browser / PWA tab icon where the phone allows (the APK's
+  // home-screen icon is baked in at build time). Back to the stock icon without one.
+  useEffect(() => {
+    const links = Array.from(document.querySelectorAll<HTMLLinkElement>('link[rel="icon"], link[rel="apple-touch-icon"]'));
+    for (const l of links) {
+      if (!l.dataset.stock) l.dataset.stock = l.getAttribute('href') || '';
+      l.href = appSettings.appLogo || l.dataset.stock;
+      if (l.rel === 'icon') l.type = appSettings.appLogo ? '' : 'image/png';
+    }
+  }, [appSettings.appLogo]);
+
   // Sync System Bars removed, merged into theme-color effect above
 
   // The phone is served same-origin with the Bytelight backend.
@@ -709,51 +837,35 @@ export default function App() {
     void deliverLastCrashReport();
   }, [authenticated]);
 
+  // Sync (Slice 8): take the house's setup when the app opens, and again
+  // when she comes back to it, if it's newer than what this device has.
+  // Never while Settings is open (that's her draft). See lib/sync.ts.
+  const applyPulled = (p: Pulled) => {
+    setTheme((prev) => ({ ...prev, ...p.themePatch }));
+    setAppSettings((prev) => ({ ...prev, ...p.settingsPatch }));
+    if (p.contacts) setContacts((prev) => ({ ...prev, ...p.contacts! }));
+  };
+  const lastPullTry = useRef(0);
+  const showSettingsRef = useRef(showSettings);
+  showSettingsRef.current = showSettings;
   useEffect(() => {
-    if (!isLoaded) return;
-    if (!authenticated) return;
-    if (serverSettingsHydrated.current) return;
+    if (!isLoaded || !authenticated) return;
     let cancelled = false;
-    let retryTimer: ReturnType<typeof setTimeout> | undefined;
-    const attempt = async () => {
+    const tryPull = async () => {
+      if (showSettingsRef.current || Date.now() - lastPullTry.current < 30000) return;
+      lastPullTry.current = Date.now();
       try {
-        const blob = await fetchServerSettings();
-        if (cancelled) return;
-        if (blob) {
-          if (blob.theme) setTheme((prev) => ({ ...prev, ...blob.theme! }));
-          if (blob.contacts) setContacts((prev) => ({ ...prev, ...blob.contacts! }));
-          if (blob.appSettings) {
-            const serverAppSettings = {
-              ...blob.appSettings,
-              ...(Array.isArray(blob.appSettings.dockAppIds)
-                ? { dockAppIds: migrateAppIds(blob.appSettings.dockAppIds) }
-                : {}),
-            };
-            setAppSettings((prev) => ({ ...prev, ...serverAppSettings }));
-          }
-        }
-        // Only mark hydration complete when the fetch SUCCEEDED. A null
-        // blob here means the server confirmed it has no stored settings
-        // — safe to mark hydrated so the push effect seeds the server
-        // with our local state. Errors (network / auth / parse) throw
-        // and land in the catch below, leaving hydration false so the
-        // push effect stays blocked and CAN'T overwrite the real
-        // server-side data with local defaults.
+        const p = await pullSetup();
+        if (p && !cancelled && !showSettingsRef.current) applyPulled(p);
         serverSettingsHydrated.current = true;
       } catch (err) {
-        console.warn('[Settings] sync failed, will retry once:', err);
-        if (cancelled || retryTimer) return;
-        retryTimer = setTimeout(() => {
-          retryTimer = undefined;
-          if (!cancelled) void attempt();
-        }, 5000);
+        console.warn('[Sync] pull failed:', err);
       }
     };
-    void attempt();
-    return () => {
-      cancelled = true;
-      if (retryTimer) clearTimeout(retryTimer);
-    };
+    void tryPull();
+    const onVisible = () => { if (document.visibilityState === 'visible') void tryPull(); };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => { cancelled = true; document.removeEventListener('visibilitychange', onVisible); };
   }, [isLoaded, authenticated]);
 
   // Local metadata for reactions and bookmarks (persisted in localStorage)
@@ -1000,9 +1112,11 @@ export default function App() {
     }
   }, [theme.mode]);
 
-  // Persist Theme (Local)
+  // Persist Theme (Local). Slice 7: held while Settings is open; Apply (or
+  // closing with nothing changed) lets it through.
   useEffect(() => {
     if (!isLoaded) return;
+    if (showSettings) return;
     localforage.setItem('bytelight_theme', theme).catch(e => {
       console.error('Failed to save theme to localforage:', e);
     });
@@ -1011,9 +1125,12 @@ export default function App() {
       delete themeForLocalStorage.wallpaper;
       delete themeForLocalStorage.lockScreenWallpaper;
       delete themeForLocalStorage.wallpapers;
+      delete themeForLocalStorage.movingPoster;
+      // Her glass texture is an image too: the full theme (localforage) keeps it.
+      if (themeForLocalStorage.glass?.texture) themeForLocalStorage.glass = { ...themeForLocalStorage.glass, texture: undefined };
       localStorage.setItem('bytelight_theme', JSON.stringify(themeForLocalStorage));
     } catch (e) {}
-  }, [theme, isLoaded]);
+  }, [theme, isLoaded, showSettings]);
 
   // Persist Contacts
   useEffect(() => {
@@ -1030,26 +1147,40 @@ export default function App() {
 
   useEffect(() => {
     if (!isLoaded) return;
+    if (showSettings) return; // Slice 7: held until Apply
     localforage.setItem('bytelight_settings', appSettings).catch(e => {
       console.error('Failed to save settings to localforage:', e);
     });
     try {
-      localStorage.setItem('bytelight_settings', JSON.stringify(appSettings));
+      // Her logo is an image: the full copy (localforage) keeps it.
+      const { appLogo: _logo, ...settingsForLocalStorage } = appSettings;
+      localStorage.setItem('bytelight_settings', JSON.stringify(settingsForLocalStorage));
     } catch (e) {}
-  }, [appSettings, isLoaded]);
+  }, [appSettings, isLoaded, showSettings]);
 
-  // Push theme + contacts + appSettings to /api/settings whenever any
-  // of them change. Debounced 1s so quickly-typed changes don't fire a
-  // PUT per keystroke. Gated on serverSettingsHydrated.current so we
-  // never overwrite the server with localStorage before reconciling.
+  // Sync (Slice 8): nothing is sent on every change any more. Apply sends
+  // (finishSettings), and Setup Sync's Send button sends on purpose.
+  // Setup Sync's buttons reach this state through registerSyncHandlers.
+  const syncStateRef = useRef({ theme, appSettings, contacts });
+  syncStateRef.current = { theme, appSettings, contacts };
   useEffect(() => {
-    if (!isLoaded || !authenticated) return;
-    if (!serverSettingsHydrated.current) return;
-    const t = setTimeout(() => {
-      void pushServerSettings({ theme, contacts, appSettings, extras: collectLocalExtras() });
-    }, 1000);
-    return () => clearTimeout(t);
-  }, [theme, contacts, appSettings, isLoaded, authenticated]);
+    registerSyncHandlers({
+      send: () => pushSetup(syncStateRef.current, collectLocalExtras()),
+      bring: async () => {
+        try {
+          const p = await pullSetup(true);
+          if (p) {
+            applyPulled(p);
+            if (p.extras && typeof p.extras === 'object') applyLocalExtras(p.extras);
+          }
+          return { ok: true };
+        } catch (e) {
+          return { ok: false, reason: e instanceof Error ? e.message : 'bring failed' };
+        }
+      },
+    });
+    return () => registerSyncHandlers(null);
+  }, []);
 
   // Reconcile custom emojis with the backend on first successful connect:
   // upload any legacy base64 entries, pull anything new, and write the
@@ -1164,6 +1295,44 @@ export default function App() {
       }
     })();
   }, [isLoaded, ksConnection]);
+
+  // Slice 7: take the snapshot the moment Settings opens.
+  useEffect(() => {
+    if (!showSettings) return;
+    settingsSnap.current = { theme, settings: appSettings };
+    void beginMovingDraft();
+    // Only on opening: later edits must not move the snapshot.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showSettings]);
+
+  // Leave Settings, then run `then` (where she was going).
+  const finishSettings = (how: 'apply' | 'discard', then?: () => void) => {
+    const snap = settingsSnap.current;
+    // Sync (Slice 8): an Apply that changed something (or touched the Fonts /
+    // Closet library) goes to the house. Closing with no changes sends nothing,
+    // so an untouched device can never overwrite a newer setup.
+    if (how === 'apply' && (hasUnapplied(snap, theme, appSettings) || libraryDirty())) {
+      const state = { theme, appSettings, contacts };
+      setTimeout(() => { void pushSetup(state, collectLocalExtras()).then((r) => { if (!r.ok) console.warn('[Sync] send failed:', 'reason' in r ? r.reason : r); }); }, 0);
+    }
+    if (how === 'discard' && snap) {
+      setTheme(snap.theme);
+      setAppSettings(snap.settings);
+      void discardMovingDraft();
+    } else {
+      commitMovingDraft();
+    }
+    settingsSnap.current = null;
+    setPendingClose(null);
+    setShowSettings(false); // the persistence effects run now, with what's kept
+    then?.();
+  };
+
+  // Every way out of Settings except Apply comes through here.
+  const requestCloseSettings = (then?: () => void) => {
+    if (hasUnapplied(settingsSnap.current, theme, appSettings)) setPendingClose({ then });
+    else finishSettings('apply', then);
+  };
 
   const updateTheme = (updates: Partial<AppTheme>) => {
     setTheme(prev => ({ ...prev, ...updates }));
@@ -1464,7 +1633,7 @@ export default function App() {
     if (!Capacitor.isNativePlatform()) return;
     let remove: (() => void) | undefined;
     void CapacitorApp.addListener('backButton', () => {
-      if (showSettings) { setShowSettings(false); return; }
+      if (showSettings) { requestCloseSettings(); return; }
       if (osState === 'appdrawer') { setOsState('home'); return; }
       // Ask the innermost screen first. An app three pages deep gets to step
       // back one page instead of the whole thing shutting — see back-stack.
@@ -1558,9 +1727,13 @@ export default function App() {
     return () => window.removeEventListener('keydown', onKey);
   }, [generating]);
 
-  const activeTheme = withAccentOverride(THEMES[theme.id] || THEMES['monochrome'], theme.accentOverride, theme.accentPalette);
+  const activeTheme = activeThemeFor(theme);
   const colors = activeTheme[theme.mode];
-  const activeFontFamily = appSettings.fontFamily || activeTheme.fontFamily;
+  // The Type card (Slice 4) drives fonts through CSS variables now. The old
+  // System Font class only stays while she hasn't touched the Type card (it
+  // maps across in effectiveType); after that the root is always font-sans,
+  // whose stack is her Text font.
+  const activeFontFamily = theme.type ? 'font-sans' : (appSettings.fontFamily === 'font-serif' || appSettings.fontFamily === 'font-mono' ? 'font-sans' : (appSettings.fontFamily || activeTheme.fontFamily));
 
   // Bubble handlers read through a ref at call time so the memoized bubble
   // list below never holds stale closures (handleReact closes over messages,
@@ -1719,6 +1892,18 @@ export default function App() {
   useEffect(() => {
     const root = document.documentElement;
     const resolved = resolveThemeColors(colors);
+    // Her Text color pick: the screens' classes read these two vars, and the
+    // resolved palette carries the real colors so color-mix() stays valid.
+    if (theme.textOverride) {
+      const ink = textOverrideColors(theme.textOverride);
+      root.style.setProperty('--bl-text-override', ink.main);
+      root.style.setProperty('--bl-text-override-muted', ink.muted);
+      resolved.textMain = ink.main;
+      resolved.textMuted = ink.muted;
+    } else {
+      root.style.removeProperty('--bl-text-override');
+      root.style.removeProperty('--bl-text-override-muted');
+    }
     const customMode = theme.id === 'custom' ? theme.customColors?.[theme.mode] : undefined;
     const accentForContrast = customMode?.accent || resolved.accent;
     const userBubbleText = theme.id === 'custom'
@@ -1770,9 +1955,30 @@ export default function App() {
       theme.id === 'custom' ? customCompInk : compBubbleText,
       customCompInk,
     ));
-    root.style.setProperty('--bytelight-surface', `color-mix(in srgb, ${resolved.panelBg} 72%, transparent)`);
-    root.style.setProperty('--bytelight-surface-strong', `color-mix(in srgb, ${resolved.panelBg} 90%, transparent)`);
-    root.style.setProperty('--bytelight-hairline', resolved.panelBorder);
+    // ONE GLASS. Every surface in the house (panels, cards, bubbles, dock,
+    // app tiles and labels, widgets, fields, composer) used to mix its own
+    // recipe (72%, 86%, 90%, +7/9/10/11% accent, Cosmos' own 3-13% violet), so
+    // one theme read purple in Settings, navy in the drawer and clear in chat.
+    // Now the material is defined here, once, and index.css points every
+    // surface at it. Tint = the theme's panel colour made opaque over the page;
+    // opacity is one number for the whole house.
+    // Her Glass card drives the numbers (lib/glass.ts); untouched = Slice 1.
+    const glassOut = glassVars(theme.glass, {
+      panel: solid(resolved.panelBg, customMode?.panelBg),
+      page: solid(resolved.pageBg, customMode?.pageBg),
+      hairline: resolved.panelBorder,
+      text: resolved.textMain,
+      accent: solid(resolved.accent, customMode?.accent),
+    });
+    for (const [k, v] of Object.entries(glassOut)) root.style.setProperty(k, v);
+    const glass = glassOut['--bl-glass'];
+    root.classList.toggle('bl-frost-painted', theme.glass?.bubbleFrost === 'painted');
+    // The legacy surface names now ARE the glass, so the ~55 inline uses in
+    // screens follow without touching each call site.
+    root.style.setProperty('--bytelight-surface', glass);
+    root.style.setProperty('--bytelight-surface-strong', glass);
+    // Her glass border colour is the house's hairline too, so every edge matches.
+    root.style.setProperty('--bytelight-hairline', glassOut['--bl-glass-border']);
     root.style.setProperty('--bytelight-icon', `color-mix(in srgb, ${resolved.textMain} 90%, transparent)`);
     root.style.setProperty('--bytelight-label', `color-mix(in srgb, ${resolved.textMain} 82%, transparent)`);
     root.style.setProperty('--bytelight-loose-shadow', theme.mode === 'dark' ? 'rgba(0, 0, 0, 0.96)' : 'rgba(255, 255, 255, 0.96)');
@@ -1786,29 +1992,33 @@ export default function App() {
     // BL model: the accent stays whatever she picked, the skin is the room.
     root.classList.toggle('skin-cosmos', theme.skin === 'cosmos');
     root.style.setProperty('--fx-aura', String((theme.fx?.aura ?? 100) / 100));
-    root.style.setProperty('--fx-glow', String((theme.fx?.glow ?? 100) / 100));
+    // The Cosmos violet haze keeps its default strength; its slider merged
+    // into the one Glow on the Glass card (Nov 20).
+    root.style.setProperty('--fx-glow', '1');
     root.style.setProperty('--fx-motion', String((theme.fx?.motion ?? 100) / 100));
-    // BL typography: a chosen preset pins the three font vars inline on <html>
-    // (wins over the skin's class-level heading); unset lets the skin breathe.
-    const preset = TYPOGRAPHY_PRESETS.find((t) => t.name === theme.typography);
-    if (preset) {
-      root.style.setProperty('--font-heading', fontStack(preset.heading));
-      root.style.setProperty('--font-body', fontStack(preset.body));
-      root.style.setProperty('--font-mono-choice', monoStack(preset.mono));
-    } else {
-      root.style.removeProperty('--font-heading');
-      root.style.removeProperty('--font-body');
-      root.style.removeProperty('--font-mono-choice');
+    // Type (Slice 4): a font per role, pinned inline on <html> so it wins over
+    // the skin's class-level heading. Unset roles hand back to the skin.
+    // The old preset / System Font still carry over until she uses the card.
+    const type = effectiveType(theme.type, theme.typography, appSettings.fontFamily);
+    for (const [k, v] of Object.entries(typeVars(type))) {
+      if (v) root.style.setProperty(k, v);
+      else root.style.removeProperty(k);
     }
-  }, [colors, theme.mode, theme.id, theme.customColors, theme.shapeRadius, theme.skin, theme.fx, theme.accentOverride, theme.accentPalette, theme.typography]);
+  }, [colors, theme.mode, theme.id, theme.customColors, theme.shapeRadius, theme.skin, theme.fx, theme.accentOverride, theme.accentPalette, theme.typography, theme.textOverride, theme.glass, theme.type, appSettings.fontFamily]);
+
+  // Her uploaded fonts: load from the device and register once at start.
+  useEffect(() => { void loadUserFonts(); }, []);
 
   // The audiobook's now-playing bar opens the Reading Nook on the book being
   // read; back from there returns to the thread or drawer she tapped it in.
   const openNookFromBar = () => {
     if (osState === 'library') return;
-    setAppReturnTo(nookReturnTo(osState));
-    setShowSettings(false);
-    setOsState('library');
+    const go = () => {
+      setAppReturnTo(nookReturnTo(osState));
+      setOsState('library');
+    };
+    if (showSettings) requestCloseSettings(go);
+    else go();
   };
 
   return (
@@ -1851,7 +2061,8 @@ export default function App() {
           <LockScreen
             key="locked"
             onUnlock={() => setOsState('home')}
-            wallpaper={theme.lockScreenWallpaper || theme.wallpaper}
+            nameplate={nameplateOf(appSettings)}
+            wallpaper={theme.lockScreenWallpaper || (theme.movingWallpaper && theme.movingPoster) || theme.wallpaper}
             face={lockFaceOf(theme.lockFace)}
             position={lockPositionOf(theme.lockClockPosition)}
             size={lockSizeOf(theme.lockClockSize)}
@@ -1881,7 +2092,8 @@ export default function App() {
             onOpenApp={openApp}
             onOpenDrawer={() => setOsState('appdrawer')}
             onLock={() => setOsState('locked')}
-            wallpaper={theme.wallpaper}
+            nameplate={nameplateOf(appSettings)}
+            wallpaper={(theme.movingWallpaper && theme.movingPoster) || theme.wallpaper}
             themeConfig={activeTheme}
             themeMode={theme.mode}
             messagesBadge={totalUnread}
@@ -2444,11 +2656,25 @@ export default function App() {
             appSettings={appSettings}
             onThemeChange={updateTheme}
             onSettingsChange={updateAppSettings}
-            onClose={() => {
-              setShowSettings(false);
-              setOsState('appdrawer');
-            }}
+            onClose={() => requestCloseSettings(() => setOsState('appdrawer'))}
+            onApply={() => finishSettings('apply', () => setOsState('appdrawer'))}
           />
+        )}
+        {/* Slice 7: leaving Settings with changes that aren't applied. */}
+        {showSettings && pendingClose && (
+          <div className="fixed inset-0 z-[200] flex items-end justify-center bg-black/50 p-4 sm:items-center" style={{ paddingBottom: 'calc(var(--sab, 0px) + 1rem)' }}>
+            <div role="alertdialog" aria-modal="true" aria-labelledby="unapplied-title" className={cn('bytelight-theme-panel w-full max-w-sm space-y-4 rounded-2xl border p-5', colors.panelBorder)}>
+              <div className="space-y-1">
+                <h2 id="unapplied-title" className={cn('text-[15px] font-semibold', colors.textMain)}>You have unsaved changes</h2>
+                <p className={cn('text-[12px]', colors.textMuted)}>Apply keeps them. Discard puts everything back the way it was when you opened Settings.</p>
+              </div>
+              <div className="flex flex-col gap-2">
+                <button type="button" onClick={() => finishSettings('apply', pendingClose.then)} className="w-full rounded-xl py-2.5 text-sm font-bold" style={{ backgroundColor: colors.accent, color: 'var(--bytelight-on-accent)' }}>Apply</button>
+                <button type="button" onClick={() => finishSettings('discard', pendingClose.then)} className={cn('w-full rounded-xl border py-2.5 text-sm font-semibold', colors.panelBorder, colors.textMain)}>Discard</button>
+                <button type="button" onClick={() => setPendingClose(null)} className={cn('w-full rounded-xl py-2 text-sm', colors.textMuted)}>Keep editing</button>
+              </div>
+            </div>
+          </div>
         )}
         {showContactInfo && (
           <ContactInfo 
