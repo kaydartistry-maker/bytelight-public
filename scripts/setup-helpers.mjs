@@ -57,9 +57,18 @@ export function joinNames(names) {
  */
 export const ENGINES = [
   {
-    key: 'claude',
-    label: 'Claude Code (your Claude plan login)',
-    model: 'sonnet', // "latest Sonnet": never goes stale on a new install
+    key: 'claude-cli',
+    label: 'Claude, CLI lane (recommended): one warm Claude session that stays open, your Claude plan login',
+    model: 'claude-cli/claude-sonnet-5-5',
+    signIn: [
+      'Install Claude Code:  npm install -g @anthropic-ai/claude-code',
+      'Sign in:              claude auth login',
+    ],
+  },
+  {
+    key: 'claude-sdk',
+    label: "Claude, Claude's SDK lane: starts Claude fresh for every message, same Claude plan login",
+    model: 'sonnet', // "latest Sonnet" on the SDK lane
     signIn: [
       'Install Claude Code:  npm install -g @anthropic-ai/claude-code',
       'Sign in:              claude auth login',

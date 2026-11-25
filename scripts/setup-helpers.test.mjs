@@ -35,7 +35,10 @@ test('names read as plain English', () => {
 import { ENGINES, engineSettings, yamlQuote } from './setup-helpers.mjs';
 
 test('Claude and Codex never start a house on an old model', () => {
-  assert.equal(engineSettings('claude').model, 'sonnet');
+  assert.equal(engineSettings('claude-cli').model, 'claude-cli/claude-sonnet-5-5');
+  assert.equal(engineSettings('claude-sdk').model, 'sonnet');
+  assert.equal(ENGINES[0].key, 'claude-cli', 'the warm CLI lane is the default pick');
+  assert.match(ENGINES.find((e) => e.key === 'claude-sdk').label, /SDK lane/);
   assert.equal(engineSettings('codex').model, 'codex-cli/gpt-6.1-sol');
   for (const e of ENGINES) assert.ok(!String(e.model).includes('4-6'));
 });
