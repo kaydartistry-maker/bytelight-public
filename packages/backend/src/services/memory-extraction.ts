@@ -504,20 +504,22 @@ export function getMemoryExtractionStatus(): MemoryExtractionStatus {
 export function getArchivistSettings(): {
   provider: string;
   model: string;
+  /** 'house' when the Archivist follows the house's engine, 'override' when it has its own. */
+  source: 'override' | 'house';
   effort: ArchivistEffort;
   thinking: ArchivistThinking;
 } {
   // Its own saved choice wins; otherwise it follows the house's engine
   // (helper-engine.ts), so a Codex-only or API-only house never leaves the
   // Archivist calling a Claude login it doesn't have.
-  const { provider, model } = resolveHelperEngine(
+  const { provider, model, source } = resolveHelperEngine(
     getConfig('agent.archivist_provider'),
     getConfig('agent.archivist_model'),
     (p) => (p === 'sdk' ? getConfig('memory.extraction_model') || 'haiku' : 'deepseek-v4-pro'),
   );
   const effort = (getConfig('agent.archivist_effort') || 'adaptive') as ArchivistEffort;
   const thinking = (getConfig('agent.archivist_thinking') || 'disabled') as ArchivistThinking;
-  return { provider, model, effort, thinking };
+  return { provider, model, source, effort, thinking };
 }
 
 /**

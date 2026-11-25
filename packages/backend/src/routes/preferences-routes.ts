@@ -58,8 +58,12 @@ export function createPreferencesRoutes(): Router {
           ...(() => {
             const a = getArchivistSettings();
             return {
-              archivist_provider: a.provider,
+              // Saved choice only: '' means it follows the house's engine,
+              // which archivist_runs_on names (helper-engine.ts).
+              archivist_provider: a.source === 'house' ? '' : a.provider,
               archivist_model: getConfig('agent.archivist_model') || '',
+              archivist_follows_house: a.source === 'house',
+              archivist_runs_on: { provider: a.provider, model: a.model },
               archivist_effort: a.effort,
               archivist_thinking: a.thinking,
             };

@@ -8,7 +8,9 @@ import { apiFetch } from '../bytelight';
 // the Codex CLI already holds. The hint that matters is which account each one
 // spends, so the placeholder model is listed alongside rather than buried.
 const PROVIDERS = [
+  { id: 'sdk', label: 'Claude — your Claude plan login', model: 'haiku' },
   { id: 'codex', label: 'Codex — ChatGPT subscription', model: 'gpt-5.6-sol' },
+  { id: 'antigravity', label: 'Gemini — Antigravity sign-in', model: 'gemini-4-neon-high' },
   { id: 'anthropic', label: 'Anthropic — API key, metered', model: 'claude-haiku-4-5-20251001' },
   { id: 'groq', label: 'Groq — API key, metered', model: 'llama-3.3-70b-versatile' },
   { id: 'openai', label: 'OpenAI — API key, metered', model: 'gpt-4.1-mini' },
@@ -18,6 +20,13 @@ const PROVIDERS = [
 
 function placeholderModel(provider: string): string {
   return PROVIDERS.find((p) => p.id === provider)?.model || 'model id';
+}
+
+/** "Claude — your Claude plan login · haiku": what the house is running it on. */
+function runsOnLabel(runsOn: { provider: string; model: string } | null): string {
+  if (!runsOn) return '';
+  const name = PROVIDERS.find((p) => p.id === runsOn.provider)?.label.split(' — ')[0] || runsOn.provider;
+  return `${name} · ${runsOn.model}`;
 }
 
 const EFFORT_LEVELS = [
@@ -54,7 +63,9 @@ export function ArchivistSettings({ themeConfig, themeMode }: ArchivistSettingsP
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
 
-  const [provider, setProvider] = useState('ollama');
+  // '' = follow the house's engine (the default); anything else is its own pick.
+  const [provider, setProvider] = useState('');
+  const [runsOn, setRunsOn] = useState<{ provider: string; model: string } | null>(null);
   const [model, setModel] = useState('');
   const [effort, setEffort] = useState('adaptive');
   const [thinking, setThinking] = useState('disabled');
@@ -67,7 +78,8 @@ export function ArchivistSettings({ themeConfig, themeMode }: ArchivistSettingsP
         if (!res.ok) return;
         const p = await res.json();
         if (!p || typeof p !== 'object' || !p.agent) return;
-        setProvider(p.agent.archivist_provider || 'ollama');
+        setProvider(p.agent.archivist_provider || '');
+        setRunsOn(p.agent.archivist_runs_on ?? null);
         setModel(p.agent.archivist_model || '');
         setEffort(p.agent.archivist_effort || 'adaptive');
         setThinking(p.agent.archivist_thinking || 'disabled');
@@ -88,7 +100,7 @@ export function ArchivistSettings({ themeConfig, themeMode }: ArchivistSettingsP
         body: JSON.stringify({
           agent: {
             archivist_provider: provider,
-            archivist_model: model,
+            archivist_model: provider ? model : '',
             archivist_effort: effort,
             archivist_thinking: thinking,
           },
@@ -138,9 +150,10 @@ export function ArchivistSettings({ themeConfig, themeMode }: ArchivistSettingsP
         <div className="px-3 pb-3">
           <p className={cn('text-[10px] mb-3', colors.textMuted)}>
             The Archivist reads new conversation and proposes lines for these blocks —
-            nothing lands until you approve it under Review. Codex reuses the
-            ChatGPT account you signed into with <code>codex login</code> — no extra billing.
-            Every other option here is a metered API key you supply in the Providers tab.
+            nothing lands until you approve it under Review. By default it runs on
+            whatever engine the house runs on. Pick one here to give it its own:
+            Claude, Codex and Gemini reuse their sign-ins; the rest are metered API keys
+            from the Providers tab.
             Higher effort keeps more of your companion's voice in what gets written, and
             costs more per sweep.
           </p>
@@ -148,6 +161,7 @@ export function ArchivistSettings({ themeConfig, themeMode }: ArchivistSettingsP
             <label className="flex flex-col gap-1">
               <span className={label}>Provider</span>
               <select className={input} value={provider} onChange={(e) => setProvider(e.target.value)}>
+                <option value="">Follow the house's engine{!provider && runsOn ? ` (now ${runsOnLabel(runsOn)})` : ''}</option>
                 {!PROVIDERS.some((p) => p.id === provider) && provider && (
                   <option value={provider}>{provider}</option>
                 )}
@@ -156,7 +170,12 @@ export function ArchivistSettings({ themeConfig, themeMode }: ArchivistSettingsP
                 ))}
               </select>
             </label>
-            <label className="flex flex-col gap-1">
+            {!provider && (
+              <p className={cn('text-[10px]', colors.textMuted)}>
+                Switch the house to another engine and the Archivist moves with it.
+              </p>
+            )}
+            {provider && <label className="flex flex-col gap-1">
               <span className={label}>Model</span>
               <input
                 className={input}
@@ -164,7 +183,7 @@ export function ArchivistSettings({ themeConfig, themeMode }: ArchivistSettingsP
                 onChange={(e) => setModel(e.target.value)}
                 placeholder={placeholderModel(provider)}
               />
-            </label>
+            </label>}
           </div>
           <div className={cn(title, 'mt-3')}>Effort</div>
           {chips(EFFORT_LEVELS, effort, setEffort)}
