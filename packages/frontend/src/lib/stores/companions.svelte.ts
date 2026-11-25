@@ -21,12 +21,26 @@ export interface Companion {
 }
 
 let companions = $state<Companion[]>([]);
+/** The house's own brain (GET /api/companions localBrainId, Phase 1.4). Until
+ *  the first load answers it holds the backend's default, so settings writes
+ *  keyed by brain land exactly where they always have. */
+let houseBrain = $state('companion-a-b');
 let loaded = $state(false);
 let loading = $state(false);
 
 /** The full pickable registry (reactive), in picker order. */
 export function allCompanions(): Companion[] {
   return companions;
+}
+
+/** The brain this house runs turns for. */
+export function localBrainId(): string {
+  return houseBrain;
+}
+
+/** The companions who live in this house (their brain is the house's own). */
+export function residentCompanions(): Companion[] {
+  return companions.filter((c) => c.brain === houseBrain);
 }
 
 export function companionsLoaded(): boolean {
@@ -41,8 +55,9 @@ export async function loadCompanions(force = false): Promise<void> {
   try {
     const r = await apiFetch('/api/companions');
     if (r.ok) {
-      const data = (await r.json()) as { companions?: Companion[] };
+      const data = (await r.json()) as { companions?: Companion[]; localBrainId?: string };
       companions = data.companions ?? [];
+      if (typeof data.localBrainId === 'string' && data.localBrainId) houseBrain = data.localBrainId;
       loaded = true;
     }
   } catch {

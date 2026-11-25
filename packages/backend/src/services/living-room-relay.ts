@@ -5,6 +5,7 @@ import { createMessage, getMessages } from './db.js';
 import { getSecret } from './secrets.js';
 import { getBytelightConfig } from '../config.js';
 import { priorVoicesBlock } from './room-turns.js';
+import { isLocalBrain } from './local-brain.js';
 
 // Living Room remote dispatch (Slice 4C).
 //
@@ -34,6 +35,9 @@ const REMOTE_BRAINS: Record<string, RemoteBrainConfig> = {
 };
 
 export function isRemoteBrain(brain: string): boolean {
+  // Phase 1.2: the house's own brain is never remote, even on a node whose
+  // local brain happens to be in the built-in table.
+  if (isLocalBrain(brain)) return false;
   return brain in REMOTE_BRAINS;
 }
 

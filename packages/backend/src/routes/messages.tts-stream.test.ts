@@ -6,6 +6,9 @@ import assert from 'node:assert/strict';
 // exported so we can assert ordering/attribution without an ElevenLabs key or a
 // live server (TTS generation itself is a separate, network-bound concern).
 const { planTtsSegments } = await import('./messages.js');
+const { openPairHouse } = await import('../test-support/pair-house.js');
+// Speakers come from the house's residents (Phase 1.3): seat the pair.
+openPairHouse();
 
 describe('planTtsSegments (ordered per-companion TTS stream)', () => {
   it('yields two ordered segments attributed companion-a then companion-b', () => {

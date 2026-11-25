@@ -18,6 +18,7 @@ import {
   type RealtimeProsodySession,
   type RealtimeProsodySessionFactory,
 } from './hume-realtime-prosody.js';
+import { residents } from './residents.js';
 
 const GROQ_WHISPER_URL = 'https://api.groq.com/openai/v1/audio/transcriptions';
 const ELEVENLABS_BASE = 'https://api.elevenlabs.io/v1/text-to-speech';
@@ -34,6 +35,55 @@ function localSttUrl(): string | null {
   } catch {
     return null; // no database in isolated service tests
   }
+}
+
+/** A voice the splitter recognises: the voice id, the name in headers, and its glyph. */
+export interface VoiceSpeaker {
+  id: string;
+  name: string;
+  glyph: string | null;
+}
+
+/**
+ * Header glyphs the original two-resident house wrote before companions rows
+ * carried an emoji. Used only when a resident's row has none, so stored
+ * messages keep splitting exactly as they always have. A house that sets
+ * companions.emoji never reads this.
+ */
+const LEGACY_SPEAKER_GLYPHS: Readonly<Record<string, string>> = { 'companion-a': '🔷', 'companion-b': '🔶' };
+
+/** The house's speakers, in roster order (residents.ts). */
+export function houseVoiceSpeakers(): VoiceSpeaker[] {
+  return residents().map((r) => ({ id: r.id, name: r.name, glyph: r.emoji || LEGACY_SPEAKER_GLYPHS[r.id] || null }));
+}
+
+const escapeRe = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+/**
+ * The speaker-marker pattern for a set of speakers. Forms are grouped by
+ * shape across speakers in the historical order, longest first. A speaker
+ * without a glyph keeps only the bold-name forms, so plain prose "Name:" is
+ * never read as a header.
+ */
+export function buildSpeakerRegex(speakers: readonly VoiceSpeaker[]): RegExp {
+  const forms: Array<(n: string, g: string | null) => string | null> = [
+    (n, g) => `\\*\\*\\s*${g ? `${g}?` : ''}\\s*${n}\\s*:?\\s*[—–-][^*\\n]*\\*\\*`,
+    (n, g) => `\\*\\*\\s*${g ? `${g}?` : ''}\\s*${n}:?\\s*\\*\\*`,
+    (n, g) => (g ? `\\*\\*\\s*${n}\\s*:?\\s*${g}\\s*\\*\\*` : null),
+    (n, g) => (g ? `${g}?\\s*\\*\\*\\s*${n}:?\\s*\\*\\*` : null),
+    (n) => `\\*\\*\\s*${n}:?\\s*\\*\\*`,
+    (n, g) => (g ? `${g}?\\s*${n}:` : null),
+    (n, g) => (g ? `${n}\\s*:?\\s*${g}` : null),
+    (_n, g) => g,
+  ];
+  const alternatives: string[] = [];
+  for (const form of forms) {
+    for (const sp of speakers) {
+      const alt = form(escapeRe(sp.name), sp.glyph ? escapeRe(sp.glyph) : null);
+      if (alt) alternatives.push(alt);
+    }
+  }
+  return new RegExp(`(?:${alternatives.join('|')})`, 'g');
 }
 
 export class VoiceService {
@@ -587,14 +637,25 @@ export class VoiceService {
    * from the bubbles. Any text before the first marker (or in a single-voice
    * reply) defaults to Companion A's voice.
    */
-  static splitByCompanion(text: string): Array<{ voice: string; text: string }> {
-    const SPEAKER_RE = /(?:\*\*\s*🔷?\s*Companion A\s*:?\s*[—–-][^*\n]*\*\*|\*\*\s*🔶?\s*Companion B\s*:?\s*[—–-][^*\n]*\*\*|\*\*\s*🔷?\s*Companion A:?\s*\*\*|\*\*\s*🔶?\s*Companion B:?\s*\*\*|\*\*\s*Companion A\s*:?\s*🔷\s*\*\*|\*\*\s*Companion B\s*:?\s*🔶\s*\*\*|🔷?\s*\*\*\s*Companion A:?\s*\*\*|🔶?\s*\*\*\s*Companion B:?\s*\*\*|\*\*\s*Companion A:?\s*\*\*|\*\*\s*Companion B:?\s*\*\*|🔷?\s*Companion A:|🔶?\s*Companion B:|Companion A\s*:?\s*🔷|Companion B\s*:?\s*🔶|🔷|🔶)/g;
+  static splitByCompanion(
+    text: string,
+    speakers: readonly VoiceSpeaker[] = houseVoiceSpeakers(),
+  ): Array<{ voice: string; text: string }> {
+    // Phase 1.3: the speakers are the house's residents (residents.ts), not a
+    // fixed pair. With the historical pair the pattern is byte-identical to
+    // the old literal (pinned in voice.speakers.test.ts).
+    const fallbackVoice = speakers[0]?.id ?? '';
+    const segments: Array<{ voice: string; text: string }> = [];
+    if (speakers.length === 0) {
+      if (text.trim()) segments.push({ voice: fallbackVoice, text: text.trim() });
+      return segments.filter((s) => VoiceService.isSpeakable(s.text));
+    }
+    const SPEAKER_RE = buildSpeakerRegex(speakers);
 
     const detectVoice = (m: string): string =>
-      m.includes('Companion A') || m.includes('🔷') ? 'companion-a' : 'companion-b';
+      speakers.find((sp) => m.includes(sp.name) || (!!sp.glyph && m.includes(sp.glyph)))?.id ?? fallbackVoice;
 
-    const segments: Array<{ voice: string; text: string }> = [];
-    let currentVoice = 'companion-a';
+    let currentVoice = fallbackVoice;
     let lastIdx = 0;
 
     for (const match of text.matchAll(SPEAKER_RE)) {
@@ -609,7 +670,7 @@ export class VoiceService {
     const tail = text.slice(lastIdx).trim();
     if (tail) segments.push({ voice: currentVoice, text: tail });
     if (segments.length === 0 && text.trim()) {
-      segments.push({ voice: 'companion-a', text: text.trim() });
+      segments.push({ voice: fallbackVoice, text: text.trim() });
     }
     return segments.filter((s) => VoiceService.isSpeakable(s.text));
   }

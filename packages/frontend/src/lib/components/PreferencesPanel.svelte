@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { localBrainId } from '$lib/stores/companions.svelte';
   import { onMount } from 'svelte';
   import { apiFetch } from '../utils/api.js';
   import { updateSetting, getConfig } from '../stores/settings.svelte';
@@ -52,12 +53,12 @@
   // agent.model / agent.model_autonomous config (now systemFallback only) in
   // the resolver (companion-resolver.ts:127-144). Autonomous resolves at
   // companion scope with threadId forced null (model-resolution.ts), so the
-  // autonomous row drives wakes. The resolver keys on companion_id='companion-a-b'
-  // (model-resolution.ts:59) — sending any other id would silently not match.
+  // autonomous row drives wakes. The resolver keys on the house's own brain id
+  // (local-brain.ts), served by GET /api/companions as localBrainId.
   //
   // Provider→model selection mirrors ModelSelector.svelte (the per-thread pill):
   // same provider list, same lazy catalogs, MODEL_VARIANTS for Claude/claude-cli.
-  const COMPANION_ID = 'companion-a-b';
+  const COMPANION_ID = $derived(localBrainId());
 
   // Provider per tier. The Model dropdown follows the selected provider.
   let provider = $state<ProviderId>('claude');

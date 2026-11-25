@@ -30,6 +30,7 @@ import {
   resolveCompanionConfig,
   type ResolvedCompanionConfig,
 } from '../companion-resolver.js';
+import { getLocalBrainId } from '../local-brain.js';
 
 export type ResolvedTurnTier = 'interactive' | 'autonomous';
 
@@ -56,7 +57,7 @@ export function resolveModelForTurn(
   input: ResolveModelForTurnInput,
   resolver: CompanionConfigResolver = resolveCompanionConfig,
 ): ResolvedModelForTurn {
-  const companionId = input.companionId ?? 'companion-a-b';
+  const companionId = input.companionId ?? getLocalBrainId();
   const tier: ResolvedTurnTier = input.isAutonomous
     ? 'autonomous'
     : 'interactive';

@@ -14,7 +14,7 @@ import { existsSync, readFileSync } from 'fs';
 import { join } from 'path';
 import { PROJECT_ROOT } from '../../config.js';
 import { getDb } from './state.js';
-import { createThread, getThread } from './threads.js';
+import { createThread, getThread, requireThreadRoster } from './threads.js';
 import { createMessage } from './messages.js';
 // byte-light's companion registry (services/db/rooms.ts): the row id IS the
 // slug ('companion-a', 'companion-b', 'companion-c'), so Aerie's `.slug` reads `.id` here.
@@ -154,7 +154,7 @@ function ensureCardRoomThread(): string {
   // it has no primary/participant split, so every companion is simply seated.
   createThread({
     id, name: 'The Card Room', type: 'named', createdAt: now, sessionType: 'v2',
-    companionIds: listCompanions().map((c) => c.id),
+    companionIds: requireThreadRoster(listCompanions().map((companion) => companion.id)),
   });
 
   getDb().prepare('UPDATE threads SET archived_at = ? WHERE id = ?').run(now, id);

@@ -30,7 +30,7 @@ import { mkdirSync, writeFileSync, readFileSync, existsSync, unlinkSync } from '
 import { renderLaneSection, type LaneIdentity } from './lane-identity.js';
 import { join, resolve } from 'path';
 import { createHash } from 'crypto';
-import { formatBlocksForPrompt, SHARED_SCOPE, COMPANION_SCOPES } from '../memory-blocks.js';
+import { formatBlocksForPrompt, SHARED_SCOPE, companionScopes } from '../memory-blocks.js';
 import { atLeast, claudeCliVersion } from './cli-version.js';
 import { getBytelightConfig } from '../../config.js';
 import { readMcpJson, type McpJsonServer } from '../mcp-json.js';
@@ -1348,7 +1348,7 @@ const CORE_MEMORY_MARK =
  */
 function renderCoreMemorySection(): string {
   try {
-    const rendered = formatBlocksForPrompt([SHARED_SCOPE, ...COMPANION_SCOPES]);
+    const rendered = formatBlocksForPrompt([SHARED_SCOPE, ...companionScopes()]);
     if (!rendered.trim()) return '';
     return `${CORE_MEMORY_MARK}## Core memory\n${rendered}`;
   } catch {

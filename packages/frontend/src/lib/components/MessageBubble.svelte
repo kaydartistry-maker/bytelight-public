@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { localBrainId } from '$lib/stores/companions.svelte';
   import MessageActionModals from './MessageActionModals.svelte';
   import { MessageActions } from './messageActions.svelte';
   import ReactionChips from './ReactionChips.svelte';
@@ -166,12 +167,12 @@
     return textForDisplay();
   });
   // Slice 4A: a message authored by a remote companion node (companion_id set,
-  // not the local 'companion-a-b' pair) is attributed WHOLE by id — his text is
+  // not this house's own brain) is attributed WHOLE by id — his text is
   // never marker-split, because the 🔷/🔶 markers belong to the local pair.
   const remoteCompanionId = $derived.by((): SpeakerId | null => {
     if (message.role !== 'companion') return null;
     const cid = (message as { companion_id?: string | null }).companion_id;
-    if (!cid || cid === 'companion-a-b') return null;
+    if (!cid || cid === localBrainId()) return null;
     return cid as SpeakerId;
   });
   const speakerBubbles = $derived.by(() => {

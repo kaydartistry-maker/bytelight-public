@@ -6,7 +6,7 @@
 import { createInterface } from 'readline';
 import { writeFileSync, existsSync, copyFileSync, mkdirSync, readdirSync } from 'fs';
 import { join, resolve } from 'path';
-import { isValidTimezone, trustedDetectedTimezone, processNameFor } from './setup-helpers.mjs';
+import { isValidTimezone, trustedDetectedTimezone, processNameFor, joinNames } from './setup-helpers.mjs';
 
 const rl = createInterface({ input: process.stdin, output: process.stdout });
 const ask = (q) => new Promise((res) => rl.question(q, res));
@@ -15,8 +15,26 @@ async function main() {
   console.log('\n  bytelight — Relational AI Companion Framework');
   console.log('  =============================================\n');
 
-  // 1. Companion name
-  const companionName = (await ask('  What should your companion be called? [Echo] ')) || 'Echo';
+  // 1. Who lives here. One companion is the usual house, not a special case.
+  // Every name typed here moves in as a companion; nobody else is added.
+  let count = 0;
+  while (!count) {
+    const answer = (await ask('  How many companions live here? [1] ')).trim() || '1';
+    const n = Number(answer);
+    if (Number.isInteger(n) && n >= 1 && n <= 12) count = n;
+    else console.log('  A whole number from 1 to 12, please.');
+  }
+  const residentNames = [];
+  while (residentNames.length < count) {
+    const i = residentNames.length + 1;
+    const label = count === 1 ? '  What is your companion called? ' : `  Companion ${i}'s name? `;
+    const name = (await ask(label)).trim();
+    if (!name) { console.log('  They need a name to move in.'); continue; }
+    if (residentNames.some((x) => x.toLowerCase() === name.toLowerCase())) { console.log('  That name is already taken in this house.'); continue; }
+    if (name.includes('"')) { console.log('  Leave out double quotes, please.'); continue; }
+    residentNames.push(name);
+  }
+  const companionName = joinNames(residentNames);
 
   // 2. User name
   const userName = (await ask('  What is your name? [User] ')) || 'User';
@@ -43,7 +61,7 @@ async function main() {
 
   // 5. House name. It becomes the background process name (pm2), so two
   // houses on one machine never collide.
-  const houseName = (await ask(`  Name your house? [${companionName}] `)).trim() || companionName;
+  const houseName = (await ask(`  Name your house? [${residentNames[0]}] `)).trim() || residentNames[0];
   const processName = processNameFor(houseName);
 
   // 5. Check Claude Code is available
@@ -55,6 +73,11 @@ async function main() {
   companion_name: "${companionName}"
   user_name: "${userName}"
   timezone: "${timezone}"
+  # The house's own brain: every companion below runs on it.
+  local_brain_id: "${processName}"
+  # Who lives here. Each name moves in as a companion on first start.
+  residents:
+${residentNames.map((n) => `    - name: "${n}"`).join('\n')}
 
 server:
   port: 3002
@@ -180,7 +203,7 @@ cors:
     npm run dev              (backend with hot reload)
     npm run dev:frontend     (frontend with Vite dev server)
 
-  ${companionName} is ready to meet you.
+  ${companionName} ${residentNames.length > 1 ? 'are' : 'is'} ready to meet you.
 `);
 
   rl.close();

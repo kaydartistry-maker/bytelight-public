@@ -51,7 +51,7 @@ import {
   mergeAuthoredCodexThoughts,
 } from './codex-thought-card.js';
 import { claimUnsentCodexSpeech, isInterimCodexSpeech } from './codex-interim-speech.js';
-import { CODEX_OPERATING_CONTRACT } from './codex-operating-contract.js';
+import { codexOperatingContract } from './codex-operating-contract.js';
 import { splitCoreMemoryFromOrientation } from '../memory-blocks.js';
 import { BYTELIGHT_CODEX_SOCKET } from '../codex-app-server-config.js';
 import { errMessage } from '../../util/errors.js';
@@ -1222,7 +1222,7 @@ export class InteractiveCodexRuntime implements AgentRuntime {
     // thread is warm across turns; thread/start refreshes base instructions
     // when a thread is (re)created, so every codex-daemon turn's thread was
     // created with this contract in place.
-    const laneContracts = `${CODEX_OPERATING_CONTRACT}\n\n${CODEX_THOUGHT_CARD_INSTRUCTIONS}`;
+    const laneContracts = `${codexOperatingContract()}\n\n${CODEX_THOUGHT_CARD_INSTRUCTIONS}`;
     const baseInstructionsFromInput = rawBaseInstructions
       ? `${rawBaseInstructions}\n\n${laneContracts}`
       : laneContracts;

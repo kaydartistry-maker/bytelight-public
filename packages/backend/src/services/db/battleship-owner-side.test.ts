@@ -14,6 +14,8 @@ process.env.RESONANT_HOME = tmpRoot;
 writeFileSync(join(tmpRoot, 'config.yaml'), 'agent:\n  cwd: .\n  model: claude-sonnet-4-6\n');
 
 const { initDb, getDb } = await import('../db.js');
+// Phase 1.1: a fresh install seeds nobody; register the rows this test is about.
+const { registerFixtureCompanions } = await import('../../test-support/pair-house.js');
 const { listCompanions } = await import('./rooms.js');
 const {
   OWNER_SIDE,
@@ -38,7 +40,7 @@ const MIGRATION_036 = join(dirname(fileURLToPath(import.meta.url)), '../../../mi
 let houses = 0;
 let firer = '';
 function seedHouse(): void {
-  initDb(join(tmpRoot, `house-${houses++}.db`));
+  registerFixtureCompanions(initDb(join(tmpRoot, `house-${houses++}.db`)));
   firer = listCompanions()[0]!.id;
 }
 

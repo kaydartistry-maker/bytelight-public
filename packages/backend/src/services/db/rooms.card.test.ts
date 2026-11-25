@@ -10,9 +10,11 @@ process.env.RESONANT_HOME = tmpRoot;
 writeFileSync(join(tmpRoot, 'config.yaml'), 'agent:\n  cwd: .\n  model: claude-sonnet-4-6\n');
 
 const { initDb } = await import('../db.js');
+// Phase 1.1: a fresh install seeds nobody; register the rows this test is about.
+const { registerFixtureCompanions } = await import('../../test-support/pair-house.js');
 const { listCompanions, updateCompanionCard } = await import('./rooms.js');
 
-before(() => initDb(dbPath));
+before(() => { registerFixtureCompanions(initDb(dbPath)); });
 after(() => rmSync(tmpRoot, { recursive: true, force: true }));
 
 describe('companion card', () => {

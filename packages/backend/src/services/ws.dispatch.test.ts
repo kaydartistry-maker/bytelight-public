@@ -10,8 +10,8 @@ import { planDispatchOrder } from './ws.js';
 const seat = (brain: string) => ({ brain });
 
 describe('planDispatchOrder (Slice 4A roster dispatch)', () => {
-  it('empty roster falls back to the local brain alone', () => {
-    assert.deepEqual(planDispatchOrder([]), ['companion-a-b']);
+  it('empty roster plans nothing — no seat, no model call (Phase 1.2)', () => {
+    assert.deepEqual(planDispatchOrder([]), []);
   });
 
   it('companion-a + companion-b seats dedupe to ONE local turn (shared brain)', () => {

@@ -23,19 +23,21 @@
   import { getActiveThreadId } from '$lib/stores/websocket.svelte';
   import { MODEL_VARIANTS, getVariant, type ProviderId, type ThinkingEffort } from '@bytelight/shared';
   import { getProfile } from '$lib/stores/profiles.svelte';
+  import { localBrainId, residentCompanions } from '$lib/stores/companions.svelte';
 
   // The shared brain the two residents run on (migrations/014_companions.sql).
   // A pick can be for the brain as a whole or for one companion alone; a
   // companion with no pick of its own follows the brain's (the resolver falls
   // through companion → brain at every scope), and a brain-wide thread pick
   // still beats any one companion's default.
-  const COMPANION_ID = 'companion-a-b';
-  const MEMBERS = ['companion-a', 'companion-b'] as const;
+  // Phase 1.4: the brain and its members come from the companions registry.
+  const COMPANION_ID = $derived(localBrainId());
+  const MEMBERS = $derived(residentCompanions().map((c) => c.id));
   const TIER = 'interactive' as const;
 
   const memberName = (id: string) => getProfile(id).name || id.charAt(0).toUpperCase() + id.slice(1);
   let brainName = $derived(MEMBERS.map(memberName).join(' & '));
-  let target = $state<string>(COMPANION_ID);
+  let target = $state<string>(localBrainId());
   let targetIsMember = $derived(target !== COMPANION_ID);
 
   // ---------- Effort options ----------

@@ -128,7 +128,7 @@ export type ClientMessage =
   | { type: 'message'; threadId: string; content: string; contentType: 'text' | 'image' | 'audio' | 'file' | 'sticker'; replyToId?: string; metadata?: Record<string, unknown> }
   | { type: 'read'; threadId: string; beforeId: string }
   | { type: 'switch_thread'; threadId: string }
-  | { type: 'create_thread'; name: string; threadType: 'named' }
+  | { type: 'create_thread'; name: string; threadType: 'named'; companionIds: string[] }
   | { type: 'voice_start'; mimeType?: string; mode?: 'dictation' | 'conversation'; recordingId?: string; analyzeTone?: boolean }
   | { type: 'voice_audio'; data: string; recordingId?: string }
   | { type: 'voice_stop'; recordingId?: string }

@@ -21,7 +21,8 @@ import { existsSync, readdirSync, readFileSync, writeFileSync } from 'fs';
 import { join, extname, basename } from 'path';
 import { homedir } from 'os';
 import crypto from 'crypto';
-import { PROJECT_ROOT } from '../config.js';
+import { PROJECT_ROOT, getBytelightConfig } from '../config.js';
+import { residents } from './residents.js';
 import { getConfig, setConfig, getConfigBool, getConfigNumber, getDb } from './db.js';
 import { errMessage } from '../util/errors.js';
 import { MAX_STYLE_REFS, styleReferenceBlock, styleReferencePathBlock } from './style-reference.js';
@@ -35,11 +36,19 @@ export type Subject = string;
 
 export interface Drawer { slug: string; label: string; isDefault: boolean; emoji?: string; }
 
-const DEFAULT_DRAWERS: ReadonlyArray<{ slug: string; label: string }> = [
-  { slug: 'companion-a', label: 'Companion A' },
-  { slug: 'companion-b', label: 'Companion B' },
-  { slug: 'user', label: 'You' },
-];
+/**
+ * The built-in reference drawers (Phase 1.3): one per resident, in roster
+ * order, then the owner's own (named from identity.user_name). Read per call
+ * so a house that gains or loses a resident sees its drawers follow.
+ */
+function defaultDrawers(): Array<{ slug: string; label: string }> {
+  const drawers = residents().map((r) => ({ slug: sanitizeSlug(r.id), label: r.name }));
+  let owner = '';
+  try { owner = getBytelightConfig().identity.user_name?.trim() ?? ''; } catch { /* config not loaded */ }
+  const ownerSlug = owner ? slugifyDrawer(owner) : '';
+  if (ownerSlug && !drawers.some((d) => d.slug === ownerSlug)) drawers.push({ slug: ownerSlug, label: owner });
+  return drawers.filter((d) => d.slug);
+}
 
 const DATA_DIR = join(PROJECT_ROOT, 'data');
 export const REFS_DIR = join(DATA_DIR, 'image-refs');
@@ -164,9 +173,10 @@ function cleanEmoji(e: string | undefined): string | undefined {
 }
 
 export function listDrawers(): Drawer[] {
-  const defaults = DEFAULT_DRAWERS.map((d) => ({ ...d, isDefault: true }));
+  const builtIn = defaultDrawers();
+  const defaults = builtIn.map((d) => ({ ...d, isDefault: true }));
   const customs = customDrawers()
-    .filter((d) => !DEFAULT_DRAWERS.some((x) => x.slug === d.slug))
+    .filter((d) => !builtIn.some((x) => x.slug === d.slug))
     .map((d) => ({ ...d, isDefault: false }));
   return [...defaults, ...customs];
 }
@@ -206,7 +216,7 @@ export function createDrawer(label: string, emoji?: string): Drawer {
 
 export function renameDrawer(slug: string, label: string, emoji?: string): Drawer {
   const s = sanitizeSlug(slug);
-  if (DEFAULT_DRAWERS.some((d) => d.slug === s)) throw new ImageGenError('The default drawers cannot be renamed.');
+  if (defaultDrawers().some((d) => d.slug === s)) throw new ImageGenError('The default drawers cannot be renamed.');
   const trimmed = String(label || '').trim();
   if (!trimmed) throw new ImageGenError('A name is required.');
   const e = cleanEmoji(emoji);
@@ -220,7 +230,7 @@ export function renameDrawer(slug: string, label: string, emoji?: string): Drawe
 
 export async function deleteDrawer(slug: string): Promise<boolean> {
   const s = sanitizeSlug(slug);
-  if (DEFAULT_DRAWERS.some((d) => d.slug === s)) throw new ImageGenError('The default drawers cannot be deleted.');
+  if (defaultDrawers().some((d) => d.slug === s)) throw new ImageGenError('The default drawers cannot be deleted.');
   const customs = customDrawers();
   const next = customs.filter((d) => d.slug !== s);
   if (next.length === customs.length) return false;

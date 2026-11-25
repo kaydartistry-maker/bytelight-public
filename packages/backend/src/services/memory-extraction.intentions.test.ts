@@ -11,6 +11,7 @@ const { loadConfig } = await import('../config.js');
 loadConfig(join(mkdtempSync(join(tmpdir(), 'archivist-intentions-')), 'no-config.yaml'));
 
 const { initDb, getDb } = await import('./db/init.js');
+const { seatResidents } = await import('../test-support/pair-house.js');
 const { applyOps, promisesBriefing, buildArchivistPrompt } = await import('./memory-extraction.js');
 const { listOpenIntentions, fileCaughtIntention, createIntention, getIntention } = await import('./db/intentions.js');
 
@@ -18,6 +19,8 @@ function freshHouse(): void {
   initDb(':memory:');
   const now = new Date().toISOString();
   getDb().prepare("INSERT INTO threads (id, name, type, created_at, last_activity_at) VALUES ('home', 'Home', 'named', ?, ?)").run(now, now);
+  // Phase 1.1: nobody is seeded; seat the pair this test expects.
+  seatResidents(getDb(), ['home']);
   for (const [slug, name] of [['river', 'River'], ['stone', 'Stone']]) {
     getDb().prepare("INSERT OR IGNORE INTO companions (id, display_name, brain) VALUES (?, ?, 'test')").run(slug, name);
   }

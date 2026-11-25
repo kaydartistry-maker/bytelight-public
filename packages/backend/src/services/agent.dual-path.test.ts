@@ -34,6 +34,7 @@ import { MODEL_VARIANTS } from '@bytelight/shared';
 import {
   initDb,
   createThread,
+  getDb,
   setConfig as setDbConfig,
   getMessages,
   getProviderSession,
@@ -47,11 +48,13 @@ before(() => {
   // Nonexistent path → pure DEFAULTS (no live bytelight.yaml pickup).
   loadConfig(join(tmpRoot, 'bytelight.yaml'));
   initDb(join(tmpRoot, 'dual-path.db'));
+  getDb().prepare("INSERT INTO companions (id, display_name, brain) VALUES ('test-resident', 'Test resident', 'test-brain')").run();
   createThread({
     id: THREAD_ID,
     name: 'dual-path',
     type: 'named',
     createdAt: new Date().toISOString(),
+    companionIds: ['test-resident'],
   });
 });
 

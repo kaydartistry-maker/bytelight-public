@@ -23,6 +23,7 @@ import {
   listThreads,
   getThread,
   createThread,
+  requireThreadRoster,
   updateThreadActivity,
   getTodayThread,
   getRoutingThreadId,
@@ -63,6 +64,7 @@ import { buildCommandRegistry, handleCommand } from './commands.js';
 import { getActiveStreamSnapshots } from './active-streams.js';
 import { errMessage } from '../util/errors.js';
 import { bellStatus } from './bell-status.js';
+import { isLocalBrain } from './local-brain.js';
 
 function getAllowedOrigins(): string[] {
   const config = getBytelightConfig();
@@ -652,8 +654,8 @@ export function createWebSocketServer(server: HTTPServer, agentService?: AgentSe
 /**
  * Slice 4A — plan which companion brains answer a dispatch turn, in what order.
  * Roster seats dedupe by brain (Companion A + Companion B are two seats over one brain →
- * one turn). Empty roster falls back to the local brain alone (byte-identical
- * to pre-4A behavior for unseated threads). The returned order is SHUFFLED
+ * one turn). An empty roster plans nothing: nobody is seated, so no model is
+ * called (Phase 1.2; every stored thread carries a roster). The returned order is SHUFFLED
  * every call — the operator's rule: no standing hierarchy, no "locals first" receiving
  * line; who speaks first varies every turn. Exported for contract tests.
  */
@@ -662,7 +664,6 @@ export function planDispatchOrder(roster: ReadonlyArray<Pick<Companion, 'brain'>
   for (const seat of roster) {
     if (!brains.includes(seat.brain)) brains.push(seat.brain);
   }
-  if (brains.length === 0) brains.push('companion-a-b');
   // Fisher-Yates — order varies every turn.
   for (let i = brains.length - 1; i > 0; i--) {
     const j = Math.floor(Math.random() * (i + 1));
@@ -896,6 +897,12 @@ async function handleMessageSend(
     // brain alone — byte-identical to pre-4A behavior.
     const dispatchTurnId = crypto.randomUUID();
     const brains = planDispatchOrder(getThreadRoster(thread.id));
+    if (brains.length === 0) {
+      // Phase 1.2: nobody seated, nobody answers. The message is kept; the
+      // owner is told why the room is quiet instead of waiting on a reply.
+      console.warn(`[dispatch] thread ${thread.id} has no seated companions — message kept, no turn run`);
+      sendError(ws, 'empty_roster', 'Nobody is seated in this thread yet. Add a companion to it and they will answer.');
+    }
     // Written down until the turn ends, so a restart that cuts it off picks
     // it back up on boot (services/db/turn-leases.ts).
     leaseId = leaseTurn({ threadId: thread.id, userMessageId: userMessage.id, prompt: agentPrompt, hadImages: !!agentImages?.length });
@@ -906,7 +913,7 @@ async function handleMessageSend(
     // her. A single-brain roster never fills it — byte-identical to before.
     const roomVoices: Array<{ name: string; text: string }> = [];
     for (const brain of brains) {
-      if (brain === 'companion-a-b') {
+      if (isLocalBrain(brain)) {
         agentResponse = await agentService.processMessage(
           thread.id,
           agentPrompt,
@@ -1063,6 +1070,7 @@ function handleCreateThread(
     type: 'named',
     createdAt: new Date().toISOString(),
     sessionType: 'v2',
+    companionIds: requireThreadRoster(msg.companionIds),
   });
 
   registry.broadcast({ type: 'thread_created', thread });

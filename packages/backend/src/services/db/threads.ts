@@ -2,71 +2,75 @@ import type { Thread } from '@bytelight/shared';
 import { getBytelightConfig } from '../../config.js';
 import { getDb } from './init.js';
 
-// Thread operations
-/**
- * Default roster seated into EVERY newly created thread (Arc C, Slice 3).
- *
- * This is the ONE place default seating lives. Every thread-creation path in
- * the app funnels through createThread() below — the web picker (chat-routes),
- * Discord/Telegram/wake/API-created threads (ws.ts, commands.ts), and the
- * routing-thread resolver (resolveRoutingThread) — so seating here means no
- * thread is ever roster-less from the moment it exists. The web picker may
- * OVERRIDE this default by passing an explicit companionIds; everything else
- * gets the resident pair automatically.
- *
- * These are individual companion slugs from the companions registry
- * (migrations/014_companions.sql), matching the profiles-store keys. Kept as a
- * literal (not a DB read) because the resident pair is the fixed everyday
- * default; the picker is the surface for anything else.
- */
-export const DEFAULT_THREAD_ROSTER = ['companion-a', 'companion-b'] as const;
+export type ThreadRoster = readonly [string, ...string[]];
 
-export function createThread(params: {
+export function requireThreadRoster(companionIds: readonly string[] | undefined): ThreadRoster {
+  if (!companionIds || companionIds.length === 0) {
+    throw new Error('companionIds must be a non-empty roster');
+  }
+  const normalized = companionIds.map((id) => id.trim());
+  if (normalized.some((id) => id.length === 0)) {
+    throw new Error('companionIds must contain non-empty companion ids');
+  }
+  if (new Set(normalized).size !== normalized.length) {
+    throw new Error('companionIds must not contain duplicate companion ids');
+  }
+  const [first, ...rest] = normalized;
+  return [first, ...rest];
+}
+
+interface ThreadInput {
   id: string;
   name: string;
   type: 'daily' | 'named' | 'treehouse';
   createdAt: string;
   sessionType?: 'v1' | 'v2';
-  /**
-   * Optional explicit roster (from the web thread-creation picker). When
-   * omitted or empty, the thread is seated with DEFAULT_THREAD_ROSTER, so a
-   * thread is never left roster-less. Ids that don't exist in the companions
-   * registry are silently skipped by the guarded INSERT (FK-safe); the route
-   * layer validates ids before calling.
-   */
-  companionIds?: readonly string[];
-}): Thread {
-  const database = getDb();
-  const stmt = database.prepare(`
+}
+
+function insertThread(params: ThreadInput): void {
+  getDb().prepare(`
     INSERT INTO threads (id, name, type, created_at, session_type, last_activity_at)
     VALUES (?, ?, ?, ?, ?, ?)
-  `);
+  `).run(
+    params.id,
+    params.name,
+    params.type,
+    params.createdAt,
+    params.sessionType || 'v2',
+    params.createdAt,
+  );
+}
 
-  // Seat the roster in the same transaction as the thread insert so a thread
-  // is never observed existing without its roster. The guarded INSERT only
-  // seats companions that exist in the registry (FK-safe).
-  const ins = database.prepare(
-    `INSERT OR IGNORE INTO thread_companions (thread_id, companion_id)
-       SELECT ?, ? WHERE EXISTS (SELECT 1 FROM companions WHERE id = ?)`
+export function createThread(params: ThreadInput & { companionIds: ThreadRoster }): Thread {
+  const database = getDb();
+  const roster = requireThreadRoster(params.companionIds);
+  const placeholders = roster.map(() => '?').join(', ');
+  const insertSeat = database.prepare(
+    'INSERT INTO thread_companions (thread_id, companion_id) VALUES (?, ?)',
   );
   const seat = database.transaction(() => {
-    stmt.run(
-      params.id,
-      params.name,
-      params.type,
-      params.createdAt,
-      params.sessionType || 'v2',
-      params.createdAt
-    );
-    const roster =
-      params.companionIds && params.companionIds.length > 0
-        ? params.companionIds
-        : DEFAULT_THREAD_ROSTER;
-    for (const cid of new Set(roster)) ins.run(params.id, cid, cid);
+    const found = database.prepare(
+      `SELECT COUNT(*) AS count FROM companions WHERE id IN (${placeholders})`,
+    ).get(...roster) as { count: number };
+    if (found.count !== roster.length) {
+      throw new Error('companionIds must all exist in the companions registry');
+    }
+    insertThread(params);
+    for (const companionId of roster) insertSeat.run(params.id, companionId);
   });
   seat();
 
-  return getThread(params.id)!;
+  const thread = getThread(params.id);
+  if (!thread) throw new Error(`thread ${params.id} was not created`);
+  return thread;
+}
+
+/** Create the empty Home shell when a house has no conversation to route to. */
+export function createRoutingThreadShell(params: ThreadInput): Thread {
+  insertThread(params);
+  const thread = getThread(params.id);
+  if (!thread) throw new Error(`routing thread ${params.id} was not created`);
+  return thread;
 }
 
 export function getThread(id: string): Thread | null {

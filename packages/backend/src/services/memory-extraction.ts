@@ -56,7 +56,6 @@ import {
   replaceInBlock,
   resolveScope,
   SHARED_SCOPE,
-  COMPANION_SCOPES,
 } from './memory-blocks.js';
 import { proposeEdit } from './memory-proposals.js';
 import { applyCaughtChange, fileCaughtIntention, listOpenIntentions } from './db/intentions.js';
@@ -601,9 +600,6 @@ function companionsInPlay(threadId: string): { slugs: string[]; names: string[] 
     try {
       rows = owning(listCompanions());
     } catch { /* fall through */ }
-  }
-  if (rows.length === 0) {
-    rows = COMPANION_SCOPES.map((s) => ({ id: s, display_name: s.charAt(0).toUpperCase() + s.slice(1) }));
   }
   return {
     slugs: rows.map((c) => resolveScope(c.id)!),

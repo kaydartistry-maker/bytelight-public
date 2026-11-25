@@ -14,6 +14,8 @@ process.env.RESONANT_HOME = root;
 writeFileSync(join(root, 'config.yaml'), 'agent:\n  cwd: .\n  model: claude-sonnet-4-6\n');
 
 const { initDb, setConfig } = await import('./db.js');
+// Phase 1.1: a fresh install seeds nobody; register the rows this test is about.
+const { registerFixtureCompanions } = await import('../test-support/pair-house.js');
 const { upsertCompanionSetting } = await import('./db/companion-settings.js');
 const { updateCompanionCard } = await import('./db/rooms.js');
 const { AgentService, laneHistory, handLaneContentOver } = await import('./agent.js');
@@ -22,6 +24,7 @@ const { laneIdentityFor, renderLaneSection, roomBiosReady } = await import('./he
 const { provisionSessionDir } = await import('./heartbeat/provision.js');
 
 const db = initDb(join(root, 'test.db'));
+registerFixtureCompanions(db);
 const now = new Date().toISOString();
 db.prepare("INSERT INTO threads (id,name,type,created_at,last_activity_at) VALUES ('t1','Room','named',?,?)").run(now, now);
 db.prepare("INSERT OR IGNORE INTO thread_companions (thread_id, companion_id) VALUES ('t1','companion-a'),('t1','companion-b')").run();

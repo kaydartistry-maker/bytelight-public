@@ -24,7 +24,7 @@ import { apiFetch, useActiveThreadId } from '../bytelight';
 import { clearProviderScopedState } from '../bytelight/socket';
 import {
   CLAUDE_VARIANT_OPTIONS,
-  DEFAULT_BRAIN,
+  houseBrain,
   PROVIDER_ROWS,
   normalizeCatalog,
   providerEnabled,
@@ -87,7 +87,7 @@ export function ModelPill({ themeConfig, themeMode, defaultFor }: ModelPillProps
   const TIER = defaultFor?.tier ?? 'interactive';
   const [open, setOpen] = useState(false);
   const [targets, setTargets] = useState<Target[]>([]);
-  const [target, setTarget] = useState(defaultFor?.companionId ?? DEFAULT_BRAIN);
+  const [target, setTarget] = useState(defaultFor?.companionId ?? houseBrain());
   const [effective, setEffective] = useState<Effective | null>(null);
   // Each companion's effective engine, for the collapsed pill's split label.
   const [memberEffective, setMemberEffective] = useState<Array<{ label: string; eff: Effective }>>([]);
@@ -104,7 +104,7 @@ export function ModelPill({ themeConfig, themeMode, defaultFor }: ModelPillProps
   // by more than one companion also gets a chip per companion.
   useEffect(() => {
     if (defaultFor) { setTargets([]); setTarget(defaultFor.companionId); return; }
-    if (!threadId) { setTargets([]); setTarget(DEFAULT_BRAIN); return; }
+    if (!threadId) { setTargets([]); setTarget(houseBrain()); return; }
     let stale = false;
     apiFetch(`/api/threads/${threadId}/roster`)
       .then((r) => (r.ok ? r.json() : null))
@@ -112,7 +112,7 @@ export function ModelPill({ themeConfig, themeMode, defaultFor }: ModelPillProps
         if (stale) return;
         const groups = new Map<string, Array<{ id: string; name: string }>>();
         for (const c of (data?.roster ?? []) as Array<{ brain?: string; display_name?: string; id?: string; slug?: string }>) {
-          const b = c.brain || DEFAULT_BRAIN;
+          const b = c.brain || houseBrain();
           const id = c.slug || c.id || b;
           groups.set(b, [...(groups.get(b) || []), { id, name: c.display_name || id }]);
         }
@@ -125,7 +125,7 @@ export function ModelPill({ themeConfig, themeMode, defaultFor }: ModelPillProps
           }
         }
         setTargets(list);
-        setTarget((prev) => (list.some((x) => x.id === prev) ? prev : list[0]?.id || DEFAULT_BRAIN));
+        setTarget((prev) => (list.some((x) => x.id === prev) ? prev : list[0]?.id || houseBrain()));
       })
       .catch(() => { if (!stale) setTargets([]); });
     return () => { stale = true; };
@@ -155,7 +155,7 @@ export function ModelPill({ themeConfig, themeMode, defaultFor }: ModelPillProps
     const next = await readEffective(forTarget);
     if (next) setEffective(next);
     // The companions of the default brain, for the pill's split label.
-    const members = targets.filter((t) => t.brain === DEFAULT_BRAIN);
+    const members = targets.filter((t) => t.brain === houseBrain());
     const reads = await Promise.all(members.map(async (m) => ({ label: m.label, eff: await readEffective(m.id) })));
     setMemberEffective(reads.filter((r): r is { label: string; eff: Effective } => !!r.eff));
     return next;
@@ -296,7 +296,7 @@ export function ModelPill({ themeConfig, themeMode, defaultFor }: ModelPillProps
     a.provider === b.provider && a.model === b.model && a.thinkingEffort === b.thinkingEffort;
   // When the companions run different engines here, the pill names each one.
   const split = memberEffective.length > 1 && memberEffective.some((m) => !sameEngine(m.eff, memberEffective[0].eff));
-  const brainEffective = target === DEFAULT_BRAIN ? effective : null;
+  const brainEffective = target === houseBrain() ? effective : null;
   const pillLabel = split
     ? memberEffective.map((m) => `${m.label} · ${modelName(m.eff.provider, m.eff.model)}`).join(' | ')
     : effective

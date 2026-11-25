@@ -15,10 +15,11 @@
 import crypto from 'crypto';
 import { join } from 'path';
 import { PROJECT_ROOT, getBytelightConfig } from '../config.js';
-import { LOCAL_COMPANION_ID, QUEUE_TIMEOUT_MESSAGE } from './agent.js';
+import { QUEUE_TIMEOUT_MESSAGE } from './agent.js';
+import { isLocalBrain } from './local-brain.js';
 import { getDb } from './db/state.js';
 import { getConfig, setConfig } from './db/config.js';
-import { createThread, getThread } from './db/threads.js';
+import { createThread, getThread, requireThreadRoster } from './db/threads.js';
 import { createMessage } from './db/messages.js';
 import { listCompanions } from './db/rooms.js';
 import { libraryDir, readShelf } from './library.js';
@@ -38,14 +39,14 @@ export interface BookClubLane {
 }
 
 /**
- * The companions who live in this house (brain === LOCAL_COMPANION_ID, the
+ * The companions who live in this house (brain === getLocalBrainId(), the
  * same rule agent.ts seats a room by). A companion registered here who lives
  * in a house of his own can't take this turn, so he is not at the table:
  * he isn't asked to pitch or vote, and the club's doors refuse him.
  */
 export function bookClubSeats(): Seat[] {
   return listCompanions()
-    .filter((c) => c.brain === LOCAL_COMPANION_ID)
+    .filter((c) => isLocalBrain(c.brain))
     .map((c) => ({ id: c.id, name: c.display_name || c.id }));
 }
 
@@ -78,7 +79,7 @@ export function ensureBookClubThread(): string {
   const at = new Date().toISOString();
   createThread({
     id, name: 'The Book Club', type: 'named', createdAt: at, sessionType: 'v2',
-    companionIds: bookClubSeats().map((s) => s.id),
+    companionIds: requireThreadRoster(bookClubSeats().map((seat) => seat.id)),
   });
   getDb().prepare('UPDATE threads SET archived_at = ? WHERE id = ?').run(at, id);
   setConfig(THREAD_CONFIG_KEY, id);

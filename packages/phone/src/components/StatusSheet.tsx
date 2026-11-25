@@ -1,7 +1,8 @@
 // Her status sheet, opened from her line on the Status widget: a dot, a line
 // of what she's up to, and when it clears. Companion A and Companion B read it every turn
 // (backend services/db/statuses.ts).
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
+import { loadHouseRoster, namesLine } from '../lib/residents';
 import { haptic } from '../lib/utils';
 import {
   CLEAR_CHOICES,
@@ -24,6 +25,15 @@ export function StatusSheet({ current, onClose }: { current: OwnerStatus | null;
   const [clear, setClear] = useState<ClearChoice | null>(current?.clearsAt ? null : 'never');
   const [saving, setSaving] = useState(false);
   const [failed, setFailed] = useState(false);
+  // Phase 1.4: name whoever actually lives here, not a fixed pair.
+  const [seenBy, setSeenBy] = useState('');
+  useEffect(() => {
+    let live = true;
+    loadHouseRoster()
+      .then(({ residents }) => { if (live) setSeenBy(namesLine(residents.map((r) => r.display_name || r.id))); })
+      .catch(() => { /* leave the line off */ });
+    return () => { live = false; };
+  }, []);
 
   const keptUntil = current?.clearsAt && clear === null
     ? new Date(current.clearsAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
@@ -62,7 +72,7 @@ export function StatusSheet({ current, onClose }: { current: OwnerStatus | null;
         <div className="mx-auto h-1 w-10 rounded-full" style={{ background: 'var(--bytelight-hairline)' }} />
         <div className="flex items-center justify-between">
           <p className="text-base font-semibold">Your status</p>
-          <p className="text-[11px]" style={{ color: 'var(--bytelight-text-muted)' }}>Companion A and Companion B see this</p>
+          {seenBy ? <p className="text-[11px]" style={{ color: 'var(--bytelight-text-muted)' }}>{seenBy} {seenBy.includes(' and ') ? 'see' : 'sees'} this</p> : null}
         </div>
 
         <div className="grid grid-cols-4 gap-1 rounded-full p-1" style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid var(--bytelight-hairline)' }}>

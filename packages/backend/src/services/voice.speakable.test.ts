@@ -2,6 +2,9 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 
 const { VoiceService } = await import('./voice.js');
+const { openPairHouse } = await import('../test-support/pair-house.js');
+// Speakers come from the house's residents (Phase 1.3): seat the pair.
+openPairHouse();
 
 describe('VoiceService.isSpeakable', () => {
   it('accepts plain prose', () => {

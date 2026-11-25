@@ -12,6 +12,7 @@
  */
 import { getDb } from '../db/init.js';
 import { getBytelightConfig } from '../../config.js';
+import { getLocalBrainId } from '../local-brain.js';
 
 export interface LaneIdentity {
   slug: string;
@@ -71,8 +72,8 @@ export function renderLaneSection(lane: LaneIdentity): string {
 export function roomBiosReady(): { ready: boolean; missing: string[] } {
   try {
     const rows = getDb()
-      .prepare("SELECT id, display_name, bio FROM companions WHERE brain = 'companion-a-b'")
-      .all() as Array<{ id: string; display_name: string; bio: string | null }>;
+      .prepare('SELECT id, display_name, bio FROM companions WHERE brain = ?')
+      .all(getLocalBrainId()) as Array<{ id: string; display_name: string; bio: string | null }>;
     const missing = rows.filter((r) => !(r.bio || '').trim()).map((r) => r.display_name || r.id);
     return { ready: rows.length > 1 && missing.length === 0, missing };
   } catch {

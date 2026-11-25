@@ -90,21 +90,6 @@ export function initDb(dbPath: string): Database.Database {
     }
   }
 
-  // Seed system-scope defaults for pulse + memory tiers. Idempotent across
-  // boots: the uq_companion_settings_scope_key unique index from 009 makes
-  // a second INSERT fail with UNIQUE constraint, which we swallow here.
-  const seedDefaultsSQL = migrationSql('migrations/011_seed_companion_defaults.sql');
-  if (seedDefaultsSQL !== null) {
-    try {
-      db.exec(seedDefaultsSQL);
-    } catch (err: unknown) {
-      const msg = errMessage(err);
-      if (!msg.includes('UNIQUE constraint failed')) {
-        console.warn('Migration warning (011):', msg);
-      }
-    }
-  }
-
   // Phase 2 Step 3 — multi-provider usage attribution. Three additive
   // ALTER TABLE columns + two indexes. The bundled .sql executes all five
   // statements; SQLite stops at the first ALTER if a column already
@@ -136,83 +121,31 @@ export function initDb(dbPath: string): Database.Database {
   // Memory blocks — Letta-style in-place memory editing (Slice 1).
   // Apache 2.0 — adapted for byte-light (attribution in NOTICE).
   // Plain CREATE TABLE IF NOT EXISTS migration; safe to re-run on every boot.
+  // 011 and 015 are retired tombstones (Phase 1.1: nothing is seeded). They
+  // still run, as comment-only no-ops, so every numbered file stays wired.
+  runMigration(db, 'migrations/011_seed_companion_defaults.sql');
   runMigration(db, 'migrations/013_memory.sql');
 
-  // Companions + per-thread roster (Arc C rooms, Slice 1 — schema only).
-  // Schema shape ported from NESTstack rooms-worker (cindiekinzz-coder, MIT);
-  // see migrations/014 for the full attribution + id convention. The .sql
-  // mixes idempotent CREATE TABLE IF NOT EXISTS with two bare ALTER TABLE ADD
-  // COLUMN (threads.default_companion_id, messages.companion_id). SQLite lacks
-  // `ADD COLUMN IF NOT EXISTS`, so on a re-boot the whole-file exec throws
-  // "duplicate column" and stops before the seed. Catch + heal column-by-column
-  // and re-run the idempotent tail, mirroring the 010/012 multi-statement
-  // pattern.
+  // Current residents and stored thread rosters. The two ALTER statements are
+  // healed independently because SQLite lacks ADD COLUMN IF NOT EXISTS.
   const companionsMigrationSQL = migrationSql('migrations/014_companions.sql');
   if (companionsMigrationSQL !== null) {
+    const database = db;
     try {
-      db.exec(companionsMigrationSQL);
+      database.exec(companionsMigrationSQL);
     } catch (err: unknown) {
       const msg = errMessage(err);
       if (!msg.includes('duplicate column') && !msg.includes('already exists')) {
-        console.warn('Migration warning (014):', msg);
+        throw err;
       }
-      // Heal partial application: each ALTER is its own try/catch so a duplicate
-      // on one doesn't block the others or the seed below.
-      try { db.exec('ALTER TABLE threads ADD COLUMN default_companion_id TEXT'); } catch { /* duplicate column — fine */ }
-      try { db.exec('ALTER TABLE messages ADD COLUMN companion_id TEXT'); } catch { /* duplicate column — fine */ }
-      // Seed is INSERT OR IGNORE (idempotent); re-run so a mid-file throw on the
-      // first boot still lands the roster rows.
-      try {
-        db.exec(
-          "INSERT OR IGNORE INTO companions (id, display_name, avatar, brain, model, sort_order, created_at) VALUES " +
-          "('companion-a', 'Companion A', '/api/files/d03d4e7c-6c4c-4ae1-8134-848c8507939e', 'companion-a-b', NULL, 0, datetime('now')), " +
-          "('companion-b', 'Companion B', '/api/files/a7421965-61e9-4f53-8ce0-0d2cf47a7d17', 'companion-a-b', NULL, 1, datetime('now')), " +
-          "('companion-c',  'Companion C',  NULL, 'companion-c', NULL, 2, datetime('now'));"
-        );
-      } catch { /* best effort — table may not exist on a first-run failure */ }
-    }
-  }
-
-  // Rooms seed + roster backfill (Arc C rooms, Slice 2 — data only, still no
-  // dispatch read). Depends on 014 above. The .sql is pure INSERT OR IGNORE
-  // (backfill every existing thread to the resident pair; create the two
-  // fixed-id dormant rooms "Living Room" + "Companion C" with their rosters), so —
-  // unlike 014 — there is no ALTER to trip the "duplicate column" path; a
-  // straight re-exec is idempotent. Guard for a first-run race where 014 did
-  // not create the tables (best-effort warn, don't crash boot).
-  const roomsSeedMigrationSQL = migrationSql('migrations/015_rooms_seed.sql');
-  if (roomsSeedMigrationSQL !== null) {
-    try {
-      db.exec(roomsSeedMigrationSQL);
-    } catch (err: unknown) {
-      const msg = errMessage(err);
-      console.warn('Migration warning (015):', msg);
-    }
-
-    // Home roster seed: the Arc A pinned routing thread ('app.routingThreadId')
-    // gets the resident pair. Its id lives in the config table, not known at
-    // migration-authoring time, so it is seeded here rather than in the .sql.
-    // If the key is unset (fresh DB, no Home pinned yet) skip gracefully — the
-    // backfill above already seated every EXISTING thread, and the resolver
-    // seats a new Home the moment one is pinned via the picker (Slice 3).
-    // INSERT OR IGNORE against the composite PK keeps this idempotent.
-    try {
-      const homeId = db.prepare("SELECT value FROM config WHERE key = 'app.routingThreadId'").get() as { value?: string } | undefined;
-      const rid = homeId?.value;
-      if (rid) {
-        // Only seed if the routing thread actually exists (a stale config
-        // pointer must not create orphan roster rows — the FK would reject it
-        // anyway, but skip cleanly rather than throw).
-        const exists = db.prepare('SELECT 1 FROM threads WHERE id = ?').get(rid);
-        if (exists) {
-          const seatHome = db.prepare('INSERT OR IGNORE INTO thread_companions (thread_id, companion_id) VALUES (?, ?)');
-          seatHome.run(rid, 'companion-a');
-          seatHome.run(rid, 'companion-b');
+      const ensureColumn = (table: string, column: string, definition: string): void => {
+        const columns = database.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
+        if (!columns.some((existing) => existing.name === column)) {
+          database.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
         }
-      }
-    } catch (err: unknown) {
-      const msg = errMessage(err);
-      console.warn('Migration warning (015 Home roster seed):', msg);
+      };
+      ensureColumn('threads', 'default_companion_id', 'TEXT');
+      ensureColumn('messages', 'companion_id', 'TEXT');
     }
   }
 
@@ -502,6 +435,35 @@ export function initDb(dbPath: string): Database.Database {
         if (!msg.includes('duplicate column')) console.warn('Migration warning (053):', msg);
       }
     }
+  }
+
+  runMigration(db, 'migrations/015_rooms_seed.sql');
+
+  const companionParitySQL = migrationSql('migrations/055_companion_schema_parity.sql');
+  if (companionParitySQL !== null) {
+    const parityColumns = [
+      ['effort', 'TEXT'],
+      ['slug', 'TEXT'],
+      ['archetype', 'TEXT'],
+      ['claude_md_path', 'TEXT'],
+      ['mcp_json_path', 'TEXT'],
+      ['model_autonomous', 'TEXT'],
+      ['avatar_url', 'TEXT'],
+      ['is_primary', 'INTEGER DEFAULT 0'],
+      ['updated_at', 'TEXT'],
+    ] as const;
+    const database = db;
+    database.transaction(() => {
+      const columns = new Set(
+        (database.prepare('PRAGMA table_info(companions)').all() as Array<{ name: string }>).map((column) => column.name),
+      );
+      for (const [name, definition] of parityColumns) {
+        if (columns.has(name)) continue;
+        database.exec(`ALTER TABLE companions ADD COLUMN ${name} ${definition}`);
+        columns.add(name);
+      }
+      database.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_companions_slug ON companions(slug)');
+    })();
   }
 
   // 001 wrote push_subscriptions with a type list of web_push and apns, which

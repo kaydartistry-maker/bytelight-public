@@ -52,6 +52,7 @@ import type { VoiceService } from '../voice.js';
 import { errMessage } from '../../util/errors.js';
 import { discordAvatarFor, backfillDiscordAvatars } from './avatars.js';
 import { getDb } from '../db.js';
+import { isResident, residentIds } from '../residents.js';
 
 type ConnectionRegistry = typeof registryInstance;
 
@@ -1025,7 +1026,7 @@ export class DiscordService {
       const id = cleanId(channelId, 'channelId');
       await this.textChannel(id);
       const spoken = cleanText(text, 'text', 20000);
-      if (voice !== undefined && voice !== 'companion-a' && voice !== 'companion-b') throw new Error('voice must be companion-a or companion-b');
+      if (voice !== undefined && !isResident(voice)) throw new Error(`voice must be one of: ${residentIds().join(', ') || '(no residents)'}`);
       if (!voiceService.canTTS) throw new Error('Voice service is not configured');
       const audio = await voiceService.generateTTS(spoken, voice as string | undefined);
       const metadata = await discordVoiceMetadata(audio);

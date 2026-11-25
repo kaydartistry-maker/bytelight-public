@@ -25,6 +25,8 @@ process.env.RESONANT_HOME = tmpRoot;
 writeFileSync(join(tmpRoot, 'config.yaml'), 'agent:\n  cwd: .\n  model: claude-sonnet-4-6\n');
 
 const { initDb } = await import('../services/db.js');
+// Phase 1.1: a fresh install seeds nobody; register the rows this test is about.
+const { registerFixtureCompanions } = await import('../test-support/pair-house.js');
 const { getSelfKnowledge, listSelfKnowledge } = await import('../services/db/self-knowledge.js');
 const { createInternalRoutes } = await import('./internal-routes.js');
 
@@ -32,7 +34,7 @@ let server: Server;
 let base = '';
 
 before(async () => {
-  initDb(dbPath);
+  registerFixtureCompanions(initDb(dbPath));
   const app = express();
   app.use(express.json());
   app.use(createInternalRoutes());

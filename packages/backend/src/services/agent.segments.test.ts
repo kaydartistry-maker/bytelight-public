@@ -34,7 +34,7 @@ writeFileSync(join(tmpRoot, 'config.yaml'), 'agent:\n  cwd: .\n  model: claude-s
 import { describe, test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import type { MessageSegment } from '@bytelight/shared';
-import { initDb, createThread, createMessage, getMessage, getMessages } from './db.js';
+import { initDb, createThread, createMessage, getDb, getMessage, getMessages } from './db.js';
 import { buildSegments, shouldDiscardEmptyTurn, isDeliberateSilence, type ThinkingInsertion } from './agent.js';
 import type { ToolInsertion } from './hooks.js';
 import { loadConfig } from '../config.js';
@@ -45,11 +45,13 @@ before(() => {
   // Nonexistent path → pure DEFAULTS (no live bytelight.yaml pickup).
   loadConfig(join(tmpRoot, 'bytelight.yaml'));
   initDb(join(tmpRoot, 'segments.db'));
+  getDb().prepare("INSERT INTO companions (id, display_name, brain) VALUES ('test-resident', 'Test resident', 'test-brain')").run();
   createThread({
     id: THREAD_ID,
     name: 'segments',
     type: 'named',
     createdAt: new Date().toISOString(),
+    companionIds: ['test-resident'],
   });
 });
 

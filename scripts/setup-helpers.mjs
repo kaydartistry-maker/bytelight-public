@@ -41,3 +41,10 @@ export function processNameFor(houseName) {
     .replace(/-+$/g, '');
   return slug || 'bytelight';
 }
+
+/** "A", "A and B", "A, B and C". */
+export function joinNames(names) {
+  const list = names.filter(Boolean);
+  if (list.length <= 1) return list[0] ?? '';
+  return `${list.slice(0, -1).join(', ')} and ${list[list.length - 1]}`;
+}

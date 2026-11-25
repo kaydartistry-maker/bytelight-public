@@ -20,9 +20,22 @@ import {
   type ThinkingEffort,
 } from '@bytelight/shared';
 
-/** The shared default brain (migrations/014_companions.sql). The resolver keys
- *  companion defaults on this id; any other id would silently not match. */
+/** The backend's default local brain id (local-brain.ts). The house's real
+ *  brain arrives with GET /api/companions (localBrainId) and is kept by
+ *  setHouseBrain; until then this default stands, which is what a house with
+ *  no brain configured answers anyway. */
 export const DEFAULT_BRAIN = 'companion-a-b';
+
+let currentHouseBrain = DEFAULT_BRAIN;
+
+/** The brain this house runs turns for (Phase 1.4). */
+export function houseBrain(): string {
+  return currentHouseBrain;
+}
+
+export function setHouseBrain(id: string): void {
+  if (id) currentHouseBrain = id;
+}
 
 export interface ProviderRow {
   id: ProviderId;
@@ -215,7 +228,7 @@ export interface DefaultEngineBody {
   thinkingEffort: ThinkingEffort;
 }
 
-export function defaultEngineBodies(chat: TierEngine, auto: TierEngine, split: boolean, companionId = DEFAULT_BRAIN): DefaultEngineBody[] {
+export function defaultEngineBodies(chat: TierEngine, auto: TierEngine, split: boolean, companionId = houseBrain()): DefaultEngineBody[] {
   const engines = savedEngines(chat, auto, split);
   return (['interactive', 'autonomous'] as const).map((tier) => ({
     companionId,

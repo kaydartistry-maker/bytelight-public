@@ -9,6 +9,7 @@ import { buildStreamingSegments } from './hooks';
 import { apiFetch } from './api';
 import { applyStarFrame } from './stars';
 import { emitCanvasFrame } from './canvas-frames';
+import { loadHouseRoster } from '../lib/residents';
 
 // --- Connection internals (non-reactive) ---
 let ws: WebSocket | null = null;
@@ -1058,20 +1059,24 @@ export function dropArchivedThread(threadId: string): void {
   });
 }
 
-// Main's create_thread frame always seats the default roster; only the REST
-// route honours a chosen roster. REST doesn't broadcast thread_created, so the
-// list is refreshed here.
+// Phase 1.1: the backend seats nobody on its own, so a new thread always
+// carries an explicit roster. No pick means "the house's residents" (what the
+// old default seating meant). Created over REST, which doesn't broadcast
+// thread_created, so the list is refreshed here.
 export function createThread(name: string, companionIds?: string[]): void {
-  if (!companionIds || companionIds.length === 0) {
-    send({ type: 'create_thread', name, threadType: 'named' });
-    return;
-  }
   void (async () => {
     try {
+      const roster = companionIds && companionIds.length > 0
+        ? companionIds
+        : (await loadHouseRoster()).residents.map((r) => r.id);
+      if (roster.length === 0) {
+        setState({ lastError: { code: 'create_thread', message: 'Nobody lives here yet to seat in a thread.' } });
+        return;
+      }
       const res = await apiFetch('/api/threads', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, companionIds }),
+        body: JSON.stringify({ name, companionIds: roster }),
       });
       if (!res.ok) throw new Error(`Create thread failed: ${res.status} ${await res.text().catch(() => '')}`);
       await loadThreads();

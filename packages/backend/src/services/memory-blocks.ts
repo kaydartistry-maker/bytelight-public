@@ -1,6 +1,6 @@
 // memory-blocks.ts — Letta-style in-place memory editing
 // Companion-scoped labeled blocks the agents can view and modify during conversation.
-// scope = a companion slug ('companion-a', 'companion-b') or 'shared' (visible to all companions)
+// scope = a resident companion id or 'shared' (visible to all companions)
 //
 // Ported from the reference implementation fork, Apache 2.0 — adapted for byte-light.
 // Adaptations vs. reference implementation:
@@ -9,25 +9,24 @@
 //       label-only self-migration (greenfield here) and stays exported as a
 //       belt-and-braces CREATE TABLE IF NOT EXISTS no-op so later slices port
 //       cleanly against the same surface.
-//   (b) Companion scopes come from a module constant COMPANION_SCOPES instead of
-//       a db/companions module byte-light doesn't have. Valid scope = 'shared' |
-//       'companion-a' | 'companion-b'. resolveScope / validScopesHint / ensureCompanionBlocks
-//       adapted accordingly.
-//   (c) seedDefaultBlocks defaults mirror reference implementation's structure for THIS house
-//       (user "the operator", companions Companion A and Companion B).
+//   (b) Companion scopes are 'shared' plus the house's residents, read from the
+//       companions registry by companionScopes() (Phase 1.3).
+//   (c) seedDefaultBlocks takes the user name and resident list from its caller.
 
 import { getDb } from './db.js';
+import { residentIds } from './residents.js';
 import { memoryReceipt } from './memory-ledger.js';
 import { randomUUID } from 'node:crypto';
 import { renderSelfKnowledgeForPrompt } from './self-knowledge-carry.js';
 
 export const SHARED_SCOPE = 'shared';
 
-// Companion slugs for this house. Memory-block scopes are 'shared' plus these.
-// (reference implementation derived these from a db/companions module; byte-light has no such
-// module, so the set is a static constant here.)
-export const COMPANION_SCOPES = ['companion-a', 'companion-b'] as const;
-export type CompanionScope = (typeof COMPANION_SCOPES)[number];
+// Companion scopes for this house: 'shared' plus each resident's id, read
+// from the companions registry (residents.ts, Phase 1.3). A visitor from
+// another node's brain is not a scope here.
+export function companionScopes(): string[] {
+  return residentIds().map((id) => id.toLowerCase());
+}
 
 /** Whether a block rides into every session in full, or waits on the shelf. */
 export type BlockCarry = 'always' | 'on_demand';
@@ -698,10 +697,10 @@ export function ensureCompanionBlocks(companions: { slug: string; display_name: 
 export function resolveScope(scope: string): string | null {
   const s = scope.trim().toLowerCase();
   if (s === SHARED_SCOPE) return SHARED_SCOPE;
-  return (COMPANION_SCOPES as readonly string[]).includes(s) ? s : null;
+  return companionScopes().includes(s) ? s : null;
 }
 
 export function validScopesHint(): string {
-  const slugs = COMPANION_SCOPES.map((s) => `'${s}'`).join(', ');
+  const slugs = companionScopes().map((s) => `'${s}'`).join(', ');
   return `'${SHARED_SCOPE}'${slugs ? ', ' + slugs : ''}`;
 }

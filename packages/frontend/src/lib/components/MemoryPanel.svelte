@@ -18,6 +18,7 @@
   import { onMount } from 'svelte';
   import { api, apiFetch } from '$lib/utils/api';
   import { getMemoryBlockVersion } from '$lib/stores/websocket.svelte';
+  import { loadCompanions, residentCompanions } from '$lib/stores/companions.svelte';
 
   interface MemoryBlock {
     scope: string;
@@ -31,7 +32,8 @@
   // Scopes for this house: shared + the companion slugs. Kept as a small
   // constant (byte-light has no /api/companions endpoint — the memory service
   // validates against exactly this set server-side).
-  const SCOPES = [SHARED_SCOPE, 'companion-a', 'companion-b'] as const;
+  // Phase 1.4: 'shared' plus this house's residents (companions registry).
+  const SCOPES = $derived([SHARED_SCOPE, ...residentCompanions().map((c) => c.id)]);
 
   type Section = 'blocks' | 'create' | 'archivist';
 
@@ -215,7 +217,7 @@
     }
   }
 
-  onMount(loadBlocks);
+  onMount(() => { void loadCompanions(); void loadBlocks(); });
 
   // Live updates: re-fetch whenever a memory_block_updated event bumps the
   // websocket store's version signal — companions editing blocks from chat

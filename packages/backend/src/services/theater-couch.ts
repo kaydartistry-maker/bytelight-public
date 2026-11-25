@@ -30,9 +30,10 @@
 import crypto from 'crypto';
 import { join } from 'path';
 import { PROJECT_ROOT, getBytelightConfig } from '../config.js';
-import { LOCAL_COMPANION_ID, QUEUE_TIMEOUT_MESSAGE } from './agent.js';
+import { QUEUE_TIMEOUT_MESSAGE } from './agent.js';
+import { isLocalBrain } from './local-brain.js';
 import { getDb } from './db/state.js';
-import { createThread, getThread } from './db/threads.js';
+import { createThread, getThread, requireThreadRoster } from './db/threads.js';
 import { createMessage } from './db/messages.js';
 import { listCompanions } from './db/rooms.js';
 import { formatClock, lookbackWindow, clockPosition } from './theater-clock.js';
@@ -66,10 +67,10 @@ export interface TheaterLane {
 
 export interface CouchSeat { id: string; name: string }
 
-/** Only the companions who live in this house sit on the couch (brain === LOCAL_COMPANION_ID). */
+/** Only the companions who live in this house sit on the couch (brain === getLocalBrainId()). */
 export function couchSeats(): CouchSeat[] {
   return listCompanions()
-    .filter((c) => c.brain === LOCAL_COMPANION_ID)
+    .filter((c) => isLocalBrain(c.brain))
     .map((c) => ({ id: c.id, name: c.display_name || c.id }));
 }
 
@@ -95,7 +96,7 @@ function openCouchThread(title: string): string {
   const at = new Date().toISOString();
   createThread({
     id, name: `The Theater — ${title}`.slice(0, 200), type: 'named', createdAt: at, sessionType: 'v2',
-    companionIds: couchSeats().map((s) => s.id),
+    companionIds: requireThreadRoster(couchSeats().map((seat) => seat.id)),
   });
   getDb().prepare('UPDATE threads SET archived_at = ? WHERE id = ?').run(at, id);
   return id;

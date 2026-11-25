@@ -6,6 +6,7 @@ import { ThemeConfig } from '../lib/theme';
 import { cn } from '../lib/utils';
 import { apiFetch } from '../bytelight';
 import { normalizeCompanionRows } from '../lib/companion-row';
+import { houseBrain } from '../lib/house-engine';
 
 interface OrchestratorAppProps {
   onClose: () => void;
@@ -216,7 +217,7 @@ export function OrchestratorApp({ onClose, themeConfig, themeMode, embedded }: O
       setCompanions(
         Array.isArray(companionsRes?.companions)
           ? normalizeCompanionRows(companionsRes.companions)
-              .filter((c) => !c.brain || c.brain === 'companion-a-b')
+              .filter((c) => (c.brain || houseBrain()) === (typeof companionsRes?.localBrainId === 'string' ? companionsRes.localBrainId : houseBrain()))
               .map((c) => ({ slug: c.slug, name: c.display_name || c.slug }))
           : [],
       );

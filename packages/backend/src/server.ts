@@ -1,6 +1,9 @@
 import 'dotenv/config';
 import cookieParser from 'cookie-parser';
 import cors from 'cors';
+import { residents } from './services/residents.js';
+import { seedResidentsFromConfig } from './services/resident-seed.js';
+import { getLocalBrainId } from './services/local-brain.js';
 import express from 'express';
 import helmet from 'helmet';
 import { createServer } from 'http';
@@ -78,18 +81,26 @@ startMemoryRounds();
 startCompactionShelf();
 console.log('Database initialized');
 
+// The companions named at setup (identity.residents in bytelight.yaml) move in
+// on the house's own brain. Insert-only: existing rows are never touched.
+try {
+  const added = seedResidentsFromConfig(db, config.identity.residents, getLocalBrainId());
+  if (added) console.log(`Residents: ${added} moved in from bytelight.yaml`);
+} catch (err) {
+  console.warn('Resident seed skipped:', err instanceof Error ? err.message : err);
+}
+
 // Seed core-memory blocks (Slice 3, ported from reference implementation). The 013 migration
 // (run inside initDb) creates the table; this fills in the starter blocks so
 // the companions have something to see + edit from turn one. byte-light has no
 // listCompanions module (single house, two-in-one-brain), so the companion set
-// is the static [companion-a, companion-b]. seedDefaultBlocks is seed-if-empty (no-ops once
+// was static; it is now read from the registry. seedDefaultBlocks is seed-if-empty (no-ops once
 // any block exists) and ensureCompanionBlocks is per-companion idempotent — so
 // both are safe on every boot. user_name comes from config (the operator in the live
 // house). Wrapped in try/catch like reference implementation so a seed hiccup never blocks boot.
-const memoryCompanions = [
-  { slug: 'companion-a', display_name: 'Companion A' },
-  { slug: 'companion-b', display_name: 'Companion B' },
-];
+// Phase 1.3: the residents come from the companions registry, so an empty
+// house seeds only the shared blocks and a solo house seeds one persona.
+const memoryCompanions = residents().map((r) => ({ slug: r.id, display_name: r.name }));
 try {
   seedDefaultBlocks(config.identity.user_name, memoryCompanions);
   ensureCompanionBlocks(memoryCompanions);

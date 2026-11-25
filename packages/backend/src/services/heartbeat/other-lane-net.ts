@@ -10,6 +10,8 @@
  * newest row read, failed or guest turn keeps the mark) lives in one place.
  */
 
+import { getLocalBrainId } from '../local-brain.js';
+
 /** How many other-lane replies one turn is handed — the newest few. */
 export const OTHER_LANE_REPLY_CAP = 8;
 
@@ -89,7 +91,7 @@ export function clampForDelivery(content: string, cap: number): string {
  * ('companion-c' → 'Companion C'), so a visitor's words never read as this lane's own.
  */
 export function speakerName(companionId: string | undefined, house: string): string {
-  if (!companionId || companionId === 'companion-a-b') return house;
+  if (!companionId || companionId === getLocalBrainId()) return house;
   return companionId.charAt(0).toUpperCase() + companionId.slice(1);
 }
 

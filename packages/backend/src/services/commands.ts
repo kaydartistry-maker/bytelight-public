@@ -17,6 +17,9 @@ import {
   setConfig,
   getActiveTriggers,
   listTriggers,
+  getRoutingThreadId,
+  getThreadRoster,
+  requireThreadRoster,
 } from './db.js';
 import { AgentService } from './agent.js';
 import { Orchestrator } from './orchestrator.js';
@@ -142,7 +145,7 @@ export async function handleCommand(
   try {
     if (UI_COMMAND_NAMES.has(name)) {
       switch (name) {
-        case 'new': return handleNew(args);
+        case 'new': return handleNew(args, threadId);
         case 'rename': return handleRename(threadId, args);
         case 'model': return handleModel(args);
         case 'status': return await handleStatus(services);
@@ -185,10 +188,27 @@ export async function handleCommand(
 // UI command handlers
 // ---------------------------------------------------------------------------
 
-function handleNew(args: string | undefined): ServerMessage {
+function handleNew(args: string | undefined, threadId: string | undefined): ServerMessage {
   const name = args?.trim();
   if (!name) {
     return { type: 'command_result', name: 'new', success: false, error: 'Usage: /new [thread name]', display: 'toast' };
+  }
+
+  const currentRoster = threadId ? getThreadRoster(threadId) : [];
+  const routingThreadId = getRoutingThreadId();
+  const inheritedRoster = currentRoster.length > 0
+    ? currentRoster
+    : routingThreadId
+      ? getThreadRoster(routingThreadId)
+      : [];
+  if (inheritedRoster.length === 0) {
+    return {
+      type: 'command_result',
+      name: 'new',
+      success: false,
+      error: 'The current thread and Home have no residents to seat.',
+      display: 'toast',
+    };
   }
 
   const thread = createThread({
@@ -196,6 +216,7 @@ function handleNew(args: string | undefined): ServerMessage {
     name,
     type: 'named',
     createdAt: new Date().toISOString(),
+    companionIds: requireThreadRoster(inheritedRoster.map((resident) => resident.id)),
   });
 
   return {

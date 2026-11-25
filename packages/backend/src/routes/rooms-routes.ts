@@ -34,6 +34,8 @@ import {
   type CompanionCardUpdate,
 } from '../services/db/rooms.js';
 import { syncProfileFromCard } from './profiles-routes.js';
+import { getLocalBrainId } from '../services/local-brain.js';
+import { residentIds } from '../services/residents.js';
 
 // Card fields and how long each may be. The bio is read by a companion's own
 // head, so it is allowed room to say something; the rest are one-liners.
@@ -59,7 +61,14 @@ export function createRoomsRoutes(): Router {
       // The owner rides along so the phone seats her by the house's own slug
       // (accents folded) instead of re-deriving it from preferences.
       const name = ownerDisplayName();
-      res.json({ companions: listCompanions(), owner: { slug: getOwnerSlug(), name: name === 'the owner' ? 'You' : name } });
+      // Phase 1.4: clients filter "who lives here" by the house's own brain,
+      // never by a name baked into the client.
+      res.json({
+        companions: listCompanions(),
+        owner: { slug: getOwnerSlug(), name: name === 'the owner' ? 'You' : name },
+        localBrainId: getLocalBrainId(),
+        residents: residentIds(),
+      });
     } catch (err) {
       console.error('Failed to list companions:', err);
       res.status(500).json({ error: 'Failed to list companions' });

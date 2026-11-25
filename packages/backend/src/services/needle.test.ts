@@ -6,6 +6,9 @@ import assert from 'node:assert/strict';
 
 const { createNeedle, readDropRequest, readLandedRequest, playRequestFor } = await import('./needle.js');
 const { SpotifyError } = await import('./spotify.js');
+const { openPairHouse } = await import('../test-support/pair-house.js');
+// Only residents drop the needle (Phase 1.3): seat the pair.
+openPairHouse();
 
 const SONG = 'spotify:track:5googFqOqpopYdcvV22T3t';
 const ALBUM = 'spotify:album:5googFqOqpopYdcvV22T3t';

@@ -26,7 +26,7 @@ const { SpotifyError } = await import('../services/spotify.js');
 const SONG = 'spotify:track:5googFqOqpopYdcvV22T3t';
 const TOKEN = 'needle-test-session';
 
-initDb(':memory:');
+initDb(':memory:').prepare("INSERT INTO companions (id, display_name, brain, slug, sort_order) VALUES ('companion-a','Companion A','companion-a-b','companion-a',0), ('companion-b','Companion B','companion-a-b','companion-b',1)").run();
 createWebSession({
   id: 'needle-test', token: TOKEN, createdAt: new Date().toISOString(),
   expiresAt: new Date(Date.now() + 60 * 60 * 1000).toISOString(),

@@ -14,6 +14,8 @@ process.env.RESONANT_HOME = tmpRoot;
 writeFileSync(join(tmpRoot, 'config.yaml'), 'agent:\n  cwd: .\n  model: claude-sonnet-4-6\n');
 
 const { initDb } = await import('../db.js');
+// Phase 1.1: a fresh install seeds nobody; register the rows this test is about.
+const { registerFixtureCompanions } = await import('../../test-support/pair-house.js');
 const { listCompanions } = await import('./rooms.js');
 const {
   ownerSeat,
@@ -41,7 +43,7 @@ const DECK_CUT = existsSync(join(HERE, '../../../../../data/cards/cards.json'))
 const UNCUT = 'no deck on disk — neither data/cards nor assets/cards has a manifest';
 
 function seedHouse(): { slugs: string[] } {
-  initDb(join(tmpRoot, 'test.db'));
+  registerFixtureCompanions(initDb(join(tmpRoot, 'test.db')));
   return { slugs: listCompanions().map((c) => c.id) };
 }
 

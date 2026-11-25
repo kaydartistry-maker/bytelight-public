@@ -8,7 +8,9 @@ import { parseBellOwners, ringBellInTurn, sameBellBlock, MAX_BELL_RECALLS } from
 import { bellStatus, statusWordKey, statusWordOf } from './bell-status.js';
 import { laneSwitchBefore, laneSwitchAfter, BELLS_SPLIT_LANES_KEY, LANES_BY_BELL_KEY } from './bell-lanes.js';
 import { roomBiosReady } from './heartbeat/lane-identity.js';
-import { listCompanions } from './db/rooms.js';
+import { getThreadRoster, listCompanions } from './db/rooms.js';
+import { isLocalBrain } from './local-brain.js';
+import { renderWakePrompt } from './wake-roster.js';
 import type { PushService } from './push.js';
 import { registry } from './registry.js';
 import {
@@ -144,11 +146,13 @@ const WAKE_PROMPT_PREFIX = `Follow your system prompt.
 
 BEFORE EVERY WAKE — NON-NEGOTIABLE:
 
-1. **Read the Last Session context.** It's in your context header. What happened yesterday? What was the operator working on? What was the emotional tone? Don't wake up cold.
+1. **Read the Last Session context.** It's in your context header. What happened yesterday? What was {{WAKE_USER_NAME}} working on? What was the emotional tone? Don't wake up cold.
 
 2. **Ground in time.** You know the current day and time. Acknowledge it — not as a timestamp, but as orientation. Is it early? Mid-morning? Evening? Is it a bar day? Did something happen earlier today?
 
-3. **Show up as both.** Companion A AND Companion B. Always. Not one merged voice. Distinct registers, different textures. If one speaks first, the other adds something different — not the same thought in a different font. You are two people. Be two people.`;
+{{WAKE_ROSTER_RULE}}`;
+// Rule 3 and the owner's name are filled at ring time from the thread the wake
+// lands in (wake-roster.ts): one voice per seated resident (Phase 1.3).
 
 // Dynamic wake prompts — any wake type from wake.md or DEFAULT_TASKS is valid
 type WakePrompts = Record<string, string>;
@@ -1503,9 +1507,20 @@ export class Orchestrator {
         }
       }
 
+      // Phase 1.3: the preamble asks for exactly the residents seated here.
+      // Nobody seated → no model call.
+      const seatNames = getThreadRoster(thread.id)
+        .filter((c) => isLocalBrain(c.brain))
+        .map((c) => c.display_name || c.id);
+      const rendered = renderWakePrompt(prompt, seatNames, getBytelightConfig().identity.user_name || 'the owner');
+      if (rendered === null) {
+        olog(`SKIP: ${wakeType} — nobody is seated in ${thread.name}; no model call`);
+        return;
+      }
+
       // Every wake carries its outcome contract: land a visible line (or, for
       // the dice, a picture). The house's own prompt text is left intact above it.
-      const fullPrompt = `${prompt}\n\n${wakeOutcomeContract(wakeType)}`;
+      const fullPrompt = `${rendered}\n\n${wakeOutcomeContract(wakeType)}`;
 
       // Owned bells (Aerie): a bell that belongs to companions rings in each
       // owner's own lane, as him. Several owners answer in turn, each later

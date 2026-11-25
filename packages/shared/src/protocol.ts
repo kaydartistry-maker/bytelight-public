@@ -21,7 +21,7 @@ export type ClientMessage =
   | { type: 'typing' }
   | { type: 'read'; threadId: string; beforeId: string }
   | { type: 'switch_thread'; threadId: string }
-  | { type: 'create_thread'; name: string; threadType: 'named' }
+  | { type: 'create_thread'; name: string; threadType: 'named'; companionIds: string[] }
   | { type: 'voice_start'; mimeType?: string; mode?: 'dictation' | 'conversation'; recordingId?: string; analyzeTone?: boolean }
   | { type: 'voice_audio'; data: string; recordingId?: string }
   | { type: 'voice_stop'; recordingId?: string }
@@ -132,5 +132,15 @@ export function isClientMessage(data: unknown): data is ClientMessage {
     'stop_generation', 'mcp_reconnect', 'mcp_toggle', 'rewind_files', 'command',
   ];
 
-  return validTypes.includes(msg.type);
+  if (!validTypes.includes(msg.type)) return false;
+  if (msg.type === 'create_thread') {
+    return (
+      typeof msg.name === 'string' &&
+      msg.threadType === 'named' &&
+      Array.isArray(msg.companionIds) &&
+      msg.companionIds.length > 0 &&
+      msg.companionIds.every((id) => typeof id === 'string' && id.trim().length > 0)
+    );
+  }
+  return true;
 }

@@ -15,6 +15,10 @@ export interface BytelightConfig {
     companion_name: string;
     user_name: string;
     timezone: string;
+    /** Phase 1.2: the brain this house runs turns for (local-brain.ts). Optional. */
+    local_brain_id?: string;
+    /** The companions named at setup; seeded as companions rows on boot (resident-seed.ts). */
+    residents?: Array<{ id?: string; name: string }>;
   };
   server: {
     port: number;

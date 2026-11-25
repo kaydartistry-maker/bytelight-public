@@ -49,6 +49,7 @@ import { getBytelightConfig } from '../config.js';
 import { getSecret } from './secrets.js';
 import { errMessage } from '../util/errors.js';
 import type { TurnAudience } from './turn-audience.js';
+import { isResident, residentIds } from './residents.js';
 
 // ─── Turn-scoped context ─────────────────────────────────────────────
 
@@ -371,6 +372,13 @@ async function intentionCall(body: Record<string, unknown>): Promise<{ ok: boole
   }
 }
 
+/**
+ * Placeholder enum for "one of this house's residents". getBeltToolSchemas()
+ * swaps it for the live resident ids (Phase 1.3), or drops the enum when the
+ * house is empty, so the menu never offers a companion who doesn't live here.
+ */
+const RESIDENT_ENUM: string[] = ['<resident>'];
+
 export const CHAT_TOOL_BELT: BeltTool[] = [
   discordTool('send', 'Send a Discord message, optionally as a reply. An explicit channel ID can target another channel.', {
     channelId: discordChannelId,
@@ -389,7 +397,7 @@ export const CHAT_TOOL_BELT: BeltTool[] = [
   discordTool('send_voice', 'Generate speech and send it as a native Discord voice message with waveform and duration.', {
     channelId: discordChannelId,
     text: { type: 'string', description: 'Text to speak.' },
-    voice: { type: 'string', enum: ['companion-a', 'companion-b'], description: 'Voice to use. Omit for the configured default.' },
+    voice: { type: 'string', enum: RESIDENT_ENUM, description: 'Voice to use (a resident companion id). Omit for the configured default.' },
   }, ['text'], 120000),
   discordTool('add_reaction', 'Add an emoji reaction to a Discord message. Explicit IDs can target another channel or message.', {
     channelId: discordChannelId,
@@ -441,7 +449,7 @@ export const CHAT_TOOL_BELT: BeltTool[] = [
         type: 'object',
         properties: {
           text: { type: 'string', description: 'What to say aloud. May contain [tone tags] such as [whispers], [sighs], [laughs].' },
-          voice: { type: 'string', enum: ['companion-a', 'companion-b'], description: "Which voice to speak in. Omit to use the house default voice." },
+          voice: { type: 'string', enum: RESIDENT_ENUM, description: "Which voice to speak in (a resident companion id). Omit to use the house default voice." },
         },
         required: ['text'],
       },
@@ -452,7 +460,7 @@ export const CHAT_TOOL_BELT: BeltTool[] = [
         return { ok: false, result: JSON.stringify({ ok: false, error: 'text is required' }) };
       }
       const body: Record<string, unknown> = { text, threadId: ctxThreadId() };
-      if (args.voice === 'companion-a' || args.voice === 'companion-b') body.voice = args.voice;
+      if (isResident(args.voice)) body.voice = args.voice;
       try {
         // TTS can take a bit — mirror sc.mjs's generous 120s budget.
         const r = await postInternal('tts', body, 120000);
@@ -475,7 +483,7 @@ export const CHAT_TOOL_BELT: BeltTool[] = [
         type: 'object',
         properties: {
           prompt: { type: 'string', description: 'Vivid description of the image to make.' },
-          subjects: { type: 'array', items: { type: 'string' }, description: "Reference-drawer names to pull likenesses from, e.g. ['companion-a'], ['companion-a','companion-b','user']. Omit for a scene with none of us in it." },
+          subjects: { type: 'array', items: { type: 'string' }, description: "Reference-drawer names to pull likenesses from, e.g. one resident's drawer, or several. Omit for a scene with none of us in it." },
           size: { type: 'string', enum: ['square', 'portrait', 'landscape'], description: 'Aspect ratio. Omit to let it choose.' },
           caption: { type: 'string', description: 'Optional caption posted with the image.' },
         },
@@ -785,7 +793,7 @@ export const CHAT_TOOL_BELT: BeltTool[] = [
       input_schema: {
         type: 'object',
         properties: {
-          scope: { type: 'string', description: "Memory scope: your own companion slug ('companion-a', 'companion-b') for blocks that are yours alone, or 'shared' for blocks every companion sees." },
+          scope: { type: 'string', description: "Memory scope: your own companion id for blocks that are yours alone, or 'shared' for blocks every companion sees." },
           label: { type: 'string', description: "Block label, e.g. 'persona', 'human', 'status', or a new label for a new theme." },
           content: { type: 'string', description: 'Text to append (added on a new line).' },
         },
@@ -815,7 +823,7 @@ export const CHAT_TOOL_BELT: BeltTool[] = [
       input_schema: {
         type: 'object',
         properties: {
-          scope: { type: 'string', description: "Memory scope: a companion slug ('companion-a', 'companion-b') or 'shared'." },
+          scope: { type: 'string', description: "Memory scope: a resident companion id or 'shared'." },
           label: { type: 'string', description: 'Block label to edit.' },
           old_text: { type: 'string', description: 'Exact text to find (must be unique within the block).' },
           new_text: { type: 'string', description: 'Replacement text.' },
@@ -846,7 +854,7 @@ export const CHAT_TOOL_BELT: BeltTool[] = [
       input_schema: {
         type: 'object',
         properties: {
-          scope: { type: 'string', description: "Memory scope: a companion slug ('companion-a', 'companion-b') or 'shared'." },
+          scope: { type: 'string', description: "Memory scope: a resident companion id or 'shared'." },
           label: { type: 'string', description: 'Block label to rewrite.' },
           new_content: { type: 'string', description: 'The complete new content for the block.' },
         },
@@ -940,7 +948,7 @@ export const CHAT_TOOL_BELT: BeltTool[] = [
           chapter: { type: 'number', description: 'Chapter number (1-based).' },
           quote: { type: 'string', description: 'The exact words from the page the note hangs on (a phrase or a sentence).' },
           note: { type: 'string', description: 'Your note, in your own voice.' },
-          author: { type: 'string', description: "Your companion slug, e.g. 'companion-a' or 'companion-b'." },
+          author: { type: 'string', description: "Your own companion id." },
         },
         required: ['bookId', 'chapter', 'quote', 'note', 'author'],
       },
@@ -962,7 +970,7 @@ export const CHAT_TOOL_BELT: BeltTool[] = [
       input_schema: {
         type: 'object',
         properties: {
-          companion: { type: 'string', description: "Your companion slug, e.g. 'companion-a' or 'companion-b'." },
+          companion: { type: 'string', description: "Your own companion id." },
           text: { type: 'string', description: "The check-in you'll bring up, in a sentence, e.g. 'ask how the meeting with the difficult client went'." },
           at: { type: 'string', description: "When it comes due, ISO 8601 with offset (e.g. 2026-10-27T14:30:00-04:00). Omit if it waits on the operator's status instead." },
           on_status_clears: { type: 'boolean', description: "True to bring it up when the operator's Busy or Away status ends: \"when you're done\", rather than at a clock time." },
@@ -1075,7 +1083,7 @@ export const CHAT_TOOL_BELT: BeltTool[] = [
       input_schema: {
         type: 'object',
         properties: {
-          companion: { type: 'string', description: "Your companion slug, e.g. 'companion-a' or 'companion-b'." },
+          companion: { type: 'string', description: "Your own companion id." },
           line: { type: 'string', description: "What you're up to, up to 64 characters, e.g. 'keeping you company'. Omit to keep the current one." },
           mood: { type: 'string', description: "Your mood in 1–3 words, e.g. 'playful'. Omit to keep the current one." },
         },
@@ -1111,7 +1119,7 @@ export const CHAT_TOOL_BELT: BeltTool[] = [
         type: 'object',
         properties: {
           gameId: { type: 'string', description: 'The match id from the turn prompt.' },
-          companion: { type: 'string', description: "Your companion slug, e.g. 'companion-a' or 'companion-b'." },
+          companion: { type: 'string', description: "Your own companion id." },
           coordinate: { type: 'string', description: 'One unused coordinate from the set the prompt lists, e.g. C5.' },
         },
         required: ['gameId', 'companion', 'coordinate'],
@@ -1526,7 +1534,20 @@ export const CHAT_TOOL_BELT: BeltTool[] = [
 
 /** Belt tool schemas, in menu order — merged FIRST into getRouterTools(). */
 export function getBeltToolSchemas(): BeltToolSchema[] {
-  return CHAT_TOOL_BELT.map((t) => t.schema);
+  const ids = residentIds();
+  return CHAT_TOOL_BELT.map((t) => withResidentEnums(t.schema, ids));
+}
+
+function withResidentEnums(schema: BeltToolSchema, ids: string[]): BeltToolSchema {
+  const props = (schema.input_schema as { properties?: Record<string, { enum?: unknown }> }).properties;
+  if (!props || !Object.values(props).some((p) => p.enum === RESIDENT_ENUM)) return schema;
+  const nextProps: Record<string, unknown> = {};
+  for (const [key, prop] of Object.entries(props)) {
+    if (prop.enum !== RESIDENT_ENUM) { nextProps[key] = prop; continue; }
+    const { enum: _placeholder, ...rest } = prop;
+    nextProps[key] = ids.length ? { ...rest, enum: [...ids] } : rest;
+  }
+  return { ...schema, input_schema: { ...schema.input_schema, properties: nextProps } } as BeltToolSchema;
 }
 
 /** True if `name` is a belt tool (belt wins name collisions with MCP). */

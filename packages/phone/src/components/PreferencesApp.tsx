@@ -7,7 +7,7 @@ import { ThemeConfig } from '../lib/theme';
 import { cn } from '../lib/utils';
 import { apiFetch } from '../bytelight';
 import {
-  DEFAULT_BRAIN,
+  houseBrain,
   PROVIDER_ROWS,
   defaultEngineBodies,
   effortChoices,
@@ -79,7 +79,7 @@ export function PreferencesApp({ onClose, themeConfig, themeMode, embedded }: Pr
 
   async function readTier(tier: HouseTier): Promise<TierEngine | null> {
     try {
-      const qs = new URLSearchParams({ companionId: DEFAULT_BRAIN, tier });
+      const qs = new URLSearchParams({ companionId: houseBrain(), tier });
       const res = await apiFetch(`/api/companion-settings/effective?${qs.toString()}`);
       if (!res.ok) return null;
       return engineFromEffective(await res.json());

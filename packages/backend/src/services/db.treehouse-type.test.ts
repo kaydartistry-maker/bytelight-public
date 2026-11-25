@@ -23,10 +23,13 @@ before(() => {
   // An old house: 001 as it shipped, two threads and a message in them.
   const old = new Database(dbPath);
   old.exec(readFileSync(join(MIGRATIONS, '001_init.sql'), 'utf8'));
+  old.exec(readFileSync(join(MIGRATIONS, '014_companions.sql'), 'utf8'));
   const ins = old.prepare('INSERT INTO threads (id, name, type, created_at, last_activity_at) VALUES (?, ?, ?, ?, ?)');
   ins.run('old-named', 'Old named', 'named', '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z');
   ins.run('old-daily', 'Old daily', 'daily', '2026-01-02T00:00:00.000Z', '2026-01-02T00:00:00.000Z');
   old.prepare("INSERT INTO messages (id, thread_id, sequence, role, content, created_at) VALUES ('m1', 'old-named', 1, 'user', 'hi', '2026-01-01T00:00:00.000Z')").run();
+  old.prepare("INSERT INTO companions (id, display_name, brain, sort_order) VALUES ('companion-a', 'Companion A', 'companion-a-b', 0), ('companion-b', 'Companion B', 'companion-a-b', 1)").run();
+  old.prepare("INSERT INTO thread_companions (thread_id, companion_id) VALUES ('old-named', 'companion-a'), ('old-named', 'companion-b')").run();
   old.close();
   initDb(dbPath);
 });
@@ -47,7 +50,6 @@ describe('038 threads.type widen', () => {
     const ids = (db.prepare('SELECT id FROM threads').all() as Array<{ id: string }>).map((r) => r.id);
     assert.ok(ids.includes('old-named') && ids.includes('old-daily'));
     assert.equal((db.prepare("SELECT COUNT(*) AS n FROM messages WHERE thread_id = 'old-named'").get() as { n: number }).n, 1);
-    // 015 seated the resident pair in every pre-existing thread; the rebuild must not cascade them away.
     const seats = (db.prepare("SELECT companion_id FROM thread_companions WHERE thread_id = 'old-named' ORDER BY companion_id").all() as Array<{ companion_id: string }>).map((r) => r.companion_id);
     assert.deepEqual(seats, ['companion-a', 'companion-b']);
   });

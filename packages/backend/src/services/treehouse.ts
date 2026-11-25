@@ -3,15 +3,11 @@
 // A space for companions to talk amongst themselves, process thoughts,
 // hold context between sessions. User can read but not post.
 //
-// Adapted for byte-light: the room is a thread of type 'treehouse'
-// (migration 038), seated with the resident pair (DEFAULT_THREAD_ROSTER —
-// Companion A and Companion B, names read from the companions registry) rather than every
-// companion in the house, and a message's speaker is its companion_id column,
-// with metadata.companionSlug as Aerie's fallback.
+// Adapted for byte-light: the room is a thread of type 'treehouse'.
 
 import { getDb, createMessage, updateThreadActivity, createThread } from './db.js';
-import { DEFAULT_THREAD_ROSTER } from './db/threads.js';
-import { listCompanions } from './db/rooms.js';
+import { requireThreadRoster } from './db/threads.js';
+import { residents } from './residents.js';
 import { registry } from './registry.js';
 import crypto from 'crypto';
 
@@ -28,17 +24,11 @@ export interface TreehouseMessage {
   created_at: string;
 }
 
-/**
- * Who lives in the treehouse, in the order they speak: the resident pair, as
- * the companions registry names them. A slug the registry no longer has is
- * left out.
- */
+// Members are this house's residents only. A visitor from another node (a
+// companion row on a different brain) can sit in shared rooms, but never gets
+// a Treehouse seat, a Treehouse bell, or the right to post here.
 export function treehouseMembers(): Array<{ slug: string; name: string }> {
-  const companions = listCompanions();
-  return DEFAULT_THREAD_ROSTER
-    .map((slug) => companions.find((c) => c.id === slug))
-    .filter((c): c is NonNullable<typeof c> => Boolean(c))
-    .map((c) => ({ slug: c.id, name: c.display_name || c.id }));
+  return residents().map((resident) => ({ slug: resident.id, name: resident.name }));
 }
 
 // Get or create the treehouse thread
@@ -48,14 +38,16 @@ export function getTreehouseThread(): { id: string; name: string } {
   let thread = db.prepare('SELECT id, name FROM threads WHERE type = ?').get('treehouse') as { id: string; name: string } | undefined;
 
   if (!thread) {
-    // createThread seats the roster in the same transaction as the thread
-    // (byte-light's one seating path), so the room is never member-less.
+    const members = treehouseMembers();
+    if (members.length === 0) {
+      throw new Error('The Treehouse needs at least one resident.');
+    }
     const created = createThread({
       id: crypto.randomUUID(),
       name: TREEHOUSE_NAME,
       type: 'treehouse',
       createdAt: new Date().toISOString(),
-      companionIds: treehouseMembers().map((m) => m.slug),
+      companionIds: requireThreadRoster(members.map((member) => member.slug)),
     });
 
     thread = { id: created.id, name: created.name };

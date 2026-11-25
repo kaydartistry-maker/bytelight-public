@@ -25,7 +25,7 @@ export type { SkillInfo } from './skills.js';
 import { getAllStickersWithPacks } from './stickers.js';
 import { getCustomEmojiCatalog } from './discord/index.js';
 import { listDrawersWithCounts } from './image-gen.js';
-import { formatBlocksForPrompt, SHARED_SCOPE, COMPANION_SCOPES } from './memory-blocks.js';
+import { formatBlocksForPrompt, SHARED_SCOPE, companionScopes } from './memory-blocks.js';
 import { findLatestWeeklyDigest } from './digest.js';
 import crypto from 'crypto';
 import { existsSync, readFileSync } from 'fs';
@@ -958,7 +958,7 @@ if (h.digest) {
   // when there are no blocks (fresh DB pre-seed), so we skip the push cleanly.
   // (Slice 3, ported from Keystone.)
   try {
-    const memoryBlock = formatBlocksForPrompt([SHARED_SCOPE, ...COMPANION_SCOPES]);
+    const memoryBlock = formatBlocksForPrompt([SHARED_SCOPE, ...companionScopes()]);
     if (memoryBlock && memoryBlock.trim()) {
       parts.push({ label: 'Memory', content: memoryBlock });
       // Core memory is injected WHOLE and uncapped, on every turn, on every
@@ -984,12 +984,12 @@ if (h.digest) {
     if (existsSync(memCliPath)) {
       const SC = `node ${memCliPath.replace(/\\/g, '/')}`;
       parts.push({ label: 'Memory tools', content: [
-        'CORE MEMORY (persistent labeled blocks — view + edit in place; scope = shared|companion-a|companion-b):',
+        `CORE MEMORY (persistent labeled blocks — view + edit in place; scope = ${[SHARED_SCOPE, ...companionScopes()].join('|')}):`,
         `  ${SC} memory view [scope] [label]                  (list blocks, one scope, or open one block)`,
         `  ${SC} memory append <scope> <label> <content>      (add a line; creates the block if new)`,
         `  ${SC} memory replace <scope> <label> <old> <new>   (fix exact text; old must be unique)`,
         `  ${SC} memory rethink <scope> <label> <content>     (rewrite the whole block)`,
-        "  'shared' blocks (e.g. human, status) are seen by everyone; 'companion-a'/'companion-b' blocks (e.g. persona) are that companion's own.",
+        `  'shared' blocks (e.g. human, status) are seen by everyone; ${companionScopes().map((s) => `'${s}'`).join('/') || 'a companion\'s'} blocks (e.g. persona) are that companion's own.`,
         '  Write durable facts here when you learn something worth keeping — this survives across sessions.',
       ].join('\n') });
     }

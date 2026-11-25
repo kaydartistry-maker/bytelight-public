@@ -21,6 +21,7 @@
   import RosterEditor from '$lib/components/RosterEditor.svelte';
   import {
     loadCompanions,
+    residentCompanions,
     allCompanions,
     getThreadRoster,
     type Companion,
@@ -273,15 +274,13 @@
   let newThreadName = $state('');
   let creatingThread = $state(false);
   // Roster picker: which companion ids are seated in the thread being created.
-  // Defaults to the resident pair (zero-tap everyday case). The backend default
-  // seating (createThread) is the real source of truth for non-picker paths;
-  // this just mirrors it so the picker opens pre-seated.
-  const DEFAULT_SEATED = ['companion-a', 'companion-b'];
-  let newThreadSeated = $state<string[]>([...DEFAULT_SEATED]);
+  // Opens with the house's residents seated (zero-tap everyday case). Phase
+  // 1.1: the backend seats nobody on its own, so the roster is always sent.
+  let newThreadSeated = $state<string[]>([]);
 
   function handleNewThread() {
     newThreadName = '';
-    newThreadSeated = [...DEFAULT_SEATED];
+    newThreadSeated = residentCompanions().map((c) => c.id);
     newThreadOpen = true;
   }
 
@@ -302,15 +301,10 @@
     creatingThread = true;
     try {
       const name = newThreadName.trim() || undefined;
-      // Only send companionIds when the picker diverges from the backend
-      // default — keeps the everyday case identical to today's behaviour and
-      // lets the single default-seating point (createThread) own it.
-      const seated = newThreadSeated;
-      const isDefault =
-        seated.length === DEFAULT_SEATED.length &&
-        DEFAULT_SEATED.every((d) => seated.includes(d));
-      const body: Record<string, unknown> = { name };
-      if (!isDefault && seated.length > 0) body.companionIds = seated;
+      // The roster is always explicit: a thread seats exactly who was picked.
+      const seated = newThreadSeated.length > 0 ? newThreadSeated : residentCompanions().map((c) => c.id);
+      if (seated.length === 0) throw new Error('Pick at least one companion to seat');
+      const body: Record<string, unknown> = { name, companionIds: seated };
 
       const response = await apiFetch('/api/threads', {
         method: 'POST',

@@ -58,6 +58,7 @@ import { MODEL_VARIANTS } from '@bytelight/shared';
 import {
   initDb,
   createThread,
+  getDb,
   setConfig as setDbConfig,
   getMessages,
   getProviderSession,
@@ -93,8 +94,10 @@ before(() => {
   loadConfig(join(tmpRoot, 'bytelight.yaml'));
   initDb(join(tmpRoot, 'parity.db'));
   const now = new Date().toISOString();
-  createThread({ id: THREAD_ID, name: 'parity', type: 'named', createdAt: now });
-  createThread({ id: FOREIGN_THREAD_ID, name: 'parity-foreign', type: 'named', createdAt: now });
+  getDb().prepare('INSERT INTO companions (id, display_name, brain) VALUES (?, ?, ?)')
+    .run(COMPANION_ID, 'Test resident', COMPANION_ID);
+  createThread({ id: THREAD_ID, name: 'parity', type: 'named', createdAt: now, companionIds: [COMPANION_ID] });
+  createThread({ id: FOREIGN_THREAD_ID, name: 'parity-foreign', type: 'named', createdAt: now, companionIds: [COMPANION_ID] });
 });
 
 // ─── Minimal fake req/res for direct Router invocation ───────────────────
@@ -140,16 +143,12 @@ function callRoute(
   });
 }
 
-// ─── PIN 1 — config parity with only migration-seeded rows ───────────────
-
-describe('PIN 1 — resolver/config parity (fresh DB, migration seeds only)', () => {
-  test('migration 011 seeds exist and only pulse/memory are seeded', () => {
-    assert.ok(getCompanionSetting({ companionId: COMPANION_ID, tier: 'pulse', scope: 'system' }));
-    assert.ok(getCompanionSetting({ companionId: COMPANION_ID, tier: 'memory', scope: 'system' }));
-    assert.equal(getCompanionSetting({ companionId: COMPANION_ID, tier: 'interactive', scope: 'system' }), null);
-    assert.equal(getCompanionSetting({ companionId: COMPANION_ID, tier: 'autonomous', scope: 'system' }), null);
-    assert.equal(getCompanionSetting({ companionId: COMPANION_ID, tier: 'interactive', scope: 'companion' }), null);
-    assert.equal(getCompanionSetting({ companionId: COMPANION_ID, tier: 'autonomous', scope: 'companion' }), null);
+describe('PIN 1 — resolver/config parity (fresh DB, no resident settings)', () => {
+  test('migration boot does not create resident-specific settings', () => {
+    for (const tier of ['pulse', 'memory', 'interactive', 'autonomous'] as const) {
+      assert.equal(getCompanionSetting({ companionId: COMPANION_ID, tier, scope: 'system' }), null);
+      assert.equal(getCompanionSetting({ companionId: COMPANION_ID, tier, scope: 'companion' }), null);
+    }
   });
 
   test('pure defaults: resolved model equals the getConfiguredModel oracle', () => {
@@ -212,10 +211,10 @@ describe('PIN 1 — resolver/config parity (fresh DB, migration seeds only)', ()
     }
   });
 
-  test('seed rows: pulse + memory resolve to haiku system rows, not agent.model', () => {
+  test('pulse and memory use the configured fallback when no settings rows exist', () => {
     for (const tier of ['pulse', 'memory'] as const) {
       const resolved = resolveCompanionConfig(COMPANION_ID, tier, null);
-      assert.equal(resolved.model, 'claude-haiku-4-5', `${tier} should ride the 011 seed`);
+      assert.equal(resolved.model, WAKE_DAY_MODEL, `${tier} should use agent.model`);
       assert.equal(resolved.source, 'system');
     }
   });

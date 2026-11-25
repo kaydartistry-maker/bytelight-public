@@ -99,15 +99,24 @@ function systemFallback(tier: TierHint): { provider: ProviderId; model: string }
  * itself. Unknown ids (or a missing companions table) are just themselves.
  */
 export function companionLookupChain(companionId: string): string[] {
+  let brain: string | null | undefined;
   try {
-    const row = getDb()
-      .prepare('SELECT brain FROM companions WHERE slug = ?')
-      .get(companionId) as { brain?: string | null } | undefined;
-    const brain = row?.brain;
-    return brain && brain !== companionId ? [companionId, brain] : [companionId];
+    const db = getDb();
+    // Phase 1.2: the registry key is companions.id. slug is an optional
+    // alias (live rows carry one; fresh-install rows may leave it NULL, and
+    // older schemas may lack the column entirely).
+    brain = (db.prepare('SELECT brain FROM companions WHERE id = ?')
+      .get(companionId) as { brain?: string | null } | undefined)?.brain;
+    if (!brain) {
+      try {
+        brain = (db.prepare('SELECT brain FROM companions WHERE slug = ?')
+          .get(companionId) as { brain?: string | null } | undefined)?.brain;
+      } catch { /* no slug column — the id lookup was the whole answer */ }
+    }
   } catch {
     return [companionId];
   }
+  return brain && brain !== companionId ? [companionId, brain] : [companionId];
 }
 
 type RowLookup = (key: {

@@ -25,9 +25,10 @@ import {
 } from '@bytelight/shared';
 import { spotify, SpotifyError } from './spotify.js';
 import { getPushService } from './push.js';
+import { isResident, residentIds } from './residents.js';
 
-export const NEEDLE_COMPANIONS = ['companion-a', 'companion-b'] as const;
-export type NeedleCompanion = (typeof NEEDLE_COMPANIONS)[number];
+/** A resident companion id (residents.ts): only the house's own may drop the needle. */
+export type NeedleCompanion = string;
 export type NeedleRoad = 'remote' | 'intent';
 
 export interface NeedleDrop {
@@ -73,7 +74,7 @@ const MOST_DROPS_KEPT = 200;
 const LONGEST_ERROR = 300;
 
 export function isNeedleCompanion(value: unknown): value is NeedleCompanion {
-  return typeof value === 'string' && (NEEDLE_COMPANIONS as readonly string[]).includes(value);
+  return isResident(value);
 }
 
 /** A song, an album or a playlist as Spotify writes its uri, and nothing else. */
@@ -93,7 +94,10 @@ export function readDropRequest(body: unknown): { ok: true; value: NeedleDrop } 
     return { ok: false, error: 'A drop is {companion, uri}.' };
   }
   const { companion, uri } = body as Record<string, unknown>;
-  if (!isNeedleCompanion(companion)) return { ok: false, error: 'A drop comes from companion-a or companion-b (--as <slug>).' };
+  if (!isNeedleCompanion(companion)) {
+    const ids = residentIds();
+    return { ok: false, error: ids.length ? `A drop comes from ${ids.join(' or ')} (--as <slug>).` : 'Nobody lives in this house to drop the needle.' };
+  }
   if (!isNeedleUri(uri)) return { ok: false, error: 'That is not a Spotify song, album or playlist uri (spotify:track:..., spotify:album:..., spotify:playlist:...).' };
   return { ok: true, value: { companion, uri } };
 }

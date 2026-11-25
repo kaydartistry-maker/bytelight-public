@@ -48,7 +48,7 @@ import {
 } from '@bytelight/shared';
 import { getDb } from './state.js';
 import { getConfig, setConfig } from './config.js';
-import { createThread, getThread } from './threads.js';
+import { createThread, getThread, requireThreadRoster } from './threads.js';
 import { createMessage } from './messages.js';
 import { listCompanions, type Companion } from './rooms.js';
 
@@ -710,7 +710,7 @@ export function ensureStoryShelfThread(): string {
   // every companion is simply seated, which is the 'nobody leads' shape below.
   createThread({
     id, name: 'The Story Shelf', type: 'named', createdAt: at, sessionType: 'v2',
-    companionIds: listCompanions().map((companion) => companion.id),
+    companionIds: requireThreadRoster(listCompanions().map((companion) => companion.id)),
   });
 
   // Everyone participates and nobody is primary — the same shape as their person's

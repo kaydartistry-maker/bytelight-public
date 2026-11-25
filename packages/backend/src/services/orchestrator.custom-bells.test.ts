@@ -38,11 +38,14 @@ writeFileSync(
 const { loadConfig } = await import('../config.js');
 loadConfig(yamlPath);
 const { initDb, getConfig, setConfig } = await import('./db.js');
+const { seatResidents } = await import('../test-support/pair-house.js');
 const { Orchestrator } = await import('./orchestrator.js');
 
 const db = initDb(join(root, 'test.db'));
 const nowIso = new Date().toISOString();
 db.prepare("INSERT INTO threads (id,name,type,created_at,last_activity_at) VALUES ('home','Home','named',?,?)").run(nowIso, nowIso);
+// Phase 1.1: nobody is seeded; seat the pair this test expects.
+seatResidents(db, ['home']);
 // The spontaneous contract asks whether the Studio can paint; keep it off so
 // the fallback line is what these tests see unless they switch it on.
 setConfig('image_gen.enabled', 'false');

@@ -4,6 +4,7 @@ import {
   listThreads,
   getThread,
   createThread,
+  requireThreadRoster,
   getMessages,
   getMessageContext,
   getMessage,
@@ -162,9 +163,6 @@ export function createChatRoutes(): Router {
     }
   });
 
-  // Create named thread. Optional companionIds seats the roster at creation
-  // (the Slice 3 picker). Omit it and createThread applies the default resident
-  // pair — the single default-seating point lives in db.ts (createThread).
   router.post('/threads', (req, res) => {
     try {
       const { name, companionIds } = req.body;
@@ -174,26 +172,24 @@ export function createChatRoutes(): Router {
         return;
       }
 
-      // Validate an explicit roster if one was sent. Absent/empty → default
-      // seating (handled in createThread). A malformed or unknown-id roster is
-      // a 400 rather than a silent fallback, so the picker fails loudly.
-      let roster: string[] | undefined;
-      if (companionIds !== undefined) {
-        if (
-          !Array.isArray(companionIds) ||
-          !companionIds.every((x) => typeof x === 'string' && x.trim().length > 0)
-        ) {
-          res.status(400).json({ error: 'companionIds must be an array of companion id strings' });
-          return;
-        }
-        const ids = Array.from(new Set((companionIds as string[]).map((s) => s.trim())));
-        if (ids.length > 0) {
-          if (!allCompanionsExist(ids)) {
-            res.status(400).json({ error: 'one or more companionIds do not exist in the companions registry' });
-            return;
-          }
-          roster = ids;
-        }
+      if (
+        !Array.isArray(companionIds) ||
+        companionIds.length === 0 ||
+        !companionIds.every((value) => typeof value === 'string' && value.trim().length > 0)
+      ) {
+        res.status(400).json({ error: 'companionIds must be a non-empty array of companion id strings' });
+        return;
+      }
+      let roster: ReturnType<typeof requireThreadRoster>;
+      try {
+        roster = requireThreadRoster(companionIds);
+      } catch (error) {
+        res.status(400).json({ error: error instanceof Error ? error.message : 'Invalid companionIds' });
+        return;
+      }
+      if (!allCompanionsExist([...roster])) {
+        res.status(400).json({ error: 'one or more companionIds do not exist in the companions registry' });
+        return;
       }
 
       const thread = createThread({

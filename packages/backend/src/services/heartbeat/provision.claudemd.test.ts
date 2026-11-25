@@ -31,7 +31,7 @@ writeFileSync(join(tmpRoot, 'config.yaml'), 'agent:\n  cwd: .\n  model: claude-s
 
 // Dynamic imports AFTER env stub.
 const { initDb } = await import('../db.js');
-const { setBlock, formatBlocksForPrompt, SHARED_SCOPE, COMPANION_SCOPES } =
+const { setBlock, formatBlocksForPrompt, SHARED_SCOPE, companionScopes } =
   await import('../memory-blocks.js');
 const { provisionSessionDir } = await import('./provision.js');
 const { stripCoreMemoryFromOrientation } = await import('./runtime.js');
@@ -99,7 +99,7 @@ test('the exact rendered blocks are stripped from the per-message payload', () =
   // End-to-end shape: build an orientation the way the SDK lane would (same
   // formatBlocksForPrompt output that provision wrote to CLAUDE.md) and
   // assert the heartbeat delivery path strips it whole.
-  const rendered = formatBlocksForPrompt([SHARED_SCOPE, ...COMPANION_SCOPES]);
+  const rendered = formatBlocksForPrompt([SHARED_SCOPE, ...companionScopes()]);
   assert.ok(rendered.includes(SENTINEL_V2), 'sanity: blocks render for the prompt');
   const orientation = `Time: 12:00\n${rendered}\nCHAT TOOLS: sticker catalog...`;
   const { text, stripped } = stripCoreMemoryFromOrientation(orientation);

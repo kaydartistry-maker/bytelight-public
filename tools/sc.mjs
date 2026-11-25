@@ -12,6 +12,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 // Resolve port: check env, then try bytelight.yaml, fallback to 3002
 function getPort() {
   if (process.env.RESONANT_PORT) return process.env.RESONANT_PORT;
+  if (process.env.PORT) return process.env.PORT;
   try {
     const yaml = readFileSync(join(__dirname, '..', 'bytelight.yaml'), 'utf8');
     const match = yaml.match(/^\s*port:\s*(\d+)/m);

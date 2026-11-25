@@ -2,7 +2,7 @@ import crypto from 'crypto';
 import type { Thread } from '@bytelight/shared';
 import { deleteConfig, getConfig, setConfig } from './config.js';
 import { getDb } from './init.js';
-import { createThread, getThread } from './threads.js';
+import { createRoutingThreadShell, getThread } from './threads.js';
 
 // ── Active routing thread ("Home") ──────────────────────────────────────
 // One global routing thread is the catch-all target for ambient activity.
@@ -109,7 +109,7 @@ export function resolveRoutingThread(
   }
 
   // No threads at all — bootstrap a starter
-  const created = createThread({
+  const created = createRoutingThreadShell({
     id: crypto.randomUUID(),
     name: 'Home',
     type: 'named',

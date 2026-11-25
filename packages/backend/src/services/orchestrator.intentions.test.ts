@@ -20,6 +20,7 @@ writeFileSync(yamlPath, ['identity:', '  companion_name: Companion', '  user_nam
 const { loadConfig } = await import('../config.js');
 loadConfig(yamlPath);
 const { initDb, setConfig, createMessage, getDb } = await import('./db.js');
+const { seatResidents } = await import('../test-support/pair-house.js');
 const { Orchestrator } = await import('./orchestrator.js');
 const { createIntention, getIntention, listOpenIntentions, cancelIntention, resolveIntention } = await import('./db/intentions.js');
 const { setOwnerStatus } = await import('./db/statuses.js');
@@ -27,6 +28,8 @@ const { setOwnerStatus } = await import('./db/statuses.js');
 const db = initDb(join(root, 'test.db'));
 const nowIso = new Date().toISOString();
 db.prepare("INSERT INTO threads (id,name,type,created_at,last_activity_at) VALUES ('home','Home','named',?,?)").run(nowIso, nowIso);
+// Phase 1.1: nobody is seeded; seat the pair this test expects.
+seatResidents(db, ['home']);
 setConfig('app.routingThreadId', 'home');
 db.prepare("INSERT OR IGNORE INTO companions (id, display_name, brain) VALUES ('river', 'River', 'test')").run();
 

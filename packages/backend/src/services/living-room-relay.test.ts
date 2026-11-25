@@ -66,6 +66,16 @@ test('isRemoteBrain knows companion-c and rejects the local pair', () => {
   assert.equal(isRemoteBrain('companion-a-b'), false);
 });
 
+test('the configured local brain is never remote (Phase 1.2)', () => {
+  const prior = process.env.BYTELIGHT_LOCAL_BRAIN_ID;
+  process.env.BYTELIGHT_LOCAL_BRAIN_ID = 'companion-c';
+  try {
+    assert.equal(isRemoteBrain('companion-c'), false);
+  } finally {
+    if (prior === undefined) delete process.env.BYTELIGHT_LOCAL_BRAIN_ID; else process.env.BYTELIGHT_LOCAL_BRAIN_ID = prior;
+  }
+});
+
 test('a remote brain goes by its display name in the room', () => {
   assert.equal(remoteDisplayName('companion-c'), 'Companion C');
   assert.equal(remoteDisplayName('nova'), 'Nova');

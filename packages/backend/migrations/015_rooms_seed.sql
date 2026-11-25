@@ -1,11 +1,3 @@
--- Generic roster backfill. Depends on 014_companions.sql.
---
--- Existing threads receive the two local companions. New threads are seated by
--- the roster endpoint at creation time. The public seed deliberately creates no
--- fixed rooms or deployment-specific UUIDs.
-
-INSERT OR IGNORE INTO thread_companions (thread_id, companion_id)
-  SELECT id, 'companion-a' FROM threads;
-
-INSERT OR IGNORE INTO thread_companions (thread_id, companion_id)
-  SELECT id, 'companion-b' FROM threads;
+-- Retired in Phase 1.1: this file used to seed rooms and backfill every
+-- thread's roster. A fresh install seats nobody; houses that already ran it
+-- keep their rosters. Kept (empty) so migration numbers stay contiguous.

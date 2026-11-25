@@ -33,7 +33,7 @@ function fail(message: string) {
 
 const scopeParam = z
   .string()
-  .describe("Memory scope: your own companion slug (e.g. 'companion-a', 'companion-b') for blocks that are yours alone, or 'shared' for blocks every companion sees.");
+  .describe("Memory scope: your own companion id for blocks that are yours alone, or 'shared' for blocks every companion sees.");
 
 // Every write from this lane is receipted as actor 'mcp'. The lane is what we
 // can actually verify: the MCP server is shared by every companion and carries

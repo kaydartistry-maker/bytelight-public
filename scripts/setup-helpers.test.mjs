@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { isValidTimezone, trustedDetectedTimezone, processNameFor } from './setup-helpers.mjs';
+import { isValidTimezone, trustedDetectedTimezone, processNameFor, joinNames } from './setup-helpers.mjs';
 
 test('real zones are valid, made-up ones are not', () => {
   assert.equal(isValidTimezone('America/New_York'), true);
@@ -24,4 +24,10 @@ test('house names become safe, distinct pm2 names', () => {
   assert.equal(processNameFor('🐉'), 'bytelight');
   assert.equal(processNameFor(''), 'bytelight');
   assert.ok(processNameFor('x'.repeat(80)).length <= 40);
+});
+
+test('names read as plain English', () => {
+  assert.equal(joinNames(['Jace']), 'Jace');
+  assert.equal(joinNames(['River', 'Stone']), 'River and Stone');
+  assert.equal(joinNames(['A', 'B', 'C']), 'A, B and C');
 });

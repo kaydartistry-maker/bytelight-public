@@ -70,6 +70,7 @@ import { sidecarProviderFor } from './agent/sidecar.js';
 // (thread > companion > system > config) — tag wiring template
 // stable-pre-rollback-2026-06-20 agent.ts:20/651.
 import { resolveModelForTurn } from './agent/model-resolution.js';
+import { DEFAULT_LOCAL_BRAIN_ID, getLocalBrainId, isLocalBrain } from './local-brain.js';
 import { buildAgentTurnInput } from './agent/turn-input.js';
 import { attachImagesToLatestUserMessage } from './agent/attachment-images.js';
 import { rewriteCodexSkillInvocation } from './agent/codex-skill-invocation.js';
@@ -505,7 +506,24 @@ export function queueTimeoutFor(priority: number): number {
 // (Companion A + Companion B are two picker seats over one brain — companions registry).
 // Remote companions (Companion C) never stream through this service; their turns are
 // relayed by the Living Room dispatcher and stamped with their own id there.
-export const LOCAL_COMPANION_ID = 'companion-a-b';
+// Phase 1.2: the brain is configuration (local-brain.ts). LOCAL_COMPANION_ID
+// stays exported as the historical default for callers and fixtures that
+// name it; runtime decisions read getLocalBrainId() per call.
+export const LOCAL_COMPANION_ID = DEFAULT_LOCAL_BRAIN_ID;
+
+/**
+ * Phase 1.3: an empty roster makes no model call. True when at least one
+ * companion of this house's brain is seated in the thread. A lookup failure
+ * (no roster table in a bare test DB) answers true so the turn runs as before.
+ */
+export function hasResidentSeat(threadId: string): boolean {
+  try {
+    if (!getThread(threadId)) return true; // missing thread: the turn reports it as before
+    return getThreadRoster(threadId).some((c) => isLocalBrain(c.brain));
+  } catch {
+    return true;
+  }
+}
 
 // The owner's stop button during a room turn stops the whole room, not just
 // the companion speaking — set by stopGeneration, read between lanes.
@@ -942,6 +960,10 @@ export class AgentService {
      *  Telegram and the house's wakes leave it out and are the owner's. */
     audience?: TurnAudience;
   }): Promise<string> {
+    if (!hasResidentSeat(threadId)) {
+      console.warn(`[Agent] Thread ${threadId} has no resident seated — no model call`);
+      return '';
+    }
     const platform = opts?.platform || 'web';
     const priority = queuePriorityFor(platform, opts?.audience);
 
@@ -1002,7 +1024,7 @@ export class AgentService {
   private roomLanesFor(threadId: string): Array<{ id: string; name: string }> | null {
     try {
       const on = getDbConfig('agent.multi_lane') === 'true';
-      const seats = getThreadRoster(threadId).filter((c) => c.brain === LOCAL_COMPANION_ID);
+      const seats = getThreadRoster(threadId).filter((c) => isLocalBrain(c.brain));
       if (!shouldFanOut(on, false, seats.length)) return null;
       if (!roomBiosReady().ready) return null;
       for (const seat of seats) {
@@ -1068,6 +1090,10 @@ export class AgentService {
    * Room is set to. See wakeLaneFor for which door.
    */
   async processAutonomous(threadId: string, prompt: string, ownerId?: string): Promise<string> {
+    if (!hasResidentSeat(threadId)) {
+      console.warn(`[Agent] Wake in thread ${threadId} skipped — no resident seated, no model call`);
+      return '';
+    }
     return queryQueue.enqueue(PRIORITIES.autonomous, async () => {
       const lane = ownerId ? this.wakeLaneFor(ownerId) : null;
       return this._processQuery(threadId, prompt, true, undefined, lane ? { lane: { companionId: lane } } : undefined);
@@ -1125,7 +1151,7 @@ export class AgentService {
     const guestTurn = turnAudience?.kind === 'guest';
     // Who this turn is: one companion in his own lane, or the resident pair.
     const laneCompanionId = platformOpts?.lane?.companionId ?? null;
-    const turnCompanionId = laneCompanionId ?? LOCAL_COMPANION_ID;
+    const turnCompanionId = laneCompanionId ?? getLocalBrainId();
     const thread = getThread(threadId);
     if (!thread) throw new Error(`Thread ${threadId} not found`);
 

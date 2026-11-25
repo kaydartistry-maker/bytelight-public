@@ -4,7 +4,7 @@ import { existsSync, readFileSync } from 'fs';
 import { join } from 'path';
 import { getBytelightConfig, PROJECT_ROOT } from '../../config.js';
 import { getDb } from './state.js';
-import { createThread, getThread } from './threads.js';
+import { createThread, getThread, requireThreadRoster } from './threads.js';
 import { createMessage, getMessages } from './messages.js';
 // byte-light's companion registry (services/db/rooms.ts): the row id IS the
 // slug ('companion-a', 'companion-b', 'companion-c'), so Aerie's `.slug` reads `.id` here.
@@ -255,7 +255,7 @@ function ensureFleetRoomThread(): string {
     sessionType: 'v2',
     // byte-light seats a thread's roster at creation and has no primary /
     // participant split, so every companion is simply seated (see below).
-    companionIds: listCompanions().map((companion) => companion.id),
+    companionIds: requireThreadRoster(listCompanions().map((companion) => companion.id)),
   });
 
   // Everyone participates and nobody is primary — the same shape as the owner's
