@@ -31,3 +31,26 @@ test('names read as plain English', () => {
   assert.equal(joinNames(['River', 'Stone']), 'River and Stone');
   assert.equal(joinNames(['A', 'B', 'C']), 'A, B and C');
 });
+
+import { ENGINES, engineSettings, yamlQuote } from './setup-helpers.mjs';
+
+test('Claude and Codex never start a house on an old model', () => {
+  assert.equal(engineSettings('claude').model, 'sonnet');
+  assert.equal(engineSettings('codex').model, 'codex-cli/gpt-6.1-sol');
+  for (const e of ENGINES) assert.ok(!String(e.model).includes('4-6'));
+});
+
+test('an API engine writes exactly its own provider block', () => {
+  const or = engineSettings('api', { provider: 'openrouter', key: 'sk-or-x', model: 'z-ai/glm-4.6' });
+  assert.equal(or.model, 'openrouter/z-ai/glm-4.6');
+  assert.equal(or.providersYaml, 'providers:\n  openrouter:\n    api_key: "sk-or-x"\n');
+  const ol = engineSettings('api', { provider: 'ollama', model: 'llama3.3' });
+  assert.match(ol.providersYaml, /base_url: "http:\/\/localhost:11434"/);
+  assert.match(ol.providersYaml, /enabled: true/);
+  assert.throws(() => engineSettings('api', { provider: 'openrouter', model: '' }));
+  assert.throws(() => engineSettings('gemini'));
+});
+
+test('yaml strings survive quotes and backslashes', () => {
+  assert.equal(yamlQuote('a"b\\c'), '"a\\"b\\\\c"');
+});
