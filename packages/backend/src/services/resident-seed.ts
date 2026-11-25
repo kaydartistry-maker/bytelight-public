@@ -18,7 +18,7 @@ export interface ResidentEntry {
   name: string;
 }
 
-/** A display name turned into a stable companion id: "Jace" → "jace". */
+/** A display name turned into a stable companion id: "River" → "river". */
 export function residentIdFor(name: string): string {
   return String(name)
     .normalize('NFKD')

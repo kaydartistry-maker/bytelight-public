@@ -18,8 +18,8 @@ test('UTC from a cloud VM is not trusted as the person\'s zone', () => {
 });
 
 test('house names become safe, distinct pm2 names', () => {
-  assert.equal(processNameFor('Jace'), 'jace');
-  assert.equal(processNameFor("Jace's House"), 'jaces-house');
+  assert.equal(processNameFor('River'), 'river');
+  assert.equal(processNameFor("River's House"), 'rivers-house');
   assert.equal(processNameFor('  Café  Noir!! '), 'cafe-noir');
   assert.equal(processNameFor('🐉'), 'bytelight');
   assert.equal(processNameFor(''), 'bytelight');
@@ -27,7 +27,7 @@ test('house names become safe, distinct pm2 names', () => {
 });
 
 test('names read as plain English', () => {
-  assert.equal(joinNames(['Jace']), 'Jace');
+  assert.equal(joinNames(['River']), 'River');
   assert.equal(joinNames(['River', 'Stone']), 'River and Stone');
   assert.equal(joinNames(['A', 'B', 'C']), 'A, B and C');
 });
