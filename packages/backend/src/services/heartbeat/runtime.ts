@@ -885,9 +885,9 @@ export class InteractiveCliRuntime implements AgentRuntime {
       yield {
         type: 'error',
         message:
-          'Claude CLI heartbeat runtime is not enabled. Set ' +
-          `${FEATURE_FLAG_ENV}=true to opt in. This lane is registered ` +
-          'but unreachable by default in H1 — no UI routes to it yet.',
+          'The Claude CLI lane is switched off in this house. Add ' +
+          `${FEATURE_FLAG_ENV}=true to the .env file (or run npm run setup ` +
+          'again), then restart the house.',
         recoverable: false,
       };
       return;

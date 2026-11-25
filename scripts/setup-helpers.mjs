@@ -55,6 +55,26 @@ export function joinNames(names) {
  * one is only the starting default: every thread and the whole house can be
  * switched to another engine later in the app.
  */
+/**
+ * Switches every house needs in .env, whatever engine was picked first.
+ * The Claude CLI lane stays asleep until a thread actually uses it, so it is
+ * always switched on: picking Codex today and swapping to Claude later just works.
+ */
+export const ENV_SWITCHES = [
+  { key: 'CLAUDE_CLI_HEARTBEAT_ENABLED', value: 'true', note: 'The warm Claude CLI lane. It only wakes when a thread uses it.' },
+];
+
+/** Adds each missing switch to an .env text. Never changes a line the person already set. */
+export function withEnvSwitches(envText = '') {
+  let out = envText;
+  for (const sw of ENV_SWITCHES) {
+    if (new RegExp(`^\\s*${sw.key}\\s*=`, 'm').test(out)) continue;
+    if (out && !out.endsWith('\n')) out += '\n';
+    out += `# ${sw.note}\n${sw.key}=${sw.value}\n`;
+  }
+  return out;
+}
+
 export const ENGINES = [
   {
     key: 'claude-cli',

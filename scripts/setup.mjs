@@ -4,9 +4,9 @@
 // Usage: node scripts/setup.mjs
 
 import { createInterface } from 'readline';
-import { writeFileSync, existsSync, copyFileSync, mkdirSync, readdirSync, chmodSync } from 'fs';
+import { writeFileSync, readFileSync, existsSync, copyFileSync, mkdirSync, readdirSync, chmodSync } from 'fs';
 import { join, resolve } from 'path';
-import { isValidTimezone, trustedDetectedTimezone, processNameFor, joinNames, ENGINES, API_PROVIDERS, engineSettings, yamlQuote } from './setup-helpers.mjs';
+import { isValidTimezone, trustedDetectedTimezone, processNameFor, joinNames, ENGINES, API_PROVIDERS, engineSettings, yamlQuote, withEnvSwitches } from './setup-helpers.mjs';
 
 const rl = createInterface({ input: process.stdin, output: process.stdout });
 const ask = (q) => new Promise((res) => rl.question(q, res));
@@ -163,11 +163,17 @@ ${engineYaml.providersYaml}`;
   try { chmodSync('bytelight.yaml', 0o600); } catch { /* Windows: not applicable */ }
   console.log('\n  Created: bytelight.yaml');
 
-  // Write .env if not exists
-  if (!existsSync('.env')) {
-    let envContent = '# bytelight Environment\n# Engine sign-ins and keys live in bytelight.yaml or the engine\'s own CLI login.\n';
-    writeFileSync('.env', envContent);
-    console.log('  Created: .env');
+  // .env: create it, or add any switch an older one is missing. Lines the
+  // person already set are never changed.
+  {
+    const had = existsSync('.env');
+    const before = had ? readFileSync('.env', 'utf8')
+      : '# bytelight Environment\n# Engine sign-ins and keys live in bytelight.yaml or the engine\'s own CLI login.\n';
+    const after = withEnvSwitches(before);
+    if (!had || after !== before) {
+      writeFileSync('.env', after);
+      console.log(had ? '  Updated: .env (switched on the engine lanes)' : '  Created: .env');
+    }
   }
 
   // Copy example CLAUDE.md if not exists

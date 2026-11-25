@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { isValidTimezone, trustedDetectedTimezone, processNameFor, joinNames } from './setup-helpers.mjs';
+import { isValidTimezone, trustedDetectedTimezone, processNameFor, joinNames, withEnvSwitches } from './setup-helpers.mjs';
 
 test('real zones are valid, made-up ones are not', () => {
   assert.equal(isValidTimezone('America/New_York'), true);
@@ -62,4 +62,18 @@ test('Gemini is offered with its warning, on a current model', () => {
   const g = ENGINES.find((e) => e.key === 'gemini');
   assert.ok(g.warning.includes('separate Google account'));
   assert.equal(engineSettings('gemini').model, 'antigravity/gemini-4-neon-high');
+});
+
+test('every house gets the Claude CLI lane switched on, whatever engine came first', () => {
+  const fresh = withEnvSwitches('# bytelight Environment\n');
+  assert.match(fresh, /^CLAUDE_CLI_HEARTBEAT_ENABLED=true$/m);
+  assert.ok(fresh.startsWith('# bytelight Environment\n'));
+});
+
+test('an older .env gets the switch added; a line the person set is never changed', () => {
+  assert.match(withEnvSwitches('DISCORD_ENABLED=true'), /DISCORD_ENABLED=true\n# .*\nCLAUDE_CLI_HEARTBEAT_ENABLED=true\n$/);
+  const theirs = 'CLAUDE_CLI_HEARTBEAT_ENABLED=false\n';
+  assert.equal(withEnvSwitches(theirs), theirs);
+  const once = withEnvSwitches('');
+  assert.equal(withEnvSwitches(once), once);
 });
