@@ -83,10 +83,10 @@ describe('Style pictures ride the render', () => {
       const spell = { id: 's1', title: 'T', scene: '[Character 1] on a couch', originalText: null, tags: [], look: null,
         origin: 'mine' as const, author: null, credit: null, link: null, source: null, vault: null, engine: null,
         neutralized: true, createdAt: '', timesCast: 0, lastCastAt: null, castSize: 1 };
-      const withPics = await prepareCast(spell, [{ slug: 'ash', label: 'Ash' }], board.id, { justRead: true });
+      const withPics = await prepareCast(spell, [{ slug: 'river', label: 'River' }], board.id, { justRead: true });
       assert.equal(withPics.styleRefs.length, 1);
       assert.match(withPics.enginePrompt, /Look: soft pastel/);
-      const noPics = await prepareCast(spell, [{ slug: 'ash', label: 'Ash' }], words.id, { justRead: true });
+      const noPics = await prepareCast(spell, [{ slug: 'river', label: 'River' }], words.id, { justRead: true });
       assert.deepEqual(noPics.styleRefs, []);
       assert.deepEqual(resolveStyleRefs({ prompt: 'x', styleRefs: withPics.styleRefs }), withPics.styleRefs);
       assert.deepEqual(resolveStyleRefs({ prompt: 'x', styleRefs: ['/no/such/file.png'] }), []);

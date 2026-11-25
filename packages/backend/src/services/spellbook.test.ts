@@ -11,8 +11,8 @@ const {
   SpellbookError,
 } = await import('./spellbook.js');
 
-const ash = { slug: 'ash', label: 'Ash' };
-const wren = { slug: 'wren', label: 'Wren' };
+const river = { slug: 'river', label: 'River' };
+const stone = { slug: 'stone', label: 'Stone' };
 
 describe('Spellbook reader prompt', () => {
   it('asks for exactly as many character tokens as people cast', () => {
@@ -68,26 +68,26 @@ describe('Casting names into a scene', () => {
   const scene = '[Character 1] sits on the hood. [Character 2] stands behind [Character 1].';
 
   it('writes every token as the cast member\'s name', () => {
-    assert.equal(castNames(scene, [ash, wren]), 'Ash sits on the hood. Wren stands behind Ash.');
+    assert.equal(castNames(scene, [river, stone]), 'River sits on the hood. Stone stands behind River.');
   });
 
   it('swapping the cast needs no new reading', () => {
-    assert.equal(castNames(scene, [wren, ash]), 'Wren sits on the hood. Ash stands behind Wren.');
+    assert.equal(castNames(scene, [stone, river]), 'Stone sits on the hood. River stands behind Stone.');
   });
 
   it('tells the engine to keep each person looking like their references', () => {
-    const p = engineSpellPrompt(scene, [ash, wren]);
-    assert.ok(p.startsWith('Ash sits on the hood.'));
-    assert.match(p, /Ash, Wren must look exactly like their reference images/);
+    const p = engineSpellPrompt(scene, [river, stone]);
+    assert.ok(p.startsWith('River sits on the hood.'));
+    assert.match(p, /River, Stone must look exactly like their reference images/);
   });
 
   it('lays the look on the end of the prompt, and nothing for "keep"', async () => {
     const { fullPrompt, fullPromptNoNames } = await import('./spellbook.js');
-    assert.match(fullPrompt(scene, [ash, wren], 'grungy-film'), /\n\nLook: Grainy 35mm film/);
-    assert.equal(fullPrompt(scene, [ash, wren], 'keep'), 'Ash sits on the hood. Wren stands behind Ash.');
+    assert.match(fullPrompt(scene, [river, stone], 'grungy-film'), /\n\nLook: Grainy 35mm film/);
+    assert.equal(fullPrompt(scene, [river, stone], 'keep'), 'River sits on the hood. Stone stands behind River.');
     const custom = { id: 'x', name: 'VHS', recipe: 'VHS tape, scanlines.', keepPicture: false };
     assert.equal(fullPromptNoNames(scene, custom), `${scene}\n\nLook: VHS tape, scanlines.`);
-    assert.match(engineSpellPrompt(scene, [ash, wren], custom), /Look: VHS tape, scanlines\.\n\nIdentity:/);
+    assert.match(engineSpellPrompt(scene, [river, stone], custom), /Look: VHS tape, scanlines\.\n\nIdentity:/);
   });
 });
 
@@ -128,18 +128,18 @@ describe('Recasting with a different number of people', async () => {
 
 describe('Fitting a scene to who is cast', async () => {
   const { buildTailorPrompt, buildReaderPrompt: reader } = await import('./spellbook.js');
-  const seats = [{ label: 'Ash', refPath: '/r/ash.jpg' }, { label: 'Wren', refPath: '/r/wren.jpg' }];
+  const seats = [{ label: 'River', refPath: '/r/river.jpg' }, { label: 'Stone', refPath: '/r/stone.jpg' }];
 
   it('names each slot and points at its reference picture', () => {
     const p = buildTailorPrompt('[Character 1] in a lace dress kisses [Character 2].', seats);
-    assert.match(p, /\[Character 1\] is Ash \(attached image 1 is their reference picture\)/);
-    assert.match(p, /\[Character 2\] is Wren \(attached image 2/);
+    assert.match(p, /\[Character 1\] is River \(attached image 1 is their reference picture\)/);
+    assert.match(p, /\[Character 2\] is Stone \(attached image 2/);
     assert.match(p, /A man gets menswear: never a dress/);
     assert.match(p, /never describe their face/i);
   });
 
   it('the picture reader counts the dropped picture as image 1', () => {
-    assert.match(reader(2, 'grungy-film', seats), /\[Character 1\] is Ash \(attached image 2/);
+    assert.match(reader(2, 'grungy-film', seats), /\[Character 1\] is River \(attached image 2/);
     assert.doesNotMatch(reader(2, 'grungy-film'), /Who is being cast/);
   });
 });

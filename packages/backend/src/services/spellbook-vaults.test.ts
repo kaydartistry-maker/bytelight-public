@@ -17,7 +17,7 @@ before(() => { initDb(join(mkdtempSync(join(tmpdir(), 'spellbook-')), 'test.db')
 
 const ARCHIVE = `# community prompt archive
 
-## Ash
+## River
 ### 2026-03-02
 Midjourney
 \`\`\`
@@ -27,7 +27,7 @@ A woman in a red slip dress leaning on a vintage car at night, flash photo --ar 
 Two people dancing in a neon laundromat, grainy film
 \`\`\`
 
-## Wren
+## Stone
 ### Apr 9, 2026, 11:35 AM · 1 image(s)
 Gpt (or any)
 A man and a woman slow dancing in an empty diner at 2am, jukebox glow, rain on the windows, grainy candid film photo
@@ -40,7 +40,7 @@ A man reading on a rainy balcony, 35mm film
 ### 2026-04-11
 nothing here today
 
-## Ash
+## River
 ### 2026-05-01
 gpt-image
 \`\`\`
@@ -52,12 +52,12 @@ describe('community archive parser', () => {
   it('follows ## author → ### date → engine → code block', () => {
     const { candidates, unparsed } = parseCommunityArchive(ARCHIVE);
     assert.equal(candidates.length, 5);
-    assert.equal(candidates[0].author, 'Ash');
-    assert.equal(candidates[0].credit, 'Ash');
+    assert.equal(candidates[0].author, 'River');
+    assert.equal(candidates[0].credit, 'River');
     assert.equal(candidates[0].engine, 'Midjourney');
     assert.equal(candidates[0].origin, 'community');
     assert.equal(candidates[1].engine, 'Midjourney');
-    assert.equal(candidates[2].author, 'Wren');
+    assert.equal(candidates[2].author, 'Stone');
     assert.equal(candidates[2].engine, 'Gpt (or any)', 'a date with no block uses its text as the prompt');
     assert.match(candidates[2].prompt, /^A man and a woman slow dancing/);
     assert.equal(candidates[3].engine, 'Sora');

@@ -32,12 +32,12 @@ function row(over: Partial<BytelightMessage>): BytelightMessage {
 test('a Discord guest arrives with their picture', () => {
   const m = toPhoneMessage(row({
     metadata: {
-      discordUsername: 'ash_ashen',
-      discordDisplayName: 'Ash Ashen',
+      discordUsername: 'river_vale',
+      discordDisplayName: 'River Vale',
       discordAvatarUrl: 'https://cdn.discordapp.com/avatars/1/2.png?size=128',
     },
   }));
-  assert.equal(m.sender, 'Ash Ashen');
+  assert.equal(m.sender, 'River Vale');
   assert.equal(m.via, 'Discord');
   assert.equal(m.senderAvatar, 'https://cdn.discordapp.com/avatars/1/2.png?size=128');
 });
@@ -46,9 +46,9 @@ test('a Discord guest arrives with their picture', () => {
 // an initial, so absent has to stay absent rather than becoming a broken image.
 test('a guest from before we captured pictures carries none', () => {
   const m = toPhoneMessage(row({
-    metadata: { discordUsername: 'ash_ashen', discordDisplayName: 'Ash Ashen' },
+    metadata: { discordUsername: 'river_vale', discordDisplayName: 'River Vale' },
   }));
-  assert.equal(m.sender, 'Ash Ashen');
+  assert.equal(m.sender, 'River Vale');
   assert.equal(m.senderAvatar, undefined);
 });
 

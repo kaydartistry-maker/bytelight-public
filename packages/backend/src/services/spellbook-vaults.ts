@@ -301,7 +301,7 @@ export const NEUTRALIZE_BATCH = 10;
 export function buildNeutralizePrompt(items: Array<{ i: number; text: string; needsTitle?: boolean }>): string {
   return `You prepare image-generation prompts for reuse with ANY people. For each prompt below, rewrite every specific person in it as a numbered token: [Character 1], [Character 2] … (brackets included), numbered in the order they first appear, at most ${MAX_CAST}.
 
-A "person" is anyone in the picture: a named character (Ash, Wren, a companion, a celebrity), "the woman", "a man", "she", "he", "her boyfriend". Replace their name and any description of their identity — face, eye color, hair, skin tone, ethnicity, age beyond "adult", body type, tattoos, piercings — with the token. Keep EVERYTHING else exactly: pose, action, wardrobe, setting, props, light, camera, film stock, mood, engine flags like --ar or --style. If a prompt has no people in it, return it unchanged with people 0.
+A "person" is anyone in the picture: a named character (River, Stone, a companion, a celebrity), "the woman", "a man", "she", "he", "her boyfriend". Replace their name and any description of their identity — face, eye color, hair, skin tone, ethnicity, age beyond "adult", body type, tattoos, piercings — with the token. Keep EVERYTHING else exactly: pose, action, wardrobe, setting, props, light, camera, film stock, mood, engine flags like --ar or --style. If a prompt has no people in it, return it unchanged with people 0.
 
 Where an item has "needsTitle": true, also give it a short evocative title (2-6 words, no names); otherwise title is "".
 

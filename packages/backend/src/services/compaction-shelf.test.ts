@@ -30,7 +30,7 @@ function companion(id: string, name: string): Companion {
 
 test('whose head: the shared room, a companion\'s own lane by their id, and a plain label for a lane nobody can name', () => {
   const cast = [
-    companion('ash', 'Ash'),
+    companion('river', 'River'),
     companion('birch', 'Birch'),
     companion('cedar', 'Cedar'),
   ];
@@ -49,8 +49,8 @@ test('whose head: the shared room, a companion\'s own lane by their id, and a pl
   // squash was first read, so their row does not turn into a stranger's.
   assert.equal(whoseHead('willow', 'willow', cast), "Willow's own head");
   // And a renamed companion reads by the name they have now.
-  const renamed = [companion('ash', 'Rowan')];
-  assert.equal(whoseHead('ash', 'ash', renamed), "Rowan's own head");
+  const renamed = [companion('river', 'Sage')];
+  assert.equal(whoseHead('river', 'river', renamed), "Sage's own head");
 });
 
 function house(dbPath = ':memory:') {
