@@ -1087,12 +1087,14 @@ export function buildHouseMcpConfig(
         command: server.command,
         ...(server.args?.length ? { args: server.args } : {}),
         ...(server.env && Object.keys(server.env).length ? { env: server.env } : {}),
+        ...(server.alwaysLoad ? { alwaysLoad: true } : {}),
       };
     } else {
       mcpServers[name] = {
         type: server.type,
         url: server.url,
         ...(server.headers && Object.keys(server.headers).length ? { headers: server.headers } : {}),
+        ...(server.alwaysLoad ? { alwaysLoad: true } : {}),
       };
     }
   }

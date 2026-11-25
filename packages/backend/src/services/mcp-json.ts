@@ -5,9 +5,14 @@ import { existsSync, readFileSync } from 'fs';
  * `url`/`http` and `sse` entries are remote, untyped or `stdio` entries spawn
  * a command. Unknown types are skipped.
  */
-export type McpJsonServer =
+export type McpJsonServer = (
   | { type: 'http' | 'sse'; url: string; headers?: Record<string, string> }
-  | { type: 'stdio'; command: string; args?: string[]; env?: Record<string, string> };
+  | { type: 'stdio'; command: string; args?: string[]; env?: Record<string, string> }
+) & {
+  /** Claude CLI lanes load this server's tools every session instead of
+   *  deferring them behind tool search. For a few always-needed tools. */
+  alwaysLoad?: boolean;
+};
 
 /** Read the operator's .mcp.json. Missing or unreadable file yields {}. */
 export function readMcpJson(path: string): Record<string, McpJsonServer> {
@@ -17,12 +22,13 @@ export function readMcpJson(path: string): Record<string, McpJsonServer> {
     const mcpJson = JSON.parse(readFileSync(path, 'utf-8'));
     if (!mcpJson.mcpServers) return servers;
     for (const [name, mcpCfg] of Object.entries(mcpJson.mcpServers) as [string, any][]) {
+      const always = mcpCfg.alwaysLoad === true ? { alwaysLoad: true } : {};
       if (mcpCfg.type === 'url' || mcpCfg.type === 'http') {
-        servers[name] = { type: 'http', url: mcpCfg.url, headers: mcpCfg.headers };
+        servers[name] = { type: 'http', url: mcpCfg.url, headers: mcpCfg.headers, ...always };
       } else if (mcpCfg.type === 'sse') {
-        servers[name] = { type: 'sse', url: mcpCfg.url, headers: mcpCfg.headers };
+        servers[name] = { type: 'sse', url: mcpCfg.url, headers: mcpCfg.headers, ...always };
       } else if (!mcpCfg.type || mcpCfg.type === 'stdio') {
-        servers[name] = { type: 'stdio', command: mcpCfg.command, args: mcpCfg.args, env: mcpCfg.env };
+        servers[name] = { type: 'stdio', command: mcpCfg.command, args: mcpCfg.args, env: mcpCfg.env, ...always };
       }
     }
   } catch (err) {

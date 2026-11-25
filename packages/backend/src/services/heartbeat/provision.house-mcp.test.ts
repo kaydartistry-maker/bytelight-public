@@ -160,3 +160,12 @@ test('a lane turn is read without creating a lane, and only while a turn is runn
   session.turnActive = false;
   assert.equal(heartbeatLaneTurn('kit-turn-lane'), null);
 });
+
+test('a .mcp.json server marked alwaysLoad stays always-loaded on the lane', () => {
+  const config = JSON.parse(buildHouseMcpConfig({
+    core: { type: 'stdio', command: 'node', args: ['core.mjs'], alwaysLoad: true },
+    full: { type: 'http', url: 'https://brain.example/mcp' },
+  })!);
+  assert.equal(config.mcpServers.core.alwaysLoad, true);
+  assert.equal('alwaysLoad' in config.mcpServers.full, false);
+});
