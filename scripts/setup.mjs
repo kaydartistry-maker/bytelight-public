@@ -39,7 +39,10 @@ async function main() {
   // 2. What engine does this house run on? Only the starting default.
   const pickFrom = async (question, options) => {
     console.log(`\n  ${question}`);
-    options.forEach((o, i) => console.log(`    ${i + 1}. ${o.label}`));
+    options.forEach((o, i) => {
+      console.log(`    ${i + 1}. ${o.label}`);
+      if (o.warning) console.log(`       ⚠️  ${o.warning}`);
+    });
     for (;;) {
       const n = Number((await ask(`  Pick 1-${options.length} [1] `)).trim() || '1');
       if (Number.isInteger(n) && n >= 1 && n <= options.length) return options[n - 1];

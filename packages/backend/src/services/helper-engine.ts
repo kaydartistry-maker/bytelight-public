@@ -10,6 +10,7 @@
  * The helpers speak three dialects (memory-extraction.ts runHelperPrompt):
  *   'sdk'    Claude through the Agent SDK (a Claude plan login)
  *   'codex'  ChatGPT through the Codex sign-in
+ *   'antigravity'  Gemini through the Antigravity CLI's Google sign-in
  *   <id>     any configured API provider through the router (openrouter, groq,
  *            xai, openai, ollama, anthropic)
  */
@@ -35,6 +36,7 @@ const ROUTER_PROVIDERS = new Set(['openrouter', 'groq', 'xai', 'openai', 'ollama
  */
 export function helperEngineForHouse(provider: string, model: string): { provider: string; model: string } {
   if (provider === 'codex-cli' || provider === 'openai-codex') return { provider: 'codex', model };
+  if (provider === 'antigravity') return { provider: 'antigravity', model };
   if (ROUTER_PROVIDERS.has(provider) && model) return { provider, model };
   return { provider: 'sdk', model: CLAUDE_HELPER_MODEL };
 }

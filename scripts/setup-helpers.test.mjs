@@ -48,9 +48,15 @@ test('an API engine writes exactly its own provider block', () => {
   assert.match(ol.providersYaml, /base_url: "http:\/\/localhost:11434"/);
   assert.match(ol.providersYaml, /enabled: true/);
   assert.throws(() => engineSettings('api', { provider: 'openrouter', model: '' }));
-  assert.throws(() => engineSettings('gemini'));
+  assert.throws(() => engineSettings('nope'));
 });
 
 test('yaml strings survive quotes and backslashes', () => {
   assert.equal(yamlQuote('a"b\\c'), '"a\\"b\\\\c"');
+});
+
+test('Gemini is offered with its warning, on a current model', () => {
+  const g = ENGINES.find((e) => e.key === 'gemini');
+  assert.ok(g.warning.includes('separate Google account'));
+  assert.equal(engineSettings('gemini').model, 'antigravity/gemini-4-neon-high');
 });

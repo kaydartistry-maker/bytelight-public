@@ -595,12 +595,38 @@ async function extractViaCodex(
 }
 
 /**
+ * The Antigravity (Gemini) lane: one stateless turn through the agy CLI, no
+ * session carried over. Imported lazily like the Codex lane.
+ */
+async function extractViaAntigravity(systemPrompt: string, prompt: string, model: string): Promise<string> {
+  const { AntigravityCliRuntime } = await import('./runtimes/antigravity-cli.js');
+  const runtime = new AntigravityCliRuntime();
+  let raw = '';
+  for await (const event of runtime.runTurn({
+    thread: { id: 'helper', name: 'Helper', type: 'named', current_session_id: null },
+    tier: 'memory',
+    modelRef: { canonical: `antigravity/${model}`, provider: 'antigravity', model, runtime: 'antigravity-cli' },
+    platform: 'internal',
+    isAutonomous: true,
+    orientation: '',
+    systemPrompt: { kind: 'text', value: systemPrompt },
+    messages: [{ role: 'user', content: prompt, createdAt: new Date().toISOString() }],
+    cwd: process.cwd(),
+  })) {
+    if (event.type === 'text_delta') raw += event.text;
+    else if (event.type === 'error') throw new Error(`antigravity helper failed: ${event.message}`);
+  }
+  return raw;
+}
+
+/**
  * One stateless prompt on a helper engine (helper-engine.ts), for background
  * helpers other than the Archivist (the Scribe). No tools, no session.
  */
 export async function runHelperPrompt(engine: Pick<HelperEngine, 'provider' | 'model'>, systemPrompt: string, prompt: string): Promise<string> {
   if (engine.provider === 'sdk') return (await extractViaClaudeSdk(systemPrompt, prompt, engine.model)).text;
   if (engine.provider === 'codex') return extractViaCodex(systemPrompt, prompt, engine.model, 'adaptive', 'disabled');
+  if (engine.provider === 'antigravity') return extractViaAntigravity(systemPrompt, prompt, engine.model);
   return extractViaRouter(systemPrompt, prompt, engine.model, engine.provider);
 }
 
@@ -712,6 +738,8 @@ Output the JSON array of memory edit and follow-up operations now.`;
     );
   } else if (provider === 'codex') {
     raw = await extractViaCodex(systemPrompt, prompt, model, settings.effort, settings.thinking);
+  } else if (provider === 'antigravity') {
+    raw = await extractViaAntigravity(systemPrompt, prompt, model);
   } else {
     raw = await extractViaRouter(systemPrompt, prompt, model, provider);
   }

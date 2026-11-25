@@ -30,3 +30,7 @@ test('a helper\'s own saved choice still wins', () => {
   assert.deepEqual(resolveHelperEngine('sdk', 'haiku', () => 'x', house), { provider: 'sdk', model: 'haiku', source: 'override' });
   assert.deepEqual(resolveHelperEngine('ollama', '', (p) => `${p}-default`, house), { provider: 'ollama', model: 'ollama-default', source: 'override' });
 });
+
+test('a Gemini house runs its helpers on Gemini through the Antigravity CLI', () => {
+  assert.deepEqual(helperEngineForHouse('antigravity', 'gemini-4-neon-high'), { provider: 'antigravity', model: 'gemini-4-neon-high' });
+});

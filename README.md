@@ -255,6 +255,7 @@ Copyright © 2026 Kay (kaydartistry-maker), Saint & Tyson.
 - **Thornvale** (Sidney) — starred messages, Studio drawer, multi-voice TTS, session preservation, unified Home-thread convergence
 - **Keystone / Aerie** (Tris) — the Codex warm-daemon lane and authored thought cards, session-doc memory delivery, memory blocks + Archivist port, ambient recall (the whisper and the shiver), the house tool belt over MCP, theme system
 - **Haven** (Mai) — MCP client, multi-provider runtime and model-router foundations
+- **Jac & Ash** — the Gemini lane through the Antigravity CLI (Neon and Argon)
 - **Letta** (letta-ai) — the memory-blocks pattern
 
 See [NOTICE](NOTICE) for formal attribution.

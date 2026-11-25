@@ -75,6 +75,16 @@ export const ENGINES = [
     ],
   },
   {
+    key: 'gemini',
+    label: 'Gemini through the Antigravity CLI (your Google login)',
+    warning: "Google's terms are unclear on using Antigravity inside another app. Consider a separate Google account.",
+    model: 'antigravity/gemini-4-neon-high',
+    signIn: [
+      "Install Google's Antigravity CLI (agy) and sign in to it with your Google account.",
+      'The house looks for it at ~/.local/bin/agy. Somewhere else? Set ANTIGRAVITY_CLI_PATH to its full path.',
+    ],
+  },
+  {
     key: 'api',
     label: 'An API key (OpenRouter, Grok, Groq, OpenAI, Ollama)',
     model: null, // the person picks one from their provider's own list
