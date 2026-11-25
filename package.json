@@ -36,11 +36,12 @@
   },
   "allowScripts": {
     "better-sqlite3@11.10.0": true,
-    "esbuild@0.28.1": true,
+    "esbuild@0.28.2": true,
     "onnxruntime-node@1.21.0": true,
     "sharp@0.34.5": true,
     "@google/genai": false,
     "protobufjs": false,
-    "koffi@3.3.3": true
+    "koffi@3.3.8": true,
+    "@parcel/watcher": false
   }
 }

@@ -6,6 +6,7 @@
 import { createInterface } from 'readline';
 import { writeFileSync, existsSync, copyFileSync, mkdirSync, readdirSync } from 'fs';
 import { join, resolve } from 'path';
+import { isValidTimezone, trustedDetectedTimezone, processNameFor } from './setup-helpers.mjs';
 
 const rl = createInterface({ input: process.stdin, output: process.stdout });
 const ask = (q) => new Promise((res) => rl.question(q, res));
@@ -23,10 +24,27 @@ async function main() {
   // 3. Password
   const password = await ask('  Set a password? (blank for no auth, local use) ');
 
-  // 4. Timezone
-  let detectedTz = 'UTC';
+  // 4. Timezone. Asked, never silently guessed: a cloud VM reports UTC, and a
+  // house on UTC fires every wake hours off.
+  let detectedTz = '';
   try { detectedTz = Intl.DateTimeFormat().resolvedOptions().timeZone; } catch {}
-  const timezone = (await ask(`  Your timezone? [${detectedTz}] `)) || detectedTz;
+  const suggestedTz = trustedDetectedTimezone(detectedTz);
+  let timezone = '';
+  while (!timezone) {
+    const answer = (await ask(suggestedTz
+      ? `  Your timezone? [${suggestedTz}] `
+      : '  Your timezone? (for example America/New_York, Europe/London, America/Sao_Paulo) ')).trim();
+    const pick = answer || suggestedTz || '';
+    if (isValidTimezone(pick)) timezone = pick;
+    else console.log(pick
+      ? `  "${pick}" isn't a timezone this machine knows. Try the Region/City form, like America/New_York.`
+      : '  This machine can\'t tell where you are (cloud machines say UTC), so type your own.');
+  }
+
+  // 5. House name. It becomes the background process name (pm2), so two
+  // houses on one machine never collide.
+  const houseName = (await ask(`  Name your house? [${companionName}] `)).trim() || companionName;
+  const processName = processNameFor(houseName);
 
   // 5. Check Claude Code is available
   console.log('\n  bytelight uses Claude Code Agent SDK — no API key needed.');
@@ -116,7 +134,7 @@ cors:
   // Generate ecosystem.config.cjs
   const pm2Config = `module.exports = {
   apps: [{
-    name: 'bytelight',
+    name: '${processName}',
     script: 'packages/backend/dist/server.js',
     cwd: '${resolve().replace(/\\/g, '/')}',
     node_args: '--experimental-vm-modules',
@@ -152,8 +170,11 @@ cors:
   Next steps:
   1. Customize CLAUDE.md — this is your companion's personality
   2. Build:   npm run build
-  4. Start:   npm start       (or: pm2 start ecosystem.config.cjs)
-  5. Open:    http://localhost:3002
+  3. Start:   npm start       (or: pm2 start ecosystem.config.cjs)
+  4. Open:    http://localhost:3002
+
+  Your house runs in the background as "${processName}":
+    pm2 logs ${processName}    pm2 restart ${processName}
 
   For development:
     npm run dev              (backend with hot reload)
