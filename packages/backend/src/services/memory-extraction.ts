@@ -61,6 +61,7 @@ import { proposeEdit } from './memory-proposals.js';
 import { applyCaughtChange, fileCaughtIntention, listOpenIntentions } from './db/intentions.js';
 import type { AgentService } from './agent.js';
 import { extractViaClaudeSdk } from './archivist-sdk.js';
+import { resolveHelperEngine, type HelperEngine } from './helper-engine.js';
 
 const MIN_MESSAGES = 8;
 const MAX_THREADS_PER_RUN = 3;
@@ -506,9 +507,14 @@ export function getArchivistSettings(): {
   effort: ArchivistEffort;
   thinking: ArchivistThinking;
 } {
-  const provider = getConfig('agent.archivist_provider') || 'sdk';
-  const model = getConfig('agent.archivist_model')
-    || (provider === 'sdk' ? getConfig('memory.extraction_model') || 'haiku' : 'deepseek-v4-pro');
+  // Its own saved choice wins; otherwise it follows the house's engine
+  // (helper-engine.ts), so a Codex-only or API-only house never leaves the
+  // Archivist calling a Claude login it doesn't have.
+  const { provider, model } = resolveHelperEngine(
+    getConfig('agent.archivist_provider'),
+    getConfig('agent.archivist_model'),
+    (p) => (p === 'sdk' ? getConfig('memory.extraction_model') || 'haiku' : 'deepseek-v4-pro'),
+  );
   const effort = (getConfig('agent.archivist_effort') || 'adaptive') as ArchivistEffort;
   const thinking = (getConfig('agent.archivist_thinking') || 'disabled') as ArchivistThinking;
   return { provider, model, effort, thinking };
@@ -586,6 +592,16 @@ async function extractViaCodex(
     }
   }
   return raw;
+}
+
+/**
+ * One stateless prompt on a helper engine (helper-engine.ts), for background
+ * helpers other than the Archivist (the Scribe). No tools, no session.
+ */
+export async function runHelperPrompt(engine: Pick<HelperEngine, 'provider' | 'model'>, systemPrompt: string, prompt: string): Promise<string> {
+  if (engine.provider === 'sdk') return (await extractViaClaudeSdk(systemPrompt, prompt, engine.model)).text;
+  if (engine.provider === 'codex') return extractViaCodex(systemPrompt, prompt, engine.model, 'adaptive', 'disabled');
+  return extractViaRouter(systemPrompt, prompt, engine.model, engine.provider);
 }
 
 /** The companions seated in a thread who own a memory scope. */

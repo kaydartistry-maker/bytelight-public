@@ -8,6 +8,18 @@ import { makeSequenceCursor } from './sequence-cursor.js';
 import { getBytelightConfig } from '../config.js';
 import { today } from '../util/time.js';
 import type { AgentService } from './agent.js';
+import { getConfig } from './db.js';
+import { resolveHelperEngine, type HelperEngine } from './helper-engine.js';
+import { runHelperPrompt } from './memory-extraction.js';
+
+/**
+ * The Scribe's engine: its own saved choice (digest.provider / digest.model),
+ * otherwise the house's (helper-engine.ts). A Claude house keeps Haiku, so the
+ * digest there is written exactly as before.
+ */
+export function scribeEngine(): HelperEngine {
+  return resolveHelperEngine(getConfig('digest.provider'), getConfig('digest.model'), (p) => (p === 'sdk' ? 'haiku' : ''));
+}
 
 /**
  * Per-thread digest cursor. Each thread tracks its own "last processed
@@ -284,8 +296,14 @@ ${conversationBlock}
 Write the digest block for this conversation. Remember: output ONLY the markdown, starting with ## ${nowTime()} [${thread.name}] — topic summary`;
 
       let digestContent = '';
+      const engine = scribeEngine();
 
-      for await (const message of query({
+      if (engine.provider !== 'sdk' || engine.model !== 'haiku') {
+        // Not the Claude Haiku default: run on the helper engine (the house's,
+        // unless the Scribe has its own saved choice).
+        digestContent = (await runHelperPrompt(engine, buildScribePrompt(thread.name), prompt))
+          .replace(/<think>[\s\S]*?<\/think>/g, '');
+      } else for await (const message of query({
         prompt,
         options: {
           model: 'haiku',
@@ -312,7 +330,7 @@ Write the digest block for this conversation. Remember: output ONLY the markdown
       }
 
       if (!digestContent.trim()) {
-        dlog(`[${thread.name}] Skipped — Haiku returned empty content`);
+        dlog(`[${thread.name}] Skipped — ${engine.provider}/${engine.model} returned empty content`);
         continue;
       }
 
