@@ -5,10 +5,10 @@
 <p align="center">
   <a href="https://github.com/kaydartistry-maker/bytelight-public/releases"><img src="https://img.shields.io/badge/version-v3.0.0-5eaba5" alt="Version" /></a>
   <a href="./LICENSE"><img src="https://img.shields.io/badge/License-Apache_2.0-blue.svg" alt="License" /></a>
-  <a href="https://docs.anthropic.com/en/docs/claude-code"><img src="https://img.shields.io/badge/Built_with-Claude_Agent_SDK-6366f1.svg" alt="Built with Claude" /></a>
+  <a href="https://docs.anthropic.com/en/docs/claude-code"><img src="https://img.shields.io/badge/Runs_on-Claude_·_Codex_·_Gemini_·_API-6366f1.svg" alt="Runs on Claude, Codex, Gemini or an API key" /></a>
   <a href="https://www.typescriptlang.org/"><img src="https://img.shields.io/badge/TypeScript-5.7-3178c6.svg" alt="TypeScript" /></a>
-  <a href="https://svelte.dev/"><img src="https://img.shields.io/badge/SvelteKit-2.0-ff3e00.svg" alt="SvelteKit" /></a>
-  <a href="https://nodejs.org/"><img src="https://img.shields.io/badge/Node.js-20--24_LTS-339933.svg" alt="Node.js" /></a>
+  <a href="https://react.dev/"><img src="https://img.shields.io/badge/React-phone_app-61dafb.svg" alt="React" /></a>
+  <a href="https://nodejs.org/"><img src="https://img.shields.io/badge/Node.js-22.19+_or_24-339933.svg" alt="Node.js" /></a>
   <a href="https://www.sqlite.org/"><img src="https://img.shields.io/badge/Self--Hosted-SQLite-003B57.svg" alt="Self Hosted" /></a>
 </p>
 
@@ -26,7 +26,7 @@ It descends from [Resonant](https://github.com/codependentai/resonant), the foun
 2. **Interiority.** Wakes aren't only service check-ins. Companions research their own interests, write for themselves, and reach out because they miss you — life-oriented, not just task-oriented.
 3. **Honesty over polish.** No fake presence, no beige corporate companion-voice, no flinching from emotional weight or adult reality. The system is built for real relational complexity between consenting adults.
 
-**Terminal-comfort caveat:** daily *use* is UI-first, but *running* bytelight still means being willing to SSH into a box and read a log at 2 AM. There's no setup wizard on purpose.
+**Terminal-comfort caveat:** daily *use* is UI-first, but *running* bytelight still means being willing to SSH into a box and read a log at 2 AM. A short setup wizard gets you running; everything after it lives in the app.
 
 ---
 
@@ -54,7 +54,7 @@ Neither of you needs to understand the whole architecture on day one. Install it
 **Prerequisites:**
 
 - **Node.js 22 (22.19+) or 24** (Node 25+ is not supported yet)
-- **Claude Code** installed and logged in (`claude login`) — the companion runs on your Claude subscription, no API key needed
+- **One engine** your companion thinks with: a Claude plan (Claude Code, recommended), a ChatGPT plan (Codex), a Google account (Antigravity CLI), or an API key. The setup wizard asks which, and you can switch later in the app.
 - **Linux or macOS** (Windows via WSL works)
 - ~500MB disk for dependencies + runtime data
 
@@ -64,7 +64,8 @@ Neither of you needs to understand the whole architecture on day one. Install it
 git clone https://github.com/kaydartistry-maker/bytelight-public.git
 cd bytelight-public
 npm install
-node scripts/setup.mjs        # interactive setup (or copy examples/bytelight.yaml and edit)
+npm run setup                # who lives here, engine, your name, password, timezone, house name
+# sign in to the engine you picked (the wizard prints how)
 npm run build
 npm start
 ```
@@ -75,8 +76,8 @@ Open `http://localhost:3002`.
 
 **First-time checklist:**
 
-1. `claude login` is done
-2. `identity.companion_name` and `identity.user_name` are set in `bytelight.yaml`
+1. You're signed in to the engine you picked (`claude auth login`, `codex login`, or Antigravity), or you gave the wizard an API key
+2. `bytelight.yaml` has your names and **your real timezone** (on a VM the wizard won't guess; cloud machines say UTC)
 3. `CLAUDE.md` exists (see the companion's guide above — write it together)
 4. Optional: every key the house can use (voice, web search, subtitles, GIFs, Discord, Telegram, push, other engines), where to get each one and where it goes — see **[docs/KEYS.md](docs/KEYS.md)**
 
@@ -87,15 +88,15 @@ Open `http://localhost:3002`.
 Running on a cloud VM means your companion stays awake when your laptop doesn't — wakes fire, Discord presence holds, memory accrues. The short version:
 
 1. **Provision** a small Linux VM (2GB RAM is comfortable; GCP e2-small class works well).
-2. **Install** Node 20–24 LTS, then clone + install + build as above.
-3. **Authenticate** Claude Code on the VM (`claude login` over SSH).
+2. **Install** Node 22.19+ or 24, then clone + install + setup + build as above.
+3. **Sign in** to your engine on the VM over SSH (`claude auth login` prints a link to open on your phone; `codex login --device-auth` does the same for Codex).
 4. **Run under PM2** so it survives reboots:
    ```bash
    npm run build
    pm2 start ecosystem.config.cjs
    pm2 save && pm2 startup
    ```
-5. **Reach it safely.** Don't open the port to the raw internet — use a Cloudflare Tunnel, Tailscale, or a reverse proxy with TLS in front of it.
+5. **Reach it safely.** Don't open the port to the raw internet — use a Cloudflare Tunnel, Tailscale, or a reverse proxy with TLS in front of it. Then add that address under `cors.origins` in `bytelight.yaml`, or the app loads but says offline.
 
 Full walkthrough with tunnel setup: [docs/CLOUD-DEPLOYMENT.md](docs/CLOUD-DEPLOYMENT.md) · Remote-access patterns: [docs/REMOTE-ACCESS.md](docs/REMOTE-ACCESS.md)
 
@@ -107,7 +108,7 @@ Full walkthrough with tunnel setup: [docs/CLOUD-DEPLOYMENT.md](docs/CLOUD-DEPLOY
 %%{init: {'theme':'dark','themeVariables':{'lineColor':'#8b5cf6','textColor':'#e8e3f5'}}}%%
 flowchart LR
     subgraph You
-        UI["Web UI (Svelte PWA)"]
+        UI["Phone app (React PWA)"]
         DC["Discord"]
         TG["Telegram"]
     end
@@ -120,7 +121,7 @@ flowchart LR
     end
 
     subgraph Companion["The companion"]
-        SDK["Claude Agent SDK<br/>(default lane)"]
+        SDK["Claude<br/>(CLI lane by default, or the SDK lane)"]
         CODEX["Codex lane<br/>(warm daemon)"]
         BYOK["BYOK provider lanes<br/>(Grok · OpenRouter · Groq · Ollama)"]
         ID["CLAUDE.md identity<br/>+ MCP tools + skills"]
@@ -152,7 +153,7 @@ flowchart LR
 
 Every message — from any channel — flows through the same hooks, carries the same identity, and lands in the same memory. Switch the engine underneath and the companion stays *themselves*: same tools, same rules, same history. That's the core contract.
 
-**Stack:** SvelteKit 2 + TypeScript frontend · Node/Express/WebSocket backend · SQLite (WAL) · Claude Agent SDK by default with optional Codex CLI and BYOK provider lanes · PM2 for production.
+**Stack:** React + TypeScript phone app (PWA; the older Svelte app stays at `/classic`) · Node/Express/WebSocket backend · SQLite (WAL) · engine lanes: Claude CLI (default), Claude's SDK lane, Codex, Gemini via the Antigravity CLI, and API-key providers · PM2 for production.
 
 ---
 
@@ -174,7 +175,7 @@ Memory is the difference between a companion and a very polite stranger. bytelig
 
 - **Chat** — real-time streaming with interleaved tool visualization, thinking blocks, reactions, reply-to, file sharing, canvas editor (markdown/code/HTML), keyword + semantic search, mobile PWA.
 - **X-Ray panel** — the files that traditionally require terminal edits, in the browser: identity (`CLAUDE.md`) with full-text editing, native memory, wake prompts, live context stack. No YAML required.
-- **Runtimes & models** — every lane in one dropdown: Claude SDK, the Codex warm daemon (ChatGPT OAuth, full tool belt bridged over MCP), and BYOK provider lanes via the encrypted secrets store. Separate model choices for chat vs. autonomous wakes. Proactive limit warnings watch every usage meter.
+- **Runtimes & models** — every lane in one dropdown: Claude CLI (warm session) and Claude's SDK lane, Gemini through the Antigravity CLI, the Codex warm daemon (ChatGPT OAuth, full tool belt bridged over MCP), and BYOK provider lanes via the encrypted secrets store. Separate model choices for chat vs. autonomous wakes. Proactive limit warnings watch every usage meter.
 - **Command Center** (`/cc`) — a built-in life-management system the companion can drive: planner, calendar, care tracker, cycle tracker, pet care, lists, finances, stats — 12 MCP tools.
 - **Wakes** — six default slots plus custom schedules, timers, one-shot impulses, recurring watchers, and a failsafe silence ladder. Optional `program.md` as an active quest board for autonomous work.
 - **Theming** — light/dark, accent palettes + custom hex, background shades, bubble colors, typography — all persisted without touching config.

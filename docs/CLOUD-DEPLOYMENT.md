@@ -127,11 +127,11 @@ npm install
 node scripts/setup.mjs    # Interactive setup wizard
 ```
 
-The wizard creates your `resonant.yaml`, `CLAUDE.md`, prompts, and `.mcp.json`.
+The wizard creates your `bytelight.yaml`, `CLAUDE.md`, prompts, and `.mcp.json`.
 
 ### Important Config for VPS
 
-Edit `resonant.yaml` and make sure:
+Edit `bytelight.yaml` and make sure:
 
 ```yaml
 server:
@@ -221,7 +221,7 @@ EOF
 # Add DNS record
 cloudflared tunnel route dns resonant companion.yourdomain.com
 
-# Add the domain to CORS in resonant.yaml:
+# Add the domain to CORS in bytelight.yaml:
 # cors:
 #   origins:
 #     - "https://companion.yourdomain.com"
@@ -248,7 +248,7 @@ vpn-tool up
 # Get your private mesh VPN IP
 vpn-tool ip -4
 
-# Update resonant.yaml
+# Update bytelight.yaml
 # server:
 #   host: "0.0.0.0"
 # auth:
@@ -262,7 +262,7 @@ Access at `http://YOUR_PRIVATE_VPN_IP:3002` from any private mesh VPN device.
 Only for testing. No HTTPS.
 
 ```bash
-# Update resonant.yaml
+# Update bytelight.yaml
 # server:
 #   host: "0.0.0.0"
 # auth:
@@ -335,7 +335,7 @@ pm2 restart bytelight --update-env
 
 Check the Content Security Policy. Your domain must be in the CSP `connect-src` directive. This is set in `packages/backend/src/server.ts` — look for `connectSrc`. Add your domain as `wss://yourdomain.com`, rebuild, restart.
 
-Also check CORS origins in `packages/backend/src/services/ws.ts` and `resonant.yaml`.
+Also check CORS origins in `packages/backend/src/services/ws.ts` and `bytelight.yaml`.
 
 ### Out of memory
 
@@ -380,7 +380,7 @@ cloudflared tunnel run resonant
 
 ## Security Checklist
 
-- [ ] Set a strong password in `resonant.yaml` (`auth.password`)
+- [ ] Set a strong password in `bytelight.yaml` (`auth.password`)
 - [ ] Use HTTPS (Cloudflare Tunnel or private mesh VPN) — never expose HTTP directly
 - [ ] File permissions: `chmod 600` on `.env`, `.bashrc`, `.claude.json`, `ecosystem.config.cjs`
 - [ ] Keep Node.js updated: `apt update && apt upgrade`

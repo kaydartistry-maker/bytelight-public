@@ -6,7 +6,7 @@ byte-light runs on your machine. To access it from your phone, tablet, or when y
 
 The easiest option. Access byte-light from any device on your WiFi.
 
-1. Open `resonant.yaml` and change:
+1. Open `bytelight.yaml` and change:
    ```yaml
    server:
      host: "0.0.0.0"    # Was "127.0.0.1"
@@ -139,13 +139,13 @@ Cloudflare Tunnel gives you a proper HTTPS domain name (like `chat.yourdomain.co
    cloudflared tunnel route dns resonant chat.yourdomain.com
    ```
 
-6. **Set a password** in `resonant.yaml` (your site is now public!):
+6. **Set a password** in `bytelight.yaml` (your site is now public!):
    ```yaml
    auth:
      password: "a-strong-password"
    ```
 
-7. **Add the domain to CORS origins** in `resonant.yaml`:
+7. **Add the domain to CORS origins** in `bytelight.yaml`:
    ```yaml
    cors:
      origins:
@@ -187,7 +187,7 @@ It looks and feels like a native app, with push notifications and offline suppor
 
 Regardless of which method you choose:
 
-- [ ] **Set a password** in `resonant.yaml` before exposing to any network
+- [ ] **Set a password** in `bytelight.yaml` before exposing to any network
 - [ ] **Use HTTPS** for any access outside your local network (private mesh VPN encrypts automatically, Cloudflare Tunnel provides HTTPS)
 - [ ] **Don't expose port 3002 directly** to the internet via port forwarding — use a tunnel instead
 - [ ] **Keep Node.js updated** for security patches
