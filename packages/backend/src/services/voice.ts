@@ -513,7 +513,7 @@ export class VoiceService {
     voiceId: string,
     voice_settings: Record<string, unknown>,
   ): Promise<Buffer> {
-    const response = await fetch(`${ELEVENLABS_BASE}/${voiceId}`, {
+    const response = await fetch(`${ELEVENLABS_BASE}/${encodeURIComponent(voiceId)}`, {
       method: 'POST',
       headers: {
         'xi-api-key': this.elevenLabsKey!,

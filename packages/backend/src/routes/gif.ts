@@ -4,13 +4,14 @@
 
 import { Router } from 'express';
 import { spawn, execFileSync } from 'child_process';
-import { join, basename, extname } from 'path';
+import { join, basename, extname, resolve, sep } from 'path';
 import { mkdirSync, existsSync, readFileSync, readdirSync, renameSync, unlinkSync, writeFileSync, statSync, rmSync } from 'fs';
 import { randomUUID, createHash } from 'crypto';
 import multer from 'multer';
 import sharp from 'sharp';
 import { getBytelightConfig, PROJECT_ROOT } from '../config.js';
 import { copyToGallery } from '../services/image-gen.js';
+import { isPlainName, escapeDrawtextValue, drawtextTextFileOption, isDrawtextColor, isDrawtextSize } from '../services/gif-safety.js';
 
 const router = Router();
 // PORT ADAPTATION: npm workspaces run this backend below the repo root, so anchor shared data/tools to PROJECT_ROOT.
@@ -18,6 +19,20 @@ const DATA_DIR = join(PROJECT_ROOT, 'data');
 const TOOLS_DIR = join(PROJECT_ROOT, 'tools');
 const GIF_WORK_DIR = join(DATA_DIR, 'gif-work');
 const UPLOAD_DIR = join(GIF_WORK_DIR, 'uploads');
+const GIF_WORK_ROOT = resolve(GIF_WORK_DIR);
+
+/**
+ * A path under the GIF working folder. Every route checks its names with
+ * isPlainName first; this resolves the joined path and refuses anything that
+ * lands outside the folder, the form of the check a code scanner can follow.
+ */
+function gifWorkPath(...parts: string[]): string {
+  const full = resolve(GIF_WORK_ROOT, ...parts);
+  if (full !== GIF_WORK_ROOT && !full.startsWith(GIF_WORK_ROOT + sep)) {
+    throw new Error('GIF path outside the working folder');
+  }
+  return full;
+}
 const CUTOUT_SCRIPT = join(TOOLS_DIR, 'cutout.py');
 const STILL_EXPORT_SCRIPT = join(TOOLS_DIR, 'still-export.py');
 const MASK_PAINT_SCRIPT = join(TOOLS_DIR, 'mask-paint.py');
@@ -141,7 +156,10 @@ export function drawTextArgs(input: string, drawTextFilter: string, output: stri
     `[0:v]format=rgba,${drawTextFilter},split[a][b];`
       + '[b]palettegen=reserve_transparent=1:stats_mode=diff[p];'
       + `[a][p]${paletteUseChain(dither)}`,
-    '-gifflags', '-offsetting',
+    // -transdiff as well as -offsetting: every frame is written whole. With
+    // transdiff on, shared pixels go see-through over frames that carry
+    // disposal=background, and show as black specks.
+    '-gifflags', '-offsetting-transdiff',
     '-y', output,
   ];
 }
@@ -193,7 +211,7 @@ function sweepSessions(): void {
     let bytes = 0;
     for (const entry of readdirSync(GIF_WORK_DIR, { withFileTypes: true })) {
       if (!entry.isDirectory() || entry.name === 'uploads') continue;
-      const dir = join(GIF_WORK_DIR, entry.name);
+      const dir = gifWorkPath(entry.name);
       const usage = dirUsage(dir);
       if (usage.newestMs >= cutoff) continue;
       rmSync(dir, { recursive: true, force: true });
@@ -243,7 +261,7 @@ router.post('/gif/extract-frames', upload.single('file'), async (req, res) => {
   // PORT ADAPTATION: keep extracted sessions within this tree's 300-frame cap.
   const maxFrames = Math.min(MAX_SESSION_FRAMES, Math.max(1, parseInt(req.query.maxFrames as string) || 100));
   const sessionId = randomUUID();
-  const sessionDir = join(GIF_WORK_DIR, sessionId);
+  const sessionDir = gifWorkPath(sessionId);
   mkdirSync(sessionDir, { recursive: true });
 
   try {
@@ -284,11 +302,11 @@ router.post('/gif/extract-frames', upload.single('file'), async (req, res) => {
 router.get('/gif/frame/:sessionId/:filename', (req, res) => {
   const { sessionId, filename } = req.params;
   // Sanitize to prevent path traversal
-  if (sessionId.includes('..') || filename.includes('..')) {
+  if (!isPlainName(sessionId) || !isPlainName(filename)) {
     res.status(400).json({ error: 'Invalid path' });
     return;
   }
-  const framePath = join(GIF_WORK_DIR, sessionId, filename);
+  const framePath = gifWorkPath(sessionId, filename);
   if (!existsSync(framePath)) {
     res.status(404).json({ error: 'Frame not found' });
     return;
@@ -306,8 +324,13 @@ router.post('/gif/upload-frame', upload.single('file'), async (req, res) => {
     return;
   }
 
-  const sessionId = (req.body.sessionId as string) || randomUUID();
-  const sessionDir = join(GIF_WORK_DIR, sessionId);
+  const rawSession = req.body.sessionId;
+  const sessionId = rawSession === undefined || rawSession === '' ? randomUUID() : rawSession;
+  if (!isPlainName(sessionId) || sessionId === 'uploads') {
+    res.status(400).json({ error: 'Invalid session' });
+    return;
+  }
+  const sessionDir = gifWorkPath(sessionId);
   mkdirSync(sessionDir, { recursive: true });
 
   try {
@@ -366,12 +389,12 @@ router.post('/gif/save-frame/:sessionId/:filename', (req, res) => {
   }
 
   // Sanitize
-  if (sessionId.includes('..') || filename.includes('..')) {
+  if (!isPlainName(sessionId) || !isPlainName(filename)) {
     res.status(400).json({ error: 'Invalid path' });
     return;
   }
 
-  const sessionDir = join(GIF_WORK_DIR, sessionId);
+  const sessionDir = gifWorkPath(sessionId);
   if (!existsSync(sessionDir)) {
     res.status(404).json({ error: 'Session not found' });
     return;
@@ -416,12 +439,12 @@ router.post('/gif/crop/:sessionId', async (req, res) => {
     return;
   }
 
-  if (sessionId.includes('..') || (typeof filename === 'string' && filename.includes('..'))) {
+  if (!isPlainName(sessionId) || (typeof filename === 'string' && !isPlainName(filename))) {
     res.status(400).json({ error: 'Invalid path' });
     return;
   }
 
-  const sessionDir = join(GIF_WORK_DIR, sessionId);
+  const sessionDir = gifWorkPath(sessionId);
   if (!existsSync(sessionDir)) {
     res.status(404).json({ error: 'Session not found' });
     return;
@@ -540,7 +563,7 @@ router.post('/gif/cutout/:sessionId/:filename', async (req, res) => {
   const { sessionId, filename } = req.params;
   const { feather = 0, threshold } = req.body ?? {};
 
-  if (sessionId.includes('..') || filename.includes('..')) {
+  if (!isPlainName(sessionId) || !isPlainName(filename)) {
     res.status(400).json({ error: 'Invalid path' });
     return;
   }
@@ -551,7 +574,7 @@ router.post('/gif/cutout/:sessionId/:filename', async (req, res) => {
     return;
   }
 
-  const sessionDir = join(GIF_WORK_DIR, sessionId);
+  const sessionDir = gifWorkPath(sessionId);
   const framePath = join(sessionDir, filename);
   if (!existsSync(framePath)) {
     res.status(404).json({ error: 'Frame not found' });
@@ -597,11 +620,11 @@ router.post('/gif/cutout/:sessionId/:filename', async (req, res) => {
  */
 router.post('/gif/cutout/:sessionId/:filename/revert', (req, res) => {
   const { sessionId, filename } = req.params;
-  if (sessionId.includes('..') || filename.includes('..')) {
+  if (!isPlainName(sessionId) || !isPlainName(filename)) {
     res.status(400).json({ error: 'Invalid path' });
     return;
   }
-  const sessionDir = join(GIF_WORK_DIR, sessionId);
+  const sessionDir = gifWorkPath(sessionId);
   const originalPath = join(sessionDir, `original-${filename}`);
   if (!existsSync(originalPath)) {
     res.status(404).json({ error: 'No original kept for this frame' });
@@ -626,7 +649,7 @@ router.post('/gif/still-export/:sessionId/:filename', async (req, res) => {
     format = 'png', maxSide = 0, maxBytes = 0, padSquare = false, allowReduce = true,
   } = req.body ?? {};
 
-  if (sessionId.includes('..') || filename.includes('..')) {
+  if (!isPlainName(sessionId) || !isPlainName(filename)) {
     res.status(400).json({ error: 'Invalid path' });
     return;
   }
@@ -635,7 +658,7 @@ router.post('/gif/still-export/:sessionId/:filename', async (req, res) => {
     return;
   }
 
-  const sessionDir = join(GIF_WORK_DIR, sessionId);
+  const sessionDir = gifWorkPath(sessionId);
   const framePath = join(sessionDir, filename);
   if (!existsSync(framePath)) {
     res.status(404).json({ error: 'Frame not found' });
@@ -703,7 +726,7 @@ router.post(
       }
     };
 
-    if (sessionId.includes('..') || filename.includes('..')) {
+    if (!isPlainName(sessionId) || !isPlainName(filename)) {
       cleanup();
       res.status(400).json({ error: 'Invalid path' });
       return;
@@ -713,7 +736,7 @@ router.post(
       return;
     }
 
-    const sessionDir = join(GIF_WORK_DIR, sessionId);
+    const sessionDir = gifWorkPath(sessionId);
     const framePath = join(sessionDir, filename);
     if (!existsSync(framePath)) {
       cleanup();
@@ -764,12 +787,12 @@ router.post('/gif/chroma-key/:sessionId/:filename', async (req, res) => {
     return;
   }
 
-  if (sessionId.includes('..') || filename.includes('..')) {
+  if (!isPlainName(sessionId) || !isPlainName(filename)) {
     res.status(400).json({ error: 'Invalid path' });
     return;
   }
 
-  const sessionDir = join(GIF_WORK_DIR, sessionId);
+  const sessionDir = gifWorkPath(sessionId);
   const framePath = join(sessionDir, filename);
   if (!existsSync(framePath)) {
     res.status(404).json({ error: 'Frame not found' });
@@ -985,12 +1008,20 @@ router.post('/gif/create', async (req, res) => {
     res.status(400).json({ error: 'sessionId and frames required' });
     return;
   }
+  if (!isPlainName(sessionId) || sessionId === 'uploads' || !Array.isArray(frames) || !frames.every(isPlainName)) {
+    res.status(400).json({ error: 'Invalid session or frame name' });
+    return;
+  }
+  if (text?.content && (!isDrawtextColor(text.fontColor ?? 'white') || !isDrawtextColor(text.borderColor ?? 'black') || !isDrawtextSize(text.fontSize ?? 24))) {
+    res.status(400).json({ error: 'Caption colour must be a colour and size a number' });
+    return;
+  }
   if (format !== 'gif' && format !== 'apng') {
     res.status(400).json({ error: "format must be 'gif' or 'apng'" });
     return;
   }
 
-  const sessionDir = join(GIF_WORK_DIR, sessionId);
+  const sessionDir = gifWorkPath(sessionId);
   if (!existsSync(sessionDir)) {
     res.status(404).json({ error: 'Session not found' });
     return;
@@ -1095,9 +1126,12 @@ router.post('/gif/create', async (req, res) => {
     if (text?.content) {
       const { content, position = 'bottom', fontSize = 24, fontColor = 'white', borderColor = 'black', fontFamily = 'DejaVu Sans', anchor } = text;
       const { posX, posY } = textPositionExprs({ position, anchor });
-      const escapedText = content.replace(/\\/g, '\\\\').replace(/'/g, "'\\''").replace(/:/g, '\\:');
-      const escapedFont = fontFamily.replace(/:/g, '\\:');
-      drawTextFilter = `drawtext=text='${escapedText}':font='${escapedFont}':fontsize=${fontSize}:fontcolor=${fontColor}:${posX}:${posY}:borderw=2:bordercolor=${borderColor}`;
+      // The words go to drawtext in a file, never escaped into the filter
+      // (services/gif-safety.ts has why).
+      const textFile = gifWorkPath(sessionId, `${outputId}-text.txt`);
+      writeFileSync(textFile, String(content));
+      const escapedFont = escapeDrawtextValue(String(fontFamily));
+      drawTextFilter = `drawtext=${drawtextTextFileOption(textFile)}:font='${escapedFont}':fontsize=${fontSize}:fontcolor=${fontColor}:${posX}:${posY}:borderw=2:bordercolor=${borderColor}`;
     }
 
     if (format === 'apng') {
@@ -1435,12 +1469,12 @@ router.post('/gif/optimize/:sessionId/:filename', async (req, res) => {
     scale, resizeWidth, resizeHeight, maxBytes,
   } = req.body;
 
-  if (sessionId.includes('..') || filename.includes('..')) {
+  if (!isPlainName(sessionId) || !isPlainName(filename)) {
     res.status(400).json({ error: 'Invalid path' });
     return;
   }
 
-  const sessionDir = join(GIF_WORK_DIR, sessionId);
+  const sessionDir = gifWorkPath(sessionId);
   const gifPath = join(sessionDir, filename);
   if (!existsSync(gifPath)) {
     res.status(404).json({ error: 'GIF not found' });
@@ -1573,18 +1607,18 @@ router.post('/gif/speed/:sessionId/:filename', async (req, res) => {
   const { sessionId, filename } = req.params;
   const { speed = 1 } = req.body;
 
-  if (sessionId.includes('..') || filename.includes('..')) {
+  if (!isPlainName(sessionId) || !isPlainName(filename)) {
     res.status(400).json({ error: 'Invalid path' });
     return;
   }
 
-  const gifPath = join(GIF_WORK_DIR, sessionId, filename);
+  const gifPath = gifWorkPath(sessionId, filename);
   if (!existsSync(gifPath)) {
     res.status(404).json({ error: 'GIF not found' });
     return;
   }
   // PORT ADAPTATION: preserve the session disk cap before speed changes write another GIF.
-  if (!sessionHasRoom(res, join(GIF_WORK_DIR, sessionId), 0)) return;
+  if (!sessionHasRoom(res, gifWorkPath(sessionId), 0)) return;
 
   // Clamp speed to reasonable range
   const clampedSpeed = Math.min(4, Math.max(0.25, speed));
@@ -1593,7 +1627,7 @@ router.post('/gif/speed/:sessionId/:filename', async (req, res) => {
 
   try {
     const outputId = randomUUID();
-    const sessionDir = join(GIF_WORK_DIR, sessionId);
+    const sessionDir = gifWorkPath(sessionId);
     const outputPath = join(sessionDir, `${outputId}.gif`);
 
     // Scale each frame's own delay. A uniform -d read off the first frame
@@ -1726,13 +1760,17 @@ router.post('/gif/add-text/:sessionId/:filename', async (req, res) => {
     res.status(400).json({ error: 'text required' });
     return;
   }
+  if (typeof text !== 'string' || !isDrawtextColor(fontColor) || !isDrawtextColor(borderColor) || !isDrawtextSize(fontSize)) {
+    res.status(400).json({ error: 'Caption colour must be a colour and size a number' });
+    return;
+  }
 
-  if (sessionId.includes('..') || filename.includes('..')) {
+  if (!isPlainName(sessionId) || !isPlainName(filename)) {
     res.status(400).json({ error: 'Invalid path' });
     return;
   }
 
-  const gifPath = join(GIF_WORK_DIR, sessionId, filename);
+  const gifPath = gifWorkPath(sessionId, filename);
   if (!existsSync(gifPath)) {
     res.status(404).json({ error: 'GIF not found' });
     return;
@@ -1740,15 +1778,17 @@ router.post('/gif/add-text/:sessionId/:filename', async (req, res) => {
 
   try {
     const outputId = randomUUID();
-    const outputPath = join(GIF_WORK_DIR, sessionId, `${outputId}.gif`);
+    const outputPath = gifWorkPath(sessionId, `${outputId}.gif`);
 
     const { posX, posY } = textPositionExprs({ position, anchor, x, y });
 
-    // Escape text for ffmpeg (single quotes and backslashes)
-    const escapedText = text.replace(/\\/g, '\\\\').replace(/'/g, "'\\''").replace(/:/g, '\\:');
-    const escapedFont = fontFamily.replace(/:/g, '\\:');
+    // The words go to drawtext in a file, never escaped into the filter
+    // (services/gif-safety.ts has why).
+    const textFile = gifWorkPath(sessionId, `${outputId}-text.txt`);
+    writeFileSync(textFile, text);
+    const escapedFont = escapeDrawtextValue(String(fontFamily));
 
-    const drawTextFilter = `drawtext=text='${escapedText}':font='${escapedFont}':fontsize=${fontSize}:fontcolor=${fontColor}:${posX}:${posY}:borderw=2:bordercolor=${borderColor}`;
+    const drawTextFilter = `drawtext=${drawtextTextFileOption(textFile)}:font='${escapedFont}':fontsize=${fontSize}:fontcolor=${fontColor}:${posX}:${posY}:borderw=2:bordercolor=${borderColor}`;
 
     await runProc('ffmpeg', drawTextArgs(gifPath, drawTextFilter, outputPath, dither === true),
       (r) => `ffmpeg text overlay failed: ${r.stderr.slice(-500)}`);
@@ -1776,11 +1816,11 @@ router.post('/gif/add-text/:sessionId/:filename', async (req, res) => {
  */
 router.get('/gif/output/:sessionId/:filename', (req, res) => {
   const { sessionId, filename } = req.params;
-  if (sessionId.includes('..') || filename.includes('..')) {
+  if (!isPlainName(sessionId) || !isPlainName(filename)) {
     res.status(400).json({ error: 'Invalid path' });
     return;
   }
-  const gifPath = join(GIF_WORK_DIR, sessionId, filename);
+  const gifPath = gifWorkPath(sessionId, filename);
   if (!existsSync(gifPath)) {
     res.status(404).json({ error: 'GIF not found' });
     return;
@@ -1805,11 +1845,11 @@ router.post('/gif/keep/:sessionId/:filename', async (req, res) => {
   const { sessionId, filename } = req.params;
   const ext = extname(filename).toLowerCase();
   // .apng rides along: the keep-colors sticker lane exports real APNG now.
-  if (sessionId.includes('..') || filename.includes('..') || basename(filename) !== filename || (ext !== '.gif' && ext !== '.apng')) {
+  if (!isPlainName(sessionId) || !isPlainName(filename) || basename(filename) !== filename || (ext !== '.gif' && ext !== '.apng')) {
     res.status(400).json({ error: 'Invalid GIF path' });
     return;
   }
-  const source = join(GIF_WORK_DIR, sessionId, filename);
+  const source = gifWorkPath(sessionId, filename);
   if (!existsSync(source)) {
     res.status(404).json({ error: 'GIF not found' });
     return;
@@ -1837,11 +1877,11 @@ router.post('/gif/keep/:sessionId/:filename', async (req, res) => {
  */
 router.delete('/gif/session/:sessionId', (req, res) => {
   const { sessionId } = req.params;
-  if (sessionId.includes('..')) {
+  if (!isPlainName(sessionId)) {
     res.status(400).json({ error: 'Invalid path' });
     return;
   }
-  const sessionDir = join(GIF_WORK_DIR, sessionId);
+  const sessionDir = gifWorkPath(sessionId);
   if (existsSync(sessionDir)) {
     try {
       for (const f of readdirSync(sessionDir)) {

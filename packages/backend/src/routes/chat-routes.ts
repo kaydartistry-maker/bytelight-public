@@ -440,11 +440,17 @@ export function createChatRoutes(): Router {
   // Message search
   router.get('/search', (req, res) => {
     try {
-      const q = req.query.q as string;
-      if (!q || q.trim().length === 0) {
+      // Only a plain string: ?q=a&q=b arrives as a list, which would throw on
+      // .trim() or reach the search as something that isn't text.
+      const q = typeof req.query.q === 'string' ? req.query.q : '';
+      if (q.trim().length === 0) {
         return res.status(400).json({ error: 'Search query required' });
       }
-      const threadId = req.query.threadId as string | undefined;
+      const rawThread = req.query.threadId;
+      if (rawThread !== undefined && typeof rawThread !== 'string') {
+        return res.status(400).json({ error: 'threadId must be a single value' });
+      }
+      const threadId = rawThread;
       const limit = parseInt(req.query.limit as string, 10) || 50;
       const offset = parseInt(req.query.offset as string, 10) || 0;
 
@@ -478,11 +484,17 @@ export function createChatRoutes(): Router {
   // Semantic message search (auth-protected)
   router.get('/search-semantic', async (req, res) => {
     try {
-      const q = req.query.q as string;
-      if (!q || q.trim().length === 0) {
+      // Only a plain string: ?q=a&q=b arrives as a list, which would throw on
+      // .trim() or reach the search as something that isn't text.
+      const q = typeof req.query.q === 'string' ? req.query.q : '';
+      if (q.trim().length === 0) {
         return res.status(400).json({ error: 'Search query required' });
       }
-      const threadId = req.query.threadId as string | undefined;
+      const rawThread = req.query.threadId;
+      if (rawThread !== undefined && typeof rawThread !== 'string') {
+        return res.status(400).json({ error: 'threadId must be a single value' });
+      }
+      const threadId = rawThread;
       const limit = Math.min(parseInt(req.query.limit as string, 10) || 20, 50);
 
       const queryVector = await embed(q.trim());

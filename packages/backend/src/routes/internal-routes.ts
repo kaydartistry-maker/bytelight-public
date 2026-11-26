@@ -645,7 +645,7 @@ export function createInternalRoutes(): Router {
     try {
       switch (type) {
         case 'text':
-          if (!text) { res.status(400).json({ error: 'text is required' }); return; }
+          if (typeof text !== 'string' || !text) { res.status(400).json({ error: 'text is required' }); return; }
           await telegramService.sendToOwner(text);
           break;
 

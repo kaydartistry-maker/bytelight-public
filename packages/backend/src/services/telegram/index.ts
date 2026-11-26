@@ -438,6 +438,7 @@ export class TelegramService {
    * Send a text message to the owner proactively (for outbound/autonomous messages).
    */
   async sendToOwner(text: string): Promise<void> {
+    if (typeof text !== 'string') throw new Error('Telegram text must be a string');
     const telegramConfig = getTelegramConfig();
     if (!telegramConfig.ownerChatId) {
       console.warn('[Telegram] Cannot send — owner chat ID not set');
