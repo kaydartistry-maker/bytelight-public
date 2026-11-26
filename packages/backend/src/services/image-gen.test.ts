@@ -28,7 +28,7 @@ const tmpRoot = mkdtempSync(join(tmpdir(), 'image-gen-test-'));
 const { initDb, setConfig } = await import('./db.js');
 initDb(join(tmpRoot, 'test.db'));
 
-const { getJobStatus, listImageJobs, pruneFinishedJobs, startGenerateJob } = await import('./image-gen.js');
+const { getJobStatus, getImageGenSettings, listImageJobs, pruneFinishedJobs, startGenerateJob } = await import('./image-gen.js');
 
 after(() => {
   if (realJobsFile === null) rmSync(JOBS_FILE, { force: true });
@@ -76,7 +76,12 @@ describe('24-hour pruning', () => {
 });
 
 describe('input validation', () => {
-  it('refuses to start while image generation is disabled', () => {
+  it('is on by default, so a new companion can make a picture', () => {
+    assert.equal(getImageGenSettings().enabled, true);
+  });
+
+  it('refuses to start while image generation is switched off', () => {
+    setConfig('image_gen.enabled', 'false');
     assert.throws(() => startGenerateJob({ prompt: 'a cat' }), /switched off/i);
   });
 
