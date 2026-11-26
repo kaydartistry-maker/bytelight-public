@@ -41,6 +41,7 @@ import clientErrorRoutes from './routes/client-errors.js';
 import appShellRoutes from './routes/app.js';
 import { requireLocalhost } from './middleware/localhost.js';
 import { isLoopbackBind, allowedHostsFrom, openHouseGuard } from './middleware/open-house.js';
+import { csrfProtection } from './middleware/csrf.js';
 import { armTheaterMouth, stopTheaterMouth } from './services/theater-mouth.js';
 
 // Load config FIRST — before any other initialization
@@ -192,6 +193,10 @@ app.use(cors({
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 app.use(cookieParser());
+
+// Cross-site requests are refused (Sec-Fetch-Site, Origin as the fallback):
+// after body parsing, before any route. See middleware/csrf.ts.
+app.use('/api', csrfProtection);
 
 // Vendor assets for artifact viewer — completely public, no CSRF/auth (loaded by iframe)
 // Mounted at /vendor (NOT /api/vendor) to avoid auth middleware interference
