@@ -9,7 +9,7 @@ test('a session or frame name has to be a plain name', () => {
   assert.equal(isPlainName('2f1c6a0e-8d1b-4a59-9b8e-0c2f4b6d8e10'), true);
   assert.equal(isPlainName('frame-0001.png'), true);
   assert.equal(isPlainName('original-frame-0001.png'), true);
-  for (const bad of ['', '..', '../aerie.yaml', 'a/b', '/etc/passwd', 'a\\b', 'x\0y', 42, null, ['frame-0001.png']]) {
+  for (const bad of ['', '..', '../bytelight.yaml', 'a/b', '/etc/passwd', 'a\\b', 'x\0y', 42, null, ['frame-0001.png']]) {
     assert.equal(isPlainName(bad), false, String(bad));
   }
 });
