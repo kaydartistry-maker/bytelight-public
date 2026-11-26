@@ -16,16 +16,18 @@
  * store existed. Saving a value in the DB simply wins over the fallback
  * on the NEXT read — no restart needed for call-time read seams.
  *
- * This is a single-user sovereign deployment: values are stored as
- * plaintext rows (same trust boundary as the session cookie and the DB
- * file itself). No encryption at rest by design. Values are NEVER logged.
+ * Values are sealed at rest (services/secret-box.ts): a stored row is
+ * AES-256-GCM ciphertext under a key file outside the repo, and only
+ * getSecret opens it. An older plain row still reads and is sealed at the
+ * next start (sealPlainSecrets). Values are NEVER logged.
  *
  * Pattern ported from a sibling fork's shipped secrets store; registry
  * and read seams are byte-light-native. Lineage credit in the commit body.
  */
 
-import { getConfig, setConfig, deleteConfig } from './db.js';
+import { getConfig, setConfig, deleteConfig, getAllConfig } from './db.js';
 import { getBytelightConfig } from '../config.js';
+import { isSealedValue, loadSecretsKey, openValue, sealValue, secretsKeyPath } from './secret-box.js';
 
 const PREFIX = 'secret:';
 
@@ -222,6 +224,24 @@ function safeConfig(pick: (c: ReturnType<typeof getBytelightConfig>) => string |
   }
 }
 
+// Stored values are sealed at rest (services/secret-box.ts); getSecret,
+// setSecret and sealPlainSecrets are the only doors to them, so nothing else
+// in the house sees ciphertext.
+let warnedUnopenable = false;
+function openStored(row: string, stored: string): string | null {
+  const plain = openValue(stored, loadSecretsKey(), row);
+  if (plain === null && !warnedUnopenable) {
+    warnedUnopenable = true;
+    console.error(`[secrets] ${row} is sealed and the key file cannot open it (${secretsKeyPath()}); treating it as unset`);
+  }
+  return plain;
+}
+
+/** Whether new values get sealed: on unless config secrets.at_rest is 'off'. */
+function sealingOn(): boolean {
+  return getConfig('secrets.at_rest') !== 'off';
+}
+
 /**
  * Resolve a secret. DB-first, then env var, then a non-env fallback.
  * Returns undefined when nothing is set. Every step is guarded so this
@@ -234,7 +254,10 @@ export function getSecret(name: string): string | undefined {
   // 1. DB override
   try {
     const stored = getConfig(PREFIX + name);
-    if (stored) return stored;
+    if (stored) {
+      const plain = openStored(PREFIX + name, stored);
+      if (plain) return plain;
+    }
   } catch {
     /* DB not initialized yet — fall through to env/base */
   }
@@ -258,9 +281,26 @@ export function getSecret(name: string): string | undefined {
   return undefined;
 }
 
-/** Persist a BYOK override. Writes plaintext (single-user sovereign). */
+/** Persist a BYOK override, sealed unless secrets.at_rest is 'off'. */
 export function setSecret(name: string, value: string): void {
-  setConfig(PREFIX + name, value);
+  const key = value && sealingOn() ? loadSecretsKey({ create: true }) : null;
+  setConfig(PREFIX + name, key ? sealValue(value, key, PREFIX + name) : value);
+}
+
+/**
+ * Seal every stored secret still held as plain text (run at start, so values
+ * written before this existed, or by a restore, are covered). Returns how many
+ * rows it sealed; nothing when sealing is off or no key file can be made.
+ * Idempotent: a sealed row is never touched again.
+ */
+export function sealPlainSecrets(): number {
+  if (!sealingOn()) return 0;
+  const plain = Object.entries(getAllConfig()).filter(([k, v]) => k.startsWith(PREFIX) && v && !isSealedValue(v));
+  if (!plain.length) return 0;
+  const key = loadSecretsKey({ create: true });
+  if (!key) return 0;
+  for (const [k, v] of plain) setConfig(k, sealValue(v, key, k));
+  return plain.length;
 }
 
 /** Clear a BYOK override — resolution falls back to env/base again. */

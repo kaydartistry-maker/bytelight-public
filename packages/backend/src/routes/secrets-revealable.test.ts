@@ -49,6 +49,8 @@ test('tokens and cloud keys are never revealable', () => {
 // key answers the same refusal whether or not it is set.
 test('the route refuses a write-only key without saying whether it is set', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'secrets-route-'));
+  // Values are sealed at rest; keep the key file in the test's own folder.
+  process.env.BYTELIGHT_SECRETS_KEY_FILE = join(dir, 'secrets.key');
   initDb(join(dir, 'test.db'));
   delete process.env.DISCORD_BOT_TOKEN;
   delete process.env.GIPHY_API_KEY;

@@ -312,7 +312,10 @@ pm2 monit    # Live CPU/memory monitor
 
 ```bash
 cp /root/resonant/data/resonant.db /root/resonant-backup-$(date +%Y%m%d).db
+cp ~/.config/bytelight/secrets.key /root/secrets-key-backup-$(date +%Y%m%d)
 ```
+
+The saved keys in the database are sealed under `~/.config/bytelight/secrets.key`; keep a copy of that file with the database backup, or a restore elsewhere comes back with every saved key unset.
 
 ## Troubleshooting
 

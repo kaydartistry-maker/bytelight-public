@@ -13,7 +13,7 @@ import { existsSync, mkdirSync } from 'fs';
 import { loadConfig, getBytelightConfig, PROJECT_ROOT } from './config.js';
 import { initDb, deleteExpiredSessions } from './services/db.js';
 import { seedDefaultBlocks, ensureCompanionBlocks, ensureHumanBlock } from './services/memory-blocks.js';
-import { getSecret } from './services/secrets.js';
+import { getSecret, sealPlainSecrets } from './services/secrets.js';
 import { loadVectorCache } from './services/vector-cache.js';
 import { createWebSocketServer, setVoiceService, setGatewayServices, registry, recoverCutOffTurns } from './services/ws.js';
 import { holdTurnLeases } from './services/db/turn-leases.js';
@@ -75,6 +75,16 @@ if (!existsSync(filesDir)) {
 console.log('Initializing database...');
 const db = initDb(DB_PATH);
 deleteExpiredSessions();
+// Keys at rest (services/secret-box.ts): any stored key still in plain text,
+// from before this existed or from a restore, is sealed under the key file.
+// Idempotent: a sealed row is left alone, so every start after the first
+// seals nothing. A sealing failure never blocks boot; the rows stay readable.
+try {
+  const sealed = sealPlainSecrets();
+  if (sealed) console.log(`[secrets] sealed ${sealed} stored key${sealed === 1 ? '' : 's'} at rest`);
+} catch (err) {
+  console.error('[secrets] could not seal stored keys at rest; they stay as they were:', err instanceof Error ? err.message : err);
+}
 loadVectorCache();
 // Self-knowledge semantic index (Wave 2, Slice 3) — embed any entries added
 // while the process was down so manual semantic search is ready. Non-fatal on

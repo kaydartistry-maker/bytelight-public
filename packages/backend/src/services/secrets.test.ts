@@ -8,6 +8,8 @@ import { join } from 'node:path';
 // getDb()) have a live `config` table to read/write.
 const tmpRoot = mkdtempSync(join(tmpdir(), 'secrets-test-'));
 const dbPath = join(tmpRoot, 'test.db');
+// Values are sealed at rest; keep the key file in the test's own folder.
+process.env.BYTELIGHT_SECRETS_KEY_FILE = join(tmpRoot, 'secrets.key');
 
 const { initDb } = await import('./db.js');
 const { getSecret, setSecret, deleteSecret, listSecrets } = await import('./secrets.js');
