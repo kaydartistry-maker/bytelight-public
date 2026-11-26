@@ -12,6 +12,7 @@ import {
   JournalRemoteError,
   type JournalEntry,
 } from '../services/db/journal.js';
+import { mindUrl, mindKey } from '../services/mind-secrets.js';
 
 const router = Router();
 router.use(authMiddleware);
@@ -25,6 +26,18 @@ function sendError(res: Parameters<Parameters<typeof router.get>[1]>[1], error: 
   console.error('Journal route error:', error);
   return res.status(500).json({ error: 'Journal request failed' });
 }
+
+// The journal lives in the Mind Bridge brain. A house without one has no
+// journal to read, which is not the same as an empty one: say so with a code
+// the app can show plainly, instead of a 502 the app reads as "no entries".
+export const BRAIN_NOT_CONNECTED = 'brain_not_connected';
+router.use((_req, res, next) => {
+  if (!mindUrl() || !mindKey()) {
+    res.status(503).json({ error: 'No Mind Bridge brain is connected, so there is no journal to read yet.', code: BRAIN_NOT_CONNECTED });
+    return;
+  }
+  next();
+});
 
 router.get('/', async (req, res) => {
   const companionId = typeof req.query.companion === 'string' ? req.query.companion : undefined;

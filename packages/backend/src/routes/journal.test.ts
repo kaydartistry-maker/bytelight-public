@@ -81,3 +81,15 @@ test('network failures become a plain-English 502', async () => {
     assert.match((result.jsonBody as { error: string }).error, /Could not reach the Mind API/);
   } finally { failRemote = false; }
 });
+
+test('a house with no brain connected says so instead of answering empty', async () => {
+  const url = process.env.MIND_API_URL;
+  process.env.MIND_API_URL = '';
+  try {
+    const list = await callRoute('GET', '/');
+    assert.equal(list.statusCode, 503);
+    assert.equal((list.jsonBody as { code?: string }).code, 'brain_not_connected');
+  } finally {
+    process.env.MIND_API_URL = url;
+  }
+});
