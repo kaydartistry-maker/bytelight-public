@@ -217,9 +217,10 @@ export function OldWindowsImport({ colors, onImported }: { colors: Colors; onImp
       {!preview && (
         <>
           <div className={cn('text-[10px] mt-1 leading-relaxed', colors.textMuted)}>
-            Your data export, as it was emailed to you (the zip), or the conversations.json inside it. Claude and ChatGPT exports can be read today. Nothing is written until you have seen what is inside.
+            Claude or ChatGPT: the data export zip as it was emailed to you, or the conversations.json inside it. Gemini: a Google Takeout with only My Activity → Gemini Apps ticked, in JSON. Letta: the agent file (.af). Nothing is written until you have seen what is inside.
           </div>
-          <input ref={fileInput} type="file" accept=".zip,.json,application/zip,application/json" className="hidden" onChange={(e) => void onFile(e.target.files?.[0])} />
+          {/* No accept filter: a phone picker hides files whose type it does not know (a Letta .af). The house checks the file instead. */}
+          <input ref={fileInput} type="file" className="hidden" onChange={(e) => void onFile(e.target.files?.[0])} />
           <button
             onClick={() => fileInput.current?.click()}
             disabled={!!busy}

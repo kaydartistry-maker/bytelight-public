@@ -15,7 +15,7 @@
 import { existsSync, statSync, unlinkSync } from 'node:fs';
 import { buildHistoryIndex, HISTORY_INDEX_PATH } from './history-index.js';
 import { PassageStore, HISTORY_PASSAGES_PATH } from './history-passages.js';
-import { detectSource, readChat, readExportElements, READABLE, SOURCE_LABEL, type ExportSource } from './history-readers.js';
+import { chatReader, detectSource, readExportElements, READABLE, SOURCE_LABEL, type ChatReader, type ExportSource, type ReadChat } from './history-readers.js';
 import Database from 'better-sqlite3';
 
 /** Whose history the house index holds (heartbeat/whisper.ts OLD_WINDOW_VOICE). */
@@ -42,7 +42,7 @@ const monthOf = (iso: string | null) => (iso && /^\d{4}-\d{2}/.test(iso) ? iso.s
 
 function assertFile(path: string): void {
   if (!path || !existsSync(path) || !statSync(path).isFile()) throw new Error('That file is not there.');
-  if (!/\.(zip|json)$/i.test(path)) throw new Error('Pick the export zip, or the conversations.json inside it.');
+  if (!/\.(zip|json|af)$/i.test(path)) throw new Error('Pick the export zip, its conversations.json, or a Letta agent file (.af).');
 }
 
 /** Read an export and describe it. Writes nothing. */
@@ -51,16 +51,8 @@ export async function previewExport(path: string, opts: { month?: string } = {})
   let source: ExportSource | null = null;
   const p: ImportPreview = { source: 'unknown', sourceLabel: SOURCE_LABEL.unknown, readable: false, chats: 0, messages: 0, dropped: 0, months: {}, sample: [] };
   const sample: PreviewChat[] = [];
-  await readExportElements(path, (raw) => {
-    if (!source) {
-      source = detectSource(raw);
-      p.source = source;
-      p.sourceLabel = SOURCE_LABEL[source];
-      p.readable = READABLE.has(source);
-    }
-    if (!p.readable) return;
-    const chat = readChat(source, raw);
-    if (!chat) return;
+  let reader: ChatReader | null = null;
+  const count = (chat: ReadChat) => {
     const month = monthOf(chat.startedAt);
     const m = (p.months[month] ??= { chats: 0, messages: 0, dropped: 0 });
     m.chats++;
@@ -75,7 +67,19 @@ export async function previewExport(path: string, opts: { month?: string } = {})
       sample.sort((a, b) => String(b.startedAt).localeCompare(String(a.startedAt)));
       sample.length = 5;
     }
+  };
+  await readExportElements(path, (raw) => {
+    if (!source) {
+      source = detectSource(raw);
+      p.source = source;
+      p.sourceLabel = SOURCE_LABEL[source];
+      p.readable = READABLE.has(source);
+      reader = chatReader(source);
+    }
+    if (!p.readable) return;
+    reader!.take(raw).forEach(count);
   });
+  if (p.readable && reader) (reader as ChatReader).finish().forEach(count);
   sample.sort((a, b) => String(b.startedAt).localeCompare(String(a.startedAt)));
   p.sample = sample.slice(0, 5);
   return p;
@@ -149,19 +153,23 @@ async function runImport(path: string, opts: { month?: string }, deps: ImportDep
   const store = new PassageStore(passagesPath);
   try {
     let source: ExportSource | null = null;
+    let reader: ChatReader | null = null;
+    const keep = (chat: ReadChat) => {
+      if (opts.month && monthOf(chat.startedAt) !== opts.month) return;
+      status.chats++;
+      status.dropped += chat.dropped;
+      status.stored += store.addChat({ source: source!, chat: chat.chat, title: chat.title, voice: HOUSE_VOICE, lines: chat.lines });
+    };
     await readExportElements(path, (raw) => {
       if (!source) {
         source = detectSource(raw);
         status.sourceLabel = SOURCE_LABEL[source];
         if (!READABLE.has(source)) throw new Error(`This looks like an export from ${SOURCE_LABEL[source]}, which this house cannot read yet.`);
+        reader = chatReader(source);
       }
-      const chat = readChat(source, raw);
-      if (!chat) return;
-      if (opts.month && monthOf(chat.startedAt) !== opts.month) return;
-      status.chats++;
-      status.dropped += chat.dropped;
-      status.stored += store.addChat({ source, chat: chat.chat, title: chat.title, voice: HOUSE_VOICE, lines: chat.lines });
+      reader!.take(raw).forEach(keep);
     });
+    if (reader) (reader as ChatReader).finish().forEach(keep);
 
     status.state = 'indexing';
     status.toIndex = store.countAfter(HOUSE_VOICE, indexCursor(indexPath));

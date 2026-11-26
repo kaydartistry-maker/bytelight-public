@@ -6,10 +6,12 @@
 // and let go before the next is read.
 //
 // One reader per app. Each turns that app's conversation into the messages
-// the person actually kept, in order. Claude and ChatGPT are read today; an
-// export from anywhere else is named and refused, never guessed at.
+// the person actually kept, in order: Claude, ChatGPT, Gemini (Google
+// Takeout activity) and Letta agent files today. An export from anywhere else
+// is named and refused, never guessed at.
 
 import { createReadStream } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { Unzip, UnzipInflate } from 'fflate';
 import type { PassageIn } from './history-passages.js';
 
@@ -76,8 +78,14 @@ export class JsonArraySplitter {
   get done(): boolean { return this.ended; }
 }
 
-/** conversations.json, or the numbered parts a large export is split into (conversations-000.json, …). */
-const EXPORT_ENTRY = /(^|\/)conversations(-\d+)?\.json$/i;
+/**
+ * The files in an export zip that hold conversations: conversations.json, or
+ * the numbered parts a large export is split into (conversations-000.json, …),
+ * or, in a Google Takeout, the Gemini Apps activity (MyActivity.json).
+ */
+const EXPORT_ENTRY = /(^|\/)conversations(-\d+)?\.json$|(^|\/)Gemini Apps\/MyActivity\.json$/i;
+/** A file read whole rather than streamed (a Letta agent file is one JSON object). */
+const MAX_WHOLE_BYTES = 300 * 1024 * 1024;
 
 const TRUNCATED = 'That export ends partway through. It may not have finished downloading.';
 
@@ -94,6 +102,15 @@ function arrayReader(onElement: (raw: unknown) => void) {
   };
 }
 
+const firstChar = (b: Buffer) => b.toString('utf-8', 0, Math.min(b.length, 64)).replace(/^\uFEFF/, '').trimStart()[0];
+
+/** A file that is one object: a Letta agent file holds its agents in `agents`. */
+function emitObject(obj: unknown, onElement: (raw: unknown) => void): void {
+  const agents = (obj as { agents?: unknown })?.agents;
+  if (!Array.isArray(agents)) throw new Error('That file is not a chat export this house can read.');
+  for (const a of agents) onElement({ ...(a as object), __letta: true });
+}
+
 /**
  * Hand every element of the export's conversations array to `onElement`,
  * one at a time. Takes a zip (the download as emailed; every conversations
@@ -104,6 +121,8 @@ export async function readExportElements(path: string, onElement: (raw: unknown)
   const stream = createReadStream(path, { highWaterMark: 1 << 20 });
   let zip: Unzip | null = null;
   let plain: ReturnType<typeof arrayReader> | null = null;
+  let whole: Buffer[] | null = null;
+  let wholeBytes = 0;
   let found = 0;
   let finished = 0;
   let failure: Error | null = null;
@@ -127,19 +146,26 @@ export async function readExportElements(path: string, onElement: (raw: unknown)
           file.start();
         });
         zip.register(UnzipInflate);
+      } else if (firstChar(chunk) === '{') {
+        whole = [];
       } else {
         plain = arrayReader(onElement);
       }
     }
     try {
       if (zip) zip.push(chunk);
-      else plain!.feed(chunk, false);
+      else if (whole) {
+        wholeBytes += chunk.length;
+        if (wholeBytes > MAX_WHOLE_BYTES) throw new Error('That file is too large to read in one piece.');
+        whole.push(chunk);
+      } else plain!.feed(chunk, false);
     } catch (e) { failure = failure ?? (e as Error); }
     if (failure) break;
   }
   if (!failure) {
     try {
       if (zip) zip.push(new Uint8Array(0), true);
+      else if (whole) emitObject(JSON.parse(Buffer.concat(whole).toString('utf-8')), onElement);
       else if (plain) plain.feed(new Uint8Array(0), true);
       else throw new Error('That file is empty.');
     } catch (e) { failure = failure ?? (e as Error); }
@@ -155,20 +181,24 @@ export async function readExportElements(path: string, onElement: (raw: unknown)
 
 // ── Which app made it ────────────────────────────────────────────────────────
 
-export type ExportSource = 'claude' | 'chatgpt' | 'unknown';
+export type ExportSource = 'claude' | 'chatgpt' | 'gemini' | 'letta' | 'unknown';
 
 export function detectSource(raw: unknown): ExportSource {
   if (!raw || typeof raw !== 'object') return 'unknown';
   const r = raw as Record<string, unknown>;
   if (Array.isArray(r.chat_messages)) return 'claude';
   if (r.mapping && typeof r.mapping === 'object') return 'chatgpt';
+  if (r.__letta === true && Array.isArray(r.messages)) return 'letta';
+  if (isGeminiActivity(r)) return 'gemini';
   return 'unknown';
 }
 
-export const SOURCE_LABEL: Record<ExportSource, string> = { claude: 'Claude', chatgpt: 'ChatGPT', unknown: 'an app this house cannot read yet' };
+export const SOURCE_LABEL: Record<ExportSource, string> = {
+  claude: 'Claude', chatgpt: 'ChatGPT', gemini: 'Gemini', letta: 'Letta', unknown: 'an app this house cannot read yet',
+};
 
 /** Sources this house can read today. */
-export const READABLE: ReadonlySet<ExportSource> = new Set(['claude', 'chatgpt']);
+export const READABLE: ReadonlySet<ExportSource> = new Set(['claude', 'chatgpt', 'gemini', 'letta']);
 
 // ── One conversation, as kept ───────────────────────────────────────────────
 
@@ -331,8 +361,212 @@ export function readChatGptChat(raw: unknown): ReadChat | null {
   return { chat: chatId, title, startedAt: gptTime(c.create_time) ?? lines[0].at, lines, dropped };
 }
 
-export function readChat(source: ExportSource, raw: unknown): ReadChat | null {
-  if (source === 'claude') return readClaudeChat(raw);
-  if (source === 'chatgpt') return readChatGptChat(raw);
-  return null;
+// ── Gemini ───────────────────────────────────────────────────────────────────
+//
+// Google keeps no conversations for Gemini, only activity: Takeout's My
+// Activity → Gemini Apps → MyActivity.json is a flat list, newest first, one
+// row per prompt: { header: 'Gemini Apps', title: 'Prompted <the words>',
+// time, safeHtmlItem: [{ html: <the answer> }], subtitles: [...] }, with a
+// link to the chat it belonged to when Google kept one. Rows are gathered
+// back into their chats by that link; rows without one become one chat per
+// day. (Layout as documented by the sibling fork that shipped a Gemini reader
+// first; the code here is this house's own.) Rows are matched on Google's
+// English wording, so a Takeout in another language is not recognised.
+
+export function isGeminiActivity(r: Record<string, unknown>): boolean {
+  return r.header === 'Gemini Apps' || (Array.isArray(r.products) && r.products.includes('Gemini Apps'));
+}
+
+const ENTITIES: Record<string, string> = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ', '#39': "'" };
+
+/** An answer's HTML as plain text: line breaks where the page had them, no tags, entities decoded. */
+export function htmlToText(html: string): string {
+  let t = html
+    .replace(/<\s*br\s*\/?>/gi, '\n')
+    .replace(/<\/\s*(p|div|li|h[1-6]|tr|pre|blockquote)\s*>/gi, '\n')
+    .replace(/<\s*li[^>]*>/gi, '- ');
+  // Strip until none are left, so a tag hidden inside another cannot survive one pass.
+  for (let prev = ''; prev !== t;) { prev = t; t = t.replace(/<[^<>]*>/g, ''); }
+  t = t.replace(/&(#x[0-9a-f]+|#\d+|[a-z0-9]+);/gi, (m, e: string) => {
+    if (e[0] === '#') {
+      const code = e[1] === 'x' || e[1] === 'X' ? parseInt(e.slice(2), 16) : parseInt(e.slice(1), 10);
+      return Number.isFinite(code) && code > 0 && code < 0x110000 ? String.fromCodePoint(code) : m;
+    }
+    return ENTITIES[e.toLowerCase()] ?? m;
+  });
+  return t.replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
+}
+
+const shortHash = (s: string) => createHash('sha1').update(s).digest('hex').slice(0, 16);
+
+interface GeminiRow { t: number; order: number; at: string | null; prompt: string; answer: string }
+
+function geminiRow(r: Record<string, unknown>, order: number): { key: string; row: GeminiRow } | null {
+  const title = typeof r.title === 'string' ? r.title : '';
+  if (!title.startsWith('Prompted ')) return null;
+  const links = [
+    typeof r.titleUrl === 'string' ? r.titleUrl : '',
+    ...(Array.isArray(r.details) ? r.details : []).map((d) => (d && typeof (d as { url?: unknown }).url === 'string' ? (d as { url: string }).url : '')),
+  ];
+  const link = links.find((u) => /\/app\/[0-9a-f]+/i.test(u));
+  const appId = link ? link.replace(/^.*\/app\//, '').replace(/[?#/].*$/, '') : '';
+  const at = typeof r.time === 'string' && Number.isFinite(Date.parse(r.time)) ? new Date(r.time).toISOString() : null;
+  const notes = (Array.isArray(r.subtitles) ? r.subtitles : [])
+    .map((x) => String((x as { name?: unknown })?.name ?? '').trim().replace(/\.$/, ''))
+    .filter((n) => /^Attached \d+ files?$|^\d+ generated images?$/i.test(n));
+  const prompt = [title.slice('Prompted '.length).trim(), ...notes.filter((n) => /^Attached/i.test(n)).map((n) => `[${n}]`)].filter(Boolean).join('\n');
+  const html = (Array.isArray(r.safeHtmlItem) ? r.safeHtmlItem : []).map((h) => String((h as { html?: unknown })?.html ?? '')).join('\n');
+  const answer = [htmlToText(html), ...notes.filter((n) => /generated/i.test(n)).map((n) => `[${n}]`)].filter(Boolean).join('\n');
+  const key = appId && /^[0-9a-f]{1,64}$/i.test(appId) ? `app-${appId}` : `day-${(at ?? 'undated').slice(0, 10)}`;
+  return { key, row: { t: at ? Date.parse(at) : 0, order, at, prompt, answer } };
+}
+
+function geminiChats(groups: Map<string, GeminiRow[]>): ReadChat[] {
+  const out: ReadChat[] = [];
+  for (const [key, rows] of groups) {
+    // Oldest first; the export lists newest first, so among equal times the later row came first.
+    rows.sort((a, b) => (a.t - b.t) || (b.order - a.order));
+    const lines: PassageIn[] = [];
+    for (const row of rows) {
+      const base = shortHash(`${row.at}|${row.prompt}`);
+      for (const [role, text, suffix] of [['user', row.prompt, 'u'], ['assistant', row.answer, 'a']] as const) {
+        if (!text) continue;
+        const id = `${base}${suffix}`;
+        lines.push({ id, prev: lines.length ? lines[lines.length - 1].id : null, pos: lines.length, role, at: row.at, text });
+      }
+    }
+    if (!lines.length) continue;
+    const first = rows[0].prompt.split('\n')[0].replace(/\s+/g, ' ').trim();
+    out.push({
+      chat: key,
+      title: first.length > 60 ? `${first.slice(0, 57)}…` : first || 'Untitled conversation',
+      startedAt: rows[0].at,
+      lines,
+      dropped: 0,
+    });
+  }
+  return out;
+}
+
+// ── Letta ────────────────────────────────────────────────────────────────────
+//
+// A Letta agent file (.af) holds whole agents, each with its message history
+// as one long line: no branches, no drafts. It is cut into one chat per day
+// so a month can be chosen and an old window can say which day it was.
+//
+// What was said: the person's messages (older agents wrap them as JSON,
+// {"type": "user_message", "message": ...}; heartbeats, logins and system
+// alerts wrapped the same way are not anything anyone said), and the agent's
+// replies. An agent that speaks through the send_message tool said what that
+// call carried, and its plain text was inner monologue; an agent without it
+// says its text directly. Reasoning, tool calls and tool results stay out.
+
+interface LettaMessage { id?: unknown; role?: unknown; content?: unknown; tool_calls?: unknown; created_at?: unknown }
+
+function lettaText(content: unknown): string {
+  if (typeof content === 'string') return content.trim();
+  if (!Array.isArray(content)) return '';
+  return content
+    .filter((c) => c && typeof c === 'object' && (c as { type?: unknown }).type === 'text' && typeof (c as { text?: unknown }).text === 'string')
+    .map((c) => (c as { text: string }).text)
+    .join('\n')
+    .trim();
+}
+
+function lettaSentMessages(m: LettaMessage): string[] {
+  const calls = Array.isArray(m.tool_calls) ? m.tool_calls : [];
+  const out: string[] = [];
+  for (const call of calls) {
+    const fn = (call as { function?: { name?: unknown; arguments?: unknown } })?.function;
+    if (fn?.name !== 'send_message' || typeof fn.arguments !== 'string') continue;
+    try {
+      const msg = (JSON.parse(fn.arguments) as { message?: unknown }).message;
+      if (typeof msg === 'string' && msg.trim()) out.push(msg.trim());
+    } catch { /* a call that never parsed was never sent */ }
+  }
+  return out;
+}
+
+/** The person's words, unwrapped; '' for a heartbeat, login or system alert. */
+function lettaUserWords(text: string): string {
+  if (!text.startsWith('{')) return text;
+  try {
+    const o = JSON.parse(text) as { type?: unknown; message?: unknown };
+    if (o && typeof o === 'object' && 'type' in o) return o.type === 'user_message' && typeof o.message === 'string' ? o.message.trim() : '';
+  } catch { /* plain text that happens to start with a brace */ }
+  return text;
+}
+
+export function readLettaAgent(raw: unknown): ReadChat[] {
+  const a = raw as { id?: unknown; name?: unknown; messages?: unknown };
+  const messages = (Array.isArray(a?.messages) ? a.messages : []) as LettaMessage[];
+  const agentId = typeof a.id === 'string' && ID.test(a.id) ? a.id : `agent-${shortHash(String(a.name ?? ''))}`;
+  const name = (typeof a.name === 'string' && a.name.trim()) || 'Letta agent';
+  const speaksByTool = messages.some((m) => lettaSentMessages(m).length > 0);
+
+  const byDay = new Map<string, PassageIn[]>();
+  messages.forEach((m, i) => {
+    const at = typeof m.created_at === 'string' && Number.isFinite(Date.parse(m.created_at)) ? new Date(m.created_at).toISOString() : null;
+    let said: { role: 'user' | 'assistant'; text: string }[] = [];
+    if (m.role === 'user') {
+      const text = lettaUserWords(lettaText(m.content));
+      if (text) said = [{ role: 'user', text }];
+    } else if (m.role === 'assistant') {
+      said = (speaksByTool ? lettaSentMessages(m) : [lettaText(m.content)].filter(Boolean)).map((text) => ({ role: 'assistant' as const, text }));
+    }
+    const baseId = typeof m.id === 'string' && ID.test(m.id) ? m.id : `m${i}`;
+    said.forEach((x, k) => {
+      const day = at ? at.slice(0, 10) : 'undated';
+      const lines = byDay.get(day) ?? [];
+      const id = k ? `${baseId}-${k}` : baseId;
+      lines.push({ id, prev: lines.length ? lines[lines.length - 1].id : null, pos: lines.length, role: x.role, at, text: x.text });
+      byDay.set(day, lines);
+    });
+  });
+
+  const out: ReadChat[] = [];
+  for (const [day, lines] of byDay) {
+    const label = day === 'undated' ? 'undated' : new Date(`${day}T12:00:00Z`).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' });
+    out.push({ chat: `${agentId}-${day}`, title: `${name} · ${label}`, startedAt: lines[0].at, lines, dropped: 0 });
+  }
+  return out;
+}
+
+// ── One reader per export ────────────────────────────────────────────────────
+
+/**
+ * Turns an export's elements into chats. Most apps give one conversation per
+ * element; Gemini's chats are gathered across all its rows, so they come out
+ * of finish() once the whole export has been read.
+ */
+export interface ChatReader {
+  take(raw: unknown): ReadChat[];
+  finish(): ReadChat[];
+}
+
+export function chatReader(source: ExportSource): ChatReader {
+  if (source === 'gemini') {
+    const groups = new Map<string, GeminiRow[]>();
+    let order = 0;
+    return {
+      take(raw) {
+        if (!raw || typeof raw !== 'object' || !isGeminiActivity(raw as Record<string, unknown>)) return [];
+        const r = geminiRow(raw as Record<string, unknown>, order++);
+        if (r) {
+          const rows = groups.get(r.key) ?? [];
+          rows.push(r.row);
+          groups.set(r.key, rows);
+        }
+        return [];
+      },
+      finish: () => geminiChats(groups),
+    };
+  }
+  const one = (raw: unknown): ReadChat[] => {
+    if (source === 'claude') { const c = readClaudeChat(raw); return c ? [c] : []; }
+    if (source === 'chatgpt') { const c = readChatGptChat(raw); return c ? [c] : []; }
+    if (source === 'letta') return readLettaAgent(raw);
+    return [];
+  };
+  return { take: one, finish: () => [] };
 }

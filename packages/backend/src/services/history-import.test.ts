@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { after, beforeEach, describe, it } from 'node:test';
 import Database from 'better-sqlite3';
 import { strToU8, zipSync } from 'fflate';
-import { claudeKeptPath, JsonArraySplitter, readChatGptChat, readClaudeChat, readExportElements } from './history-readers.js';
+import { chatReader, claudeKeptPath, htmlToText, JsonArraySplitter, readChatGptChat, readClaudeChat, readExportElements, readLettaAgent } from './history-readers.js';
 import { importStatus, previewExport, resetImportStatus, startImport } from './history-import.js';
 
 const dir = mkdtempSync(join(tmpdir(), 'history-import-'));
@@ -141,6 +141,97 @@ describe('reading a ChatGPT export', () => {
     const chat = readChatGptChat(gptChat('g1', 1760000000))!;
     assert.equal(chat.lines[2].text, said(5));
     assert.equal(chat.lines[3].text, said(8));
+  });
+});
+
+/** Takeout's Gemini Apps activity, newest first: two prompts in one chat, one with no chat link. */
+const geminiRows = [
+  { header: 'Gemini Apps', title: 'Prompted and what about the second thing?', time: '2026-10-07T10:05:00.000Z', details: [{ url: 'https://gemini.google.com/app/abc123' }], safeHtmlItem: [{ html: '<p>The second answer &amp; more.</p>' }], products: ['Gemini Apps'] },
+  { header: 'Gemini Apps', title: 'Prompted a loose question from another day', time: '2026-09-01T09:00:00.000Z', safeHtmlItem: [{ html: 'Loose<br>answer' }], subtitles: [{ name: '1 generated image.' }] },
+  { header: 'Gemini Apps', title: 'Prompted tell me the first thing', time: '2026-10-07T10:00:00.000Z', titleUrl: 'https://gemini.google.com/app/abc123', safeHtmlItem: [{ html: '<ul><li>one</li><li>two</li></ul>' }], subtitles: [{ name: 'Attached 1 file.' }] },
+  { header: 'Gemini Apps', title: 'Used Gemini Apps', time: '2026-10-07T09:00:00.000Z' },
+];
+
+describe('reading Gemini activity', () => {
+  it('gathers the rows back into their chats, oldest first, and keeps loose ones by day', () => {
+    const r = chatReader('gemini');
+    for (const row of geminiRows) assert.deepEqual(r.take(row), []);
+    const chats = r.finish();
+    const app = chats.find((c) => c.chat === 'app-abc123')!;
+    assert.deepEqual(app.lines.map((l) => [l.role, l.text]), [
+      ['user', 'tell me the first thing\n[Attached 1 file]'], ['assistant', '- one\n- two'],
+      ['user', 'and what about the second thing?'], ['assistant', 'The second answer & more.'],
+    ]);
+    assert.equal(app.title, 'tell me the first thing');
+    assert.equal(app.lines[1].prev, app.lines[0].id);
+    const loose = chats.find((c) => c.chat === 'day-2026-09-01')!;
+    assert.deepEqual(loose.lines.map((l) => l.text), ['a loose question from another day', 'Loose\nanswer\n[1 generated image]']);
+    assert.equal(chats.length, 2);
+  });
+
+  it('gives the same ids every time, so a repeat import adds nothing', () => {
+    const ids = () => { const r = chatReader('gemini'); geminiRows.forEach((x) => r.take(x)); return r.finish().flatMap((c) => c.lines.map((l) => l.id)); };
+    assert.deepEqual(ids(), ids());
+  });
+
+  it('leaves no tag standing, even one hidden inside another', () => {
+    assert.equal(htmlToText('<scr<script>ipt>alert(1)</script>ok &#39;x&#x27; &lt;b&gt;'), "alert(1)ok 'x' <b>");
+  });
+});
+
+/** A Letta agent: one that speaks through send_message, and one that speaks directly. */
+const lettaByTool = {
+  id: 'agent-111', name: 'Echo', messages: [
+    { id: 'message-1', role: 'system', content: [{ type: 'text', text: 'You are Echo.' }], created_at: '2026-10-07T10:00:00Z' },
+    { id: 'message-2', role: 'user', content: [{ type: 'text', text: '{"type": "login", "last_login": "never"}' }], created_at: '2026-10-07T10:00:01Z' },
+    { id: 'message-3', role: 'user', content: [{ type: 'text', text: '{"type": "user_message", "message": "hey you", "time": "x"}' }], created_at: '2026-10-07T10:01:00Z' },
+    { id: 'message-4', role: 'assistant', content: [{ type: 'text', text: 'inner thought, not said' }], tool_calls: [{ function: { name: 'send_message', arguments: '{"message": "hey yourself"}' } }], created_at: '2026-10-07T10:01:05Z' },
+    { id: 'message-5', role: 'tool', content: [{ type: 'text', text: '{"status": "OK"}' }], created_at: '2026-10-07T10:01:06Z' },
+    { id: 'message-6', role: 'assistant', content: [], tool_calls: [{ function: { name: 'core_memory_append', arguments: '{}' } }], created_at: '2026-10-07T10:01:07Z' },
+    { id: 'message-7', role: 'user', content: [{ type: 'text', text: '{"type": "heartbeat", "reason": "x"}' }], created_at: '2026-10-08T08:00:00Z' },
+    { id: 'message-8', role: 'user', content: [{ type: 'text', text: 'plain words next day' }], created_at: '2026-10-08T08:00:01Z' },
+    { id: 'message-9', role: 'assistant', content: [], tool_calls: [{ function: { name: 'send_message', arguments: '{"message": "morning"}' } }], created_at: '2026-10-08T08:00:02Z' },
+  ],
+};
+
+describe('reading a Letta agent file', () => {
+  it('keeps only what was said, one chat a day, through send_message', () => {
+    const chats = readLettaAgent(lettaByTool);
+    assert.deepEqual(chats.map((c) => [c.chat, c.title, c.lines.map((l) => `${l.role}: ${l.text}`)]), [
+      ['agent-111-2026-10-07', 'Echo · Oct 7, 2026', ['user: hey you', 'assistant: hey yourself']],
+      ['agent-111-2026-10-08', 'Echo · Oct 8, 2026', ['user: plain words next day', 'assistant: morning']],
+    ]);
+  });
+
+  it('reads an agent that speaks directly, leaving its reasoning out', () => {
+    const chats = readLettaAgent({ id: 'agent-222', name: 'Direct', messages: [
+      { id: 'm1', role: 'user', content: [{ type: 'text', text: 'hello' }], created_at: '2026-10-07T10:00:00Z' },
+      { id: 'm2', role: 'assistant', content: [{ type: 'reasoning', reasoning: 'thinking' }, { type: 'text', text: 'hi there' }], created_at: '2026-10-07T10:00:01Z' },
+    ] });
+    assert.deepEqual(chats[0].lines.map((l) => l.text), ['hello', 'hi there']);
+  });
+
+  it('opens a .af file as a whole object and imports it', async () => {
+    const path = join(dir, 'echo.af');
+    writeFileSync(path, JSON.stringify({ agents: [lettaByTool], blocks: [], tools: [] }));
+    const p = await previewExport(path);
+    assert.deepEqual([p.sourceLabel, p.chats, p.messages], ['Letta', 2, 4]);
+    const s = await startImport(path, { month: '2026-10' }, { embed: async () => Float32Array.from([1, 0, 0]), passagesPath: join(dir, 'letta-p.db'), indexPath: join(dir, 'letta-i.db') });
+    assert.deepEqual([s.state, s.sourceLabel, s.stored], ['done', 'Letta', 4]);
+  });
+});
+
+describe('Gemini from a Takeout zip', () => {
+  it('finds MyActivity.json inside the Takeout and imports it', async () => {
+    const path = join(dir, 'takeout.zip');
+    writeFileSync(path, zipSync({
+      'Takeout/My Activity/Gemini Apps/MyActivity.json': strToU8(JSON.stringify(geminiRows)),
+      'Takeout/archive_browser.html': strToU8('<html></html>'),
+    }));
+    const p = await previewExport(path);
+    assert.deepEqual([p.sourceLabel, p.chats, p.messages], ['Gemini', 2, 6]);
+    const s = await startImport(path, {}, { embed: async () => Float32Array.from([1, 0, 0]), passagesPath: join(dir, 'gem-p.db'), indexPath: join(dir, 'gem-i.db') });
+    assert.deepEqual([s.state, s.stored], ['done', 6]);
   });
 });
 

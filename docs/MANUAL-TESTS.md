@@ -113,6 +113,7 @@ Do these after every UI-touching batch.
 - [ ] Pick one month → **Bring in** → a progress bar; leaving the screen and coming back shows it still going. Done says how many messages came in.
 - [ ] Bring the same export in again → *Everything in that export was already here.*
 - [ ] A ChatGPT export → the preview says ChatGPT, with its chats and drafts left out; bringing it in works the same way.
+- [ ] A Google Takeout (My Activity → Gemini Apps, JSON) → the preview says Gemini, chats gathered back together. A Letta .af → the preview says Letta, one chat per day.
 - [ ] Once chats are imported: mention a moment from them → one card marked *old window* on the reply. Mention something unrelated → none. Turn the switch off → none.
 
 ### Codex MCP ownership and lifecycle
