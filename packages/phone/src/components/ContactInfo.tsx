@@ -570,7 +570,12 @@ export const ContactInfo: React.FC<ContactInfoProps> = ({ themeConfig, themeMode
                   </div>
                 </div>
                 <p className={cn('text-[10px] leading-snug', colors.textMuted)}>
-                  A pick in a thread still wins there. While both voices share one lane, the shared pick runs them both.
+                  {/* The shared-lane note only means something in a house with
+                      more than one voice; a one-companion house just gets the
+                      first sentence. */}
+                  A pick in a thread still wins there.
+                  {rows.length === 2 && ' While both voices share one lane, the shared pick runs them both.'}
+                  {rows.length > 2 && ' While the voices share one lane, the shared pick runs them all.'}
                 </p>
               </div>
             </div>
