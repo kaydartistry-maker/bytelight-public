@@ -200,6 +200,19 @@ export const SECRETS: SecretDef[] = [
 
 const BY_NAME = new Map(SECRETS.map((s) => [s.name, s]));
 
+// The config table holds the secrets store too, under PREFIX. Anything that
+// hands the table to a client goes through this first: a signed-in page should
+// never be one request away from every key the house holds.
+export function withoutSecrets(config: Record<string, string>): Record<string, string> {
+  return Object.fromEntries(Object.entries(config).filter(([key]) => !isSecretConfigKey(key)));
+}
+
+/** A config key that holds a key or token even though it is not under the
+ *  secrets prefix (Studio's OpenAI key lives at image_gen.openai_api_key). */
+export function isSecretConfigKey(key: string): boolean {
+  return key.startsWith(PREFIX) || /(?:^|[._])(?:api_key|apikey|token|secret|password)$/i.test(key);
+}
+
 /** Read the loaded config, swallowing the pre-load throw. */
 function safeConfig(pick: (c: ReturnType<typeof getBytelightConfig>) => string | undefined): string | undefined {
   try {

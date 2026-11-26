@@ -4,6 +4,8 @@ import { join } from 'path';
 import yaml from 'js-yaml';
 import { getBytelightConfig, reloadConfig, findBytelightConfigPath } from '../config.js';
 import { getAllConfig, setConfig, getConfig, getConfigBool } from '../services/db.js';
+import { withoutSecrets } from '../services/secrets.js';
+import { settingsForClient, isGuardedSettingKey } from '../services/settings-view.js';
 import { roomBiosReady } from '../services/heartbeat/lane-identity.js';
 import { getArchivistSettings } from '../services/memory-extraction.js';
 
@@ -345,7 +347,7 @@ export function createPreferencesRoutes(): Router {
   router.get('/settings', (req, res) => {
     try {
       const config = getAllConfig();
-      res.json({ config });
+      res.json({ config: settingsForClient(config) });
     } catch (error) {
       console.error('Error fetching settings:', error);
       res.status(500).json({ error: 'Failed to fetch settings' });
@@ -360,6 +362,15 @@ export function createPreferencesRoutes(): Router {
         res.status(400).json({ error: 'key and value (strings) required' });
         return;
       }
+      // A stored secret, a security switch, auth, or a program the house runs
+      // is never written through this generic door: a page could otherwise
+      // overwrite a key (in plain text) or turn the cross-site check off.
+      // Those have their own doors. Refused before anything is logged.
+      if (isGuardedSettingKey(key)) {
+        console.warn(`[Settings] refused PUT of guarded key ${key}`);
+        res.status(403).json({ error: 'That setting cannot be changed here.' });
+        return;
+      }
       setConfig(key, value);
       res.json({ success: true });
     } catch (error) {
@@ -372,7 +383,7 @@ export function createPreferencesRoutes(): Router {
   router.get('/config', (req, res) => {
     try {
       const resonantConfig = getBytelightConfig();
-      const dbConfig = getAllConfig();
+      const dbConfig = withoutSecrets(getAllConfig());
       res.json({
         companion_name: resonantConfig.identity.companion_name,
         user_name: resonantConfig.identity.user_name,
