@@ -1,10 +1,12 @@
 // The old-windows switch: whether pieces of imported chats may surface in
 // your companions' turns (backend services/history-recall.ts). Shown on the
-// Memory Blocks screen beside the Archivist settings.
+// Memory Blocks screen beside the Archivist settings, with the doors to bring
+// old chats in and to read them back.
 import React, { useCallback, useEffect, useState } from 'react';
 import { apiFetch } from '../bytelight';
 import { cn } from '../lib/utils';
 import { OldWindowsImport } from './OldWindowsImport';
+import { OldWindowsReader } from './OldWindowsReader';
 
 interface Colors { accent: string; panelBg: string; panelBorder: string; textMuted: string }
 interface State { enabled: boolean; indexed: { pieces: number; builtAt: string | null } | null }
@@ -12,6 +14,7 @@ interface State { enabled: boolean; indexed: { pieces: number; builtAt: string |
 export function OldWindowsSwitch({ colors }: { colors: Colors }) {
   const [state, setState] = useState<State | null>(null);
   const [busy, setBusy] = useState(false);
+  const [imports, setImports] = useState(0);
 
   const load = useCallback(() => {
     apiFetch('/api/memory/old-windows')
@@ -20,6 +23,8 @@ export function OldWindowsSwitch({ colors }: { colors: Colors }) {
       .catch(() => { /* the switch just stays hidden */ });
   }, []);
   useEffect(load, [load]);
+  // Stable, so the import panel's status poll is not rebuilt on every render.
+  const imported = useCallback(() => { load(); setImports((n) => n + 1); }, [load]);
 
   if (!state) return null;
 
@@ -67,7 +72,8 @@ export function OldWindowsSwitch({ colors }: { colors: Colors }) {
         />
       </button>
     </div>
-    <OldWindowsImport colors={colors} onImported={load} />
+    <OldWindowsImport colors={colors} onImported={imported} />
+    <OldWindowsReader colors={colors} refreshKey={imports} />
     </div>
   );
 }

@@ -4,6 +4,10 @@
 //   POST /memory/old-windows/preview   { upload | path, month? }  → what is in it; writes nothing
 //   POST /memory/old-windows/import    { upload | path, month? }  → starts the import
 //   GET  /memory/old-windows/import    → where the import is
+//   GET  /memory/old-windows/chats     ?source&q&page → the chats brought in, newest first
+//   GET  /memory/old-windows/chats/:source/:chat     → one of them, word for word
+//
+// Reading the chats back writes nothing.
 //
 // A very large export may be too big to send through a tunnel, so the person
 // can instead name a file already on the house's machine (`path`). An upload
@@ -12,17 +16,27 @@
 
 import type { Router } from 'express';
 import multer from 'multer';
-import { mkdirSync } from 'node:fs';
+import { existsSync, mkdirSync } from 'node:fs';
 import { extname, isAbsolute, join } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { PROJECT_ROOT } from '../config.js';
 import { embed } from '../services/embeddings.js';
-import { importStatus, previewExport, startImport } from '../services/history-import.js';
+import { HOUSE_VOICE, importStatus, previewExport, startImport } from '../services/history-import.js';
+import { HISTORY_PASSAGES_PATH, PassageStore } from '../services/history-passages.js';
 
 const UPLOAD_DIR = join(PROJECT_ROOT, 'data', 'uploads', 'history-import');
 const UPLOAD_NAME = /^export-[a-f0-9]{16}\.(zip|json|af|csv)$/;
 const MAX_UPLOAD_BYTES = 2 * 1024 * 1024 * 1024;
 const MONTH = /^\d{4}-\d{2}$/;
+const CHATS_PER_PAGE = 20;
+const SOURCE = /^[a-z]{1,32}$/;
+
+/** Read the stored chats, or answer as if there were none when nothing has been brought in yet. */
+function withStore<T>(none: T, read: (store: PassageStore) => T): T {
+  if (!existsSync(HISTORY_PASSAGES_PATH)) return none;
+  const store = new PassageStore(HISTORY_PASSAGES_PATH);
+  try { return read(store); } finally { store.close(); }
+}
 
 const upload = multer({
   storage: multer.diskStorage({
@@ -99,5 +113,29 @@ export function registerHistoryImportRoutes(router: Router): void {
 
   router.get('/memory/old-windows/import', (_req, res) => {
     res.json(importStatus());
+  });
+
+  router.get('/memory/old-windows/chats', (req, res) => {
+    const source = typeof req.query.source === 'string' && SOURCE.test(req.query.source) ? req.query.source : undefined;
+    const q = typeof req.query.q === 'string' ? req.query.q.slice(0, 200) : '';
+    const page = Math.max(1, Number.parseInt(String(req.query.page ?? '1'), 10) || 1);
+    try {
+      const list = withStore({ total: 0, chats: [], sources: [] }, (s) => s.chats(HOUSE_VOICE, { source, q, limit: CHATS_PER_PAGE, offset: (page - 1) * CHATS_PER_PAGE }));
+      res.json({ ...list, page, pages: Math.max(1, Math.ceil(list.total / CHATS_PER_PAGE)) });
+    } catch (err) {
+      res.status(500).json({ error: err instanceof Error ? err.message : 'The chats could not be read.' });
+    }
+  });
+
+  router.get('/memory/old-windows/chats/:source/:chat', (req, res) => {
+    const { source, chat } = req.params;
+    if (!SOURCE.test(source) || !chat || chat.length > 200) return res.status(400).json({ error: 'That is not a chat this house knows.' });
+    try {
+      const found = withStore(null, (s) => s.chat(HOUSE_VOICE, source, chat));
+      if (!found) return res.status(404).json({ error: 'That chat is not here.' });
+      res.json(found);
+    } catch (err) {
+      res.status(500).json({ error: err instanceof Error ? err.message : 'The chat could not be read.' });
+    }
   });
 }

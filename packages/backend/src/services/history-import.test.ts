@@ -6,7 +6,8 @@ import { after, beforeEach, describe, it } from 'node:test';
 import Database from 'better-sqlite3';
 import { strToU8, zipSync } from 'fflate';
 import { chatReader, claudeKeptPath, htmlToText, JsonArraySplitter, parseCsv, readChatGptChat, readClaudeChat, readExportElements, readGrokChat, readLettaAgent } from './history-readers.js';
-import { importStatus, previewExport, resetImportStatus, startImport } from './history-import.js';
+import { HOUSE_VOICE, importStatus, previewExport, resetImportStatus, startImport } from './history-import.js';
+import { PassageStore, snippetAround } from './history-passages.js';
 
 const dir = mkdtempSync(join(tmpdir(), 'history-import-'));
 after(() => rmSync(dir, { recursive: true, force: true }));
@@ -392,5 +393,52 @@ describe('preview and import', () => {
     const first = startImport(zip, {}, { embed, passagesPath, indexPath });
     assert.throws(() => startImport(zip, {}, { embed, passagesPath, indexPath }), /already running/);
     await first;
+  });
+});
+
+describe('reading the chats back', () => {
+  const path = join(dir, 'read-back.db');
+  const store = new PassageStore(path);
+  after(() => store.close());
+  const line = (id: string, pos: number, role: 'user' | 'assistant', text: string, at: string | null) => ({ id, prev: null, pos, role, at, text });
+  store.addChat({ source: 'chatgpt', chat: 'c1', title: 'Garden', voice: HOUSE_VOICE, lines: [
+    line('m2', 1, 'assistant', 'Plant tomatoes 100% first_thing.', '2026-10-07T10:01:00Z'),
+    line('m1', 0, 'user', 'What should I plant?', '2026-10-07T10:00:00Z'),
+  ] });
+  store.addChat({ source: 'claude', chat: 'c2', title: 'Rockets', voice: HOUSE_VOICE, lines: [line('m1', 0, 'user', 'Tell me about rockets', '2026-11-01T09:00:00Z')] });
+  store.addChat({ source: 'claude', chat: 'c3', title: 'No date', voice: HOUSE_VOICE, lines: [line('m1', 0, 'user', 'undated words', null)] });
+  store.addChat({ source: 'claude', chat: 'c4', title: 'Someone else', voice: 'visitor', lines: [line('m1', 0, 'user', 'tomatoes elsewhere', '2026-12-01T09:00:00Z')] });
+
+  it('lists the house\'s chats newest first, undated last, with a count per app', () => {
+    const list = store.chats(HOUSE_VOICE);
+    assert.deepEqual(list.chats.map((c) => [c.source, c.chat, c.messages]), [['claude', 'c2', 1], ['chatgpt', 'c1', 2], ['claude', 'c3', 1]]);
+    assert.equal(list.total, 3);
+    assert.deepEqual(list.sources, [{ source: 'claude', chats: 2 }, { source: 'chatgpt', chats: 1 }]);
+    assert.deepEqual(store.chats(HOUSE_VOICE, { source: 'chatgpt' }).chats.map((c) => c.title), ['Garden']);
+    const paged = store.chats(HOUSE_VOICE, { limit: 2, offset: 2 });
+    assert.deepEqual([paged.total, paged.chats.map((c) => c.chat)], [3, ['c3']]);
+  });
+
+  it('finds chats by their words or title, any case, with % and _ taken literally', () => {
+    const hit = store.chats(HOUSE_VOICE, { q: 'TOMATOES' });
+    assert.deepEqual([hit.total, hit.chats[0].chat, hit.chats[0].snippet], [1, 'c1', 'Plant tomatoes 100% first_thing.']);
+    assert.equal(store.chats(HOUSE_VOICE, { q: 'rock' }).chats[0].chat, 'c2');
+    assert.equal(store.chats(HOUSE_VOICE, { q: '100%' }).total, 1);
+    assert.equal(store.chats(HOUSE_VOICE, { q: '1_0' }).total, 0);
+    assert.equal(store.chats(HOUSE_VOICE, { q: 'elsewhere' }).total, 0);
+  });
+
+  it('reads one chat in the order it was said, and nothing for a chat that is not there', () => {
+    const c = store.chat(HOUSE_VOICE, 'chatgpt', 'c1')!;
+    assert.deepEqual([c.title, c.lines.map((l) => `${l.role}: ${l.text}`)], ['Garden', ['user: What should I plant?', 'assistant: Plant tomatoes 100% first_thing.']]);
+    assert.equal(store.chat(HOUSE_VOICE, 'claude', 'c4'), null);
+    assert.equal(store.chat(HOUSE_VOICE, 'claude', 'nope'), null);
+  });
+
+  it('cuts a long passage down around the words that were found', () => {
+    const body = `${'a '.repeat(200)}the needle here ${'b '.repeat(200)}`;
+    const s = snippetAround(body, 'needle', 60);
+    assert.ok(s.startsWith('…') && s.endsWith('…') && s.includes('needle'), s);
+    assert.ok(s.length <= 62);
   });
 });

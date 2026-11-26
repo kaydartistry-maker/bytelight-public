@@ -6,7 +6,8 @@
 // be thrown away and rebuilt from it at any time.
 //
 // Kept on this machine only (data/history-passages.db). Nothing here calls a
-// model or leaves the house.
+// model or leaves the house. The person can read their chats back from here
+// (chats, chat), a page at a time or by searching their words.
 
 import Database from 'better-sqlite3';
 import { join } from 'node:path';
@@ -31,6 +32,19 @@ export interface ChatIn {
   title: string;
   voice: string;
   lines: PassageIn[];
+}
+
+export interface ChatSummary { source: string; chat: string; title: string; startedAt: string | null; messages: number; snippet?: string }
+export interface ChatList { total: number; chats: ChatSummary[]; sources: { source: string; chats: number }[] }
+export interface ChatRead { source: string; chat: string; title: string; lines: { role: 'user' | 'assistant'; at: string | null; text: string }[] }
+
+/** A short stretch of `body` around the first place `q` appears, for a search result. */
+export function snippetAround(body: string, q: string, width = 140): string {
+  const flat = body.replace(/\s+/g, ' ').trim();
+  const i = flat.toLowerCase().indexOf(q.toLowerCase());
+  if (i < 0 || flat.length <= width) return flat.length > width ? `${flat.slice(0, width - 1)}…` : flat;
+  const start = Math.max(0, Math.min(i - Math.floor((width - q.length) / 2), flat.length - width));
+  return `${start > 0 ? '…' : ''}${flat.slice(start, start + width).trim()}${start + width < flat.length ? '…' : ''}`;
 }
 
 const SCHEMA = `
@@ -88,6 +102,54 @@ export class PassageStore {
   /** How many passages sit after a cursor: the work left for the index. */
   countAfter(voice: string, after: number): number {
     return (this.db.prepare('SELECT count(*) AS n FROM passages WHERE rowid > ? AND voice = ?').get(after, voice) as { n: number }).n;
+  }
+
+  // ── Reading the chats back ────────────────────────────────────────────────
+
+  /**
+   * The stored chats, newest first, a page at a time: optionally from one app,
+   * optionally only those whose title or words hold `q`. Also says how many
+   * chats each app has, for the chips.
+   */
+  chats(voice: string, opts: { source?: string; q?: string; limit?: number; offset?: number } = {}): ChatList {
+    const limit = Math.max(1, Math.min(100, opts.limit ?? 20));
+    const offset = Math.max(0, opts.offset ?? 0);
+    const q = (opts.q ?? '').trim();
+    const like = q ? `%${q.replace(/[\\%_]/g, (c) => `\\${c}`)}%` : null;
+    const where = ['voice = @voice'];
+    if (opts.source) where.push('source = @source');
+    if (like) where.push(`(source, chat) IN (SELECT source, chat FROM passages WHERE voice = @voice AND (body LIKE @like ESCAPE '\\' OR title LIKE @like ESCAPE '\\'))`);
+    const params = { voice, source: opts.source ?? null, like };
+    const total = (this.db.prepare(`SELECT count(*) AS n FROM (SELECT 1 FROM passages WHERE ${where.join(' AND ')} GROUP BY source, chat)`).get(params) as { n: number }).n;
+    const rows = this.db.prepare(
+      `SELECT source, chat, max(title) AS title, min(at) AS startedAt, count(*) AS messages
+         FROM passages WHERE ${where.join(' AND ')}
+        GROUP BY source, chat
+        ORDER BY startedAt IS NULL, startedAt DESC, source, chat
+        LIMIT @limit OFFSET @offset`,
+    ).all({ ...params, limit, offset }) as ChatSummary[];
+    if (like) {
+      const hit = this.db.prepare(
+        `SELECT body FROM passages WHERE voice = @voice AND source = @source AND chat = @chat AND body LIKE @like ESCAPE '\\' ORDER BY pos, rowid LIMIT 1`,
+      );
+      for (const r of rows) {
+        const h = hit.get({ voice, source: r.source, chat: r.chat, like }) as { body: string } | undefined;
+        if (h) r.snippet = snippetAround(h.body, q);
+      }
+    }
+    const sources = this.db.prepare(
+      'SELECT source, count(DISTINCT chat) AS chats FROM passages WHERE voice = ? GROUP BY source ORDER BY chats DESC',
+    ).all(voice) as { source: string; chats: number }[];
+    return { total, chats: rows, sources };
+  }
+
+  /** One stored chat, every message in the order it was said. Null when it is not here. */
+  chat(voice: string, source: string, chat: string): ChatRead | null {
+    const lines = this.db.prepare(
+      'SELECT title, role, at, body FROM passages WHERE voice = ? AND source = ? AND chat = ? ORDER BY pos, rowid',
+    ).all(voice, source, chat) as { title: string; role: 'user' | 'assistant'; at: string | null; body: string }[];
+    if (!lines.length) return null;
+    return { source, chat, title: lines[0].title, lines: lines.map(({ role, at, body }) => ({ role, at, text: body })) };
   }
 
   close(): void {
