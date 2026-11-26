@@ -114,8 +114,11 @@ try {
 // Create Express app
 const app = express();
 
-// Trust proxy headers (e.g. Cloudflare tunnel, nginx)
-app.set('trust proxy', 1);
+// Trust proxy headers (Cloudflare tunnel, tailscale serve, nginx) only from a
+// proxy on this machine. Reached directly over the network, X-Forwarded-For is
+// whatever the caller typed, and the login limiter would count that instead of
+// the caller's real address.
+app.set('trust proxy', 'loopback');
 
 // Memory-burst tripwire breadcrumb: method + path only (no query strings, no
 // bodies) so an RSS spike snapshot can name what the process was serving.
