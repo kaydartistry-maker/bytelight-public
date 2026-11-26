@@ -17,7 +17,7 @@ import { MessageDebouncer } from './debouncer.js';
 import { preflight, noteJudgedAnswer, ownerMentionIn } from './preflight.js';
 import { getSecret } from '../secrets.js';
 import { PairingService } from './pairing.js';
-import { getUserRule } from './rules.js';
+import { getUserRule, ruleBlocks } from './rules.js';
 import { discordTurnAudience } from '../turn-audience.js';
 import { buildRulesContext, gateModeFor, trustGuidance, publicSafetyLine } from './rules.js';
 import {
@@ -314,6 +314,7 @@ export class DiscordService {
       // Ignore unknown bots — allow bots with UserRules
       if (message.author.bot) {
         const botRule = getUserRule(message.author.id);
+        if (ruleBlocks(botRule)) return; // blocked: never answered
         if (!botRule) return;
         const hasPayload =
           message.attachments.size > 0 ||

@@ -13,6 +13,7 @@ import {
   getUserRule,
   getServerRule,
   isUserAllowedInServer,
+  ruleBlocks,
 } from './rules.js';
 import { botGateDecision, noteApproved } from './bot-loop.js';
 
@@ -137,6 +138,13 @@ async function decide(batch: MessageBatch, pairingService: PairingService): Prom
   // an unknown bot is turned away at the door, and a trusted one we have simply
   // run out of turns for is still HEARD. (Aerie.)
   const authorRule = getUserRule(firstMessage.author.id);
+  // Blocked: somebody the owner never wants answered, in any server or DM.
+  // Their messages are not answered and not held for the owner. Checked
+  // before the bot cap here (this tree's cap can still deliver a capped
+  // bot's message), so a blocked bot is never even heard.
+  if (ruleBlocks(authorRule)) {
+    return { allowed: false, reason: 'User is blocked by the rules' };
+  }
   const botGate = botGateDecision({
     isBot: firstMessage.author.bot,
     hasRule: !!authorRule,
