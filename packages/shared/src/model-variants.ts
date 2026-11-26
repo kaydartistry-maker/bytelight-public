@@ -20,6 +20,7 @@ export interface ModelVariant {
 export const MODEL_VARIANTS: ModelVariant[] = [
   // Current generation (verified against the live models overview 2026-10-11).
   // All four ship 1M context by default — no [1m] variant splits.
+  { id: 'fable-5-2',     label: 'Fable 5.2',       modelApiId: 'claude-fable-5-2',            contextWindow: 1_000_000, betas: [], family: 'fable' },
   { id: 'fable-5-1',     label: 'Fable 5.1',       modelApiId: 'claude-fable-5-1',            contextWindow: 1_000_000, betas: [], family: 'fable' },
   // Fable 5's 1M context window is the model's default — no [1m] variant split.
   { id: 'fable-5',       label: 'Fable 5',         modelApiId: 'claude-fable-5',              contextWindow: 1_000_000, betas: [], family: 'fable' },

@@ -153,6 +153,7 @@ export function buildAntigravityCatalogEntries(): ModelInfo[] {
 
 // Claude models — always available via SDK (matches model-manifest entries).
 const CLAUDE_MODELS: ModelInfo[] = [
+  { id: 'claude-fable-5-2', name: 'Claude Fable 5.2', provider: 'claude', runtime: 'claude-sdk', tier: 'included', context_length: 1000000, supports_tools: true, ref: 'claude/claude-fable-5-2' },
   { id: 'claude-fable-5-1', name: 'Claude Fable 5.1', provider: 'claude', runtime: 'claude-sdk', tier: 'included', context_length: 1000000, supports_tools: true, ref: 'claude/claude-fable-5-1' },
   { id: 'claude-opus-5-5', name: 'Claude Opus 5.5', provider: 'claude', runtime: 'claude-sdk', tier: 'included', context_length: 1000000, supports_tools: true, ref: 'claude/claude-opus-5-5' },
   { id: 'claude-sonnet-5-5', name: 'Claude Sonnet 5.5', provider: 'claude', runtime: 'claude-sdk', tier: 'included', context_length: 1000000, supports_tools: true, ref: 'claude/claude-sonnet-5-5' },

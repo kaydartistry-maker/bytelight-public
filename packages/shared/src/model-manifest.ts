@@ -289,6 +289,7 @@ function antigravityEntry(id: string, label: string): ModelEntry {
  */
 export const MODELS: readonly ModelEntry[] = [
   // Pinned versions
+  claudeEntry('claude-fable-5-2', 'Fable 5.2', ['interactive', 'autonomous']),
   claudeEntry('claude-fable-5-1', 'Fable 5.1', ['interactive', 'autonomous']),
   claudeEntry('claude-opus-5-5', 'Opus 5.5', ['interactive', 'autonomous']),
   claudeEntry('claude-sonnet-5-5', 'Sonnet 5.5', ['interactive', 'autonomous', 'memory']),
@@ -310,6 +311,8 @@ export const MODELS: readonly ModelEntry[] = [
   // Codex (ChatGPT OAuth) — mirrors pi-ai 0.80.6 `openai-codex` provider
   // registry, minus RETIRED_CODEX_IDS (below). Drift-tested in
   // codex-manifest-drift.test.ts.
+  // GPT-5.6 Sol and Terra leave Codex on 2026-12-23 (OpenAI's notice); drop
+  // them here and in the codex-cli rows below once they're gone.
   codexEntry('gpt-5.6-sol', 'GPT-5.6 Sol', ['interactive', 'autonomous']),
   codexEntry('gpt-5.6-terra', 'GPT-5.6 Terra', ['interactive', 'autonomous']),
   codexEntry('gpt-5.6-luna', 'GPT-5.6 Luna', ['interactive', 'autonomous']),
@@ -329,6 +332,7 @@ export const MODELS: readonly ModelEntry[] = [
   codexCliEntry('gpt-5.6-luna', 'GPT-5.6 Luna (Codex CLI)', ['interactive', 'autonomous']),
   // Subscription-backed additions. Deliberately CLI-only: ChatGPT account
   // access must never be mistaken for an OpenAI API/BYOK entitlement.
+  codexCliEntry('gpt-6.1-terra', 'GPT-6.1 Terra (Codex CLI)', ['interactive', 'autonomous']),
   codexCliEntry('gpt-6.1-sol', 'GPT-6.1 Sol (Codex CLI)', ['interactive', 'autonomous']),
   codexCliEntry('gpt-6-astra', 'GPT-6 Astra (Codex CLI)', ['interactive', 'autonomous']),
   codexCliEntry('gpt-6-sol', 'GPT-6 Sol (Codex CLI)', ['interactive', 'autonomous']),
