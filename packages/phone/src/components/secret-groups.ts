@@ -13,6 +13,8 @@ export interface SecretStatus {
   hint?: string;
   hasValue: boolean;
   readonly?: boolean;
+  /** False for a write-only key: it can be set or cleared, never read back. */
+  revealable?: boolean;
 }
 
 export const SECRET_CATEGORY_ORDER = ['search', 'voice', 'platforms', 'other'] as const;

@@ -133,16 +133,16 @@ describe('memory scopes', () => {
 });
 
 describe('ports, tools and permissions', () => {
-  test('the Codex contract shows the configured port', () => {
+  test('the Codex contract shows the configured internal port', () => {
     assert.match(codexOperatingContract(3999), /127\.0\.0\.1:3999\/api\/internal\/journal/);
-    assert.doesNotMatch(codexOperatingContract(3999), /3002/);
-    assert.match(CODEX_OPERATING_CONTRACT, /127\.0\.0\.1:3002\/api\/internal\/journal/);
-    const prior = process.env.RESONANT_PORT;
-    process.env.RESONANT_PORT = '4321';
+    assert.doesNotMatch(codexOperatingContract(3999), /3002|3012/);
+    assert.match(CODEX_OPERATING_CONTRACT, /127\.0\.0\.1:3012\/api\/internal\/journal/);
+    const prior = process.env.INTERNAL_PORT;
+    process.env.INTERNAL_PORT = '4321';
     try {
       assert.match(codexOperatingContract(), /127\.0\.0\.1:4321\//);
     } finally {
-      if (prior === undefined) delete process.env.RESONANT_PORT; else process.env.RESONANT_PORT = prior;
+      if (prior === undefined) delete process.env.INTERNAL_PORT; else process.env.INTERNAL_PORT = prior;
     }
   });
 

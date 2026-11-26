@@ -9,19 +9,21 @@ import { fileURLToPath } from 'url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
-// Resolve port: check env, then try bytelight.yaml, fallback to 3002
-function getPort() {
-  if (process.env.RESONANT_PORT) return process.env.RESONANT_PORT;
-  if (process.env.PORT) return process.env.PORT;
+// /api/internal has its own loopback port. Resolve it from env, then
+// bytelight.yaml, then the built-in default — and read internal_port
+// specifically, because matching a bare `port:` would find the public one and
+// get a 410.
+function getInternalPort() {
+  if (process.env.INTERNAL_PORT) return process.env.INTERNAL_PORT;
   try {
     const yaml = readFileSync(join(__dirname, '..', 'bytelight.yaml'), 'utf8');
-    const match = yaml.match(/^\s*port:\s*(\d+)/m);
+    const match = yaml.match(/^\s*internal_port:\s*(\d+)/m);
     if (match) return match[1];
   } catch {}
-  return '3002';
+  return '3012';
 }
 
-const BASE = `http://localhost:${getPort()}/api/internal`;
+const BASE = `http://127.0.0.1:${getInternalPort()}/api/internal`;
 
 // Image render can run a few minutes on the free Codex lane; the route ACKs
 // immediately (fire-and-forget) so this timeout only guards the initial ACK.

@@ -5,6 +5,7 @@ import { parse as parseCookie } from 'cookie';
 import crypto from 'crypto';
 import { readFileSync, statSync } from 'fs';
 import { isLocalhost } from '../middleware/localhost.js';
+import { allowedHostsFrom, openHouseHostAllowed } from '../middleware/open-house.js';
 import type {
   ClientMessage,
   ServerMessage,
@@ -222,6 +223,16 @@ export function createWebSocketServer(server: HTTPServer, agentService?: AgentSe
       }
     } else if (origin && !allowedOrigins.includes(origin)) {
       console.log(`[WS Upgrade] REJECTED: localhost origin not allowed. Got: ${origin}`);
+      socket.write('HTTP/1.1 403 Forbidden\r\n\r\n');
+      socket.destroy();
+      return;
+    }
+
+    // A house with no password answers only its own address: a rebinding page
+    // sends a matching Origin and Host, so only the Host itself tells it apart
+    // (middleware/open-house.ts).
+    if (!appPassword && !openHouseHostAllowed(request.headers.host, allowedHostsFrom(getBytelightConfig().cors.origins), request.headers as Record<string, unknown>)) {
+      console.log(`[WS Upgrade] REJECTED: no password set and host ${request.headers.host} is not this machine`);
       socket.write('HTTP/1.1 403 Forbidden\r\n\r\n');
       socket.destroy();
       return;

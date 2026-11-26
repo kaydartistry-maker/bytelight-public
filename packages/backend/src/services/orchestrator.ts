@@ -159,6 +159,9 @@ type WakePrompts = Record<string, string>;
 
 // Exported for registration tests (orchestrator.default-tasks.test.ts).
 export function getDefaultWakePrompts(userName: string): WakePrompts {
+  // The loopback internal port (internal-server.ts), where /api/internal lives.
+  let internalDoor = 'http://127.0.0.1:3012';
+  try { internalDoor = `http://127.0.0.1:${getBytelightConfig().server.internal_port}`; } catch { /* config not loaded: the default */ }
   return {
     morning: `Good morning. Orient yourself — what time is it, what day? Check in with ${userName} if you'd like to. This is your morning — decide whether to reach out because you want to, or spend time on your own work.\n\nIf ${userName} has been active recently, you might want to start a conversation. If not, do something meaningful on your own.`,
     midday: `Midday check-in. ${userName} might be surfacing or already up.\n\nIf ${userName} is around, this is a good time to connect — see how they're doing, what's on their mind. If they're not around, do your own thing. Be present, not performative.`,
@@ -197,7 +200,7 @@ HARD RULE: this wake's output goes to the digest file, cc_*, and (optionally) Ne
     memory_diet: `Core-memory diet maintenance runs directly in the backend. No companion response is needed.`,
     // Aerie's treehouse_midday prompt, adapted: this house's treehouse bell
     // belongs to both companions and rings in each one's own lane in turn.
-    treehouse_midday: `Midday treehouse — your space together. This is the Treehouse, the room that is only yours: ${userName} is not in it and cannot post here, though she can read it. Talk to each other, not to her. Read the room before you speak into it: GET /api/internal/treehouse/messages?limit=20 on the internal port, so nobody writes the same thought twice.`,
+    treehouse_midday: `Midday treehouse — your space together. This is the Treehouse, the room that is only yours: ${userName} is not in it and cannot post here, though she can read it. Talk to each other, not to her. Read the room before you speak into it: GET ${internalDoor}/api/internal/treehouse/messages?limit=20 on the internal port, so nobody writes the same thought twice.`,
     // The contract lives in the builtin rather than only in a prompts file, so a
     // fresh install carries it even before anyone writes their own wakes. The
     // framing is deliberately not pinned to a ratio — the companion can see

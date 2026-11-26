@@ -22,7 +22,7 @@ test('spontaneous wakes use the same picture door as the wake outcome contract',
 });
 
 test('local Journal instructions match byte-light and preserve small-screen drafting', () => {
-  assert.match(CODEX_OPERATING_CONTRACT, /127\.0\.0\.1:3002\/api\/internal\/journal/);
+  assert.match(CODEX_OPERATING_CONTRACT, /127\.0\.0\.1:3012\/api\/internal\/journal/);
   assert.doesNotMatch(CODEX_OPERATING_CONTRACT, /3013|3003|phone's Journal app/);
   assert.match(CODEX_OPERATING_CONTRACT, /code block/i);
   assert.match(CODEX_OPERATING_CONTRACT, /wrap/i);

@@ -10,10 +10,10 @@ import { createServer } from 'http';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { existsSync, mkdirSync } from 'fs';
-import { loadConfig, PROJECT_ROOT } from './config.js';
+import { loadConfig, getBytelightConfig, PROJECT_ROOT } from './config.js';
 import { initDb, deleteExpiredSessions } from './services/db.js';
 import { seedDefaultBlocks, ensureCompanionBlocks, ensureHumanBlock } from './services/memory-blocks.js';
-import { getSecret } from './services/secrets.js';
+import { getSecret, sealPlainSecrets } from './services/secrets.js';
 import { loadVectorCache } from './services/vector-cache.js';
 import { createWebSocketServer, setVoiceService, setGatewayServices, registry, recoverCutOffTurns } from './services/ws.js';
 import { holdTurnLeases } from './services/db/turn-leases.js';
@@ -39,7 +39,11 @@ import mcpBeltRouter, { closeBeltMcpSessions } from './routes/mcp-belt.js';
 import { closeMcpJsonClients } from './services/mcp-json-bridge.js';
 import clientErrorRoutes from './routes/client-errors.js';
 import appShellRoutes from './routes/app.js';
-import { requireLocalhost } from './middleware/localhost.js';
+import { directLocalCheck } from './middleware/internal-guard.js';
+import { collapseDuplicateSlashes } from './middleware/normalize-path.js';
+import { startInternalServer } from './internal-server.js';
+import { isLoopbackBind, allowedHostsFrom, openHouseGuard } from './middleware/open-house.js';
+import { csrfProtection } from './middleware/csrf.js';
 import { armTheaterMouth, stopTheaterMouth } from './services/theater-mouth.js';
 
 // Load config FIRST — before any other initialization
@@ -50,6 +54,9 @@ const __dirname = dirname(__filename);
 
 const PORT = config.server.port;
 const HOST = config.server.host;
+// The internal surface gets its own loopback port. Nothing fronts it, so being
+// able to open the socket is what proves a caller is on the box.
+const INTERNAL_PORT = config.server.internal_port;
 const DB_PATH = config.server.db_path;
 
 // Ensure data directory exists
@@ -68,6 +75,16 @@ if (!existsSync(filesDir)) {
 console.log('Initializing database...');
 const db = initDb(DB_PATH);
 deleteExpiredSessions();
+// Keys at rest (services/secret-box.ts): any stored key still in plain text,
+// from before this existed or from a restore, is sealed under the key file.
+// Idempotent: a sealed row is left alone, so every start after the first
+// seals nothing. A sealing failure never blocks boot; the rows stay readable.
+try {
+  const sealed = sealPlainSecrets();
+  if (sealed) console.log(`[secrets] sealed ${sealed} stored key${sealed === 1 ? '' : 's'} at rest`);
+} catch (err) {
+  console.error('[secrets] could not seal stored keys at rest; they stay as they were:', err instanceof Error ? err.message : err);
+}
 loadVectorCache();
 // Self-knowledge semantic index (Wave 2, Slice 3) — embed any entries added
 // while the process was down so manual semantic search is ready. Non-fatal on
@@ -114,8 +131,19 @@ try {
 // Create Express app
 const app = express();
 
-// Trust proxy headers (e.g. Cloudflare tunnel, nginx)
-app.set('trust proxy', 1);
+// A house with no password answers only this machine's address (see
+// middleware/open-house.ts), and refuses to start on one other machines reach.
+if (!config.auth.password && !isLoopbackBind(HOST)) {
+  console.error(`Refusing to start: server.host is ${HOST} and no password is set, so every route would be open to the network. Set auth.password in bytelight.yaml, or bind to 127.0.0.1.`);
+  process.exit(1);
+}
+app.use(openHouseGuard(() => !!getBytelightConfig().auth.password, allowedHostsFrom(config.cors.origins)));
+
+// Trust proxy headers (Cloudflare tunnel, tailscale serve, nginx) only from a
+// proxy on this machine. Reached directly over the network, X-Forwarded-For is
+// whatever the caller typed, and the login limiter would count that instead of
+// the caller's real address.
+app.set('trust proxy', 'loopback');
 
 // Memory-burst tripwire breadcrumb: method + path only (no query strings, no
 // bodies) so an RSS spike snapshot can name what the process was serving.
@@ -181,6 +209,17 @@ app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 app.use(cookieParser());
 
+// Collapse duplicate slashes in the request PATH before routing, so a doubled
+// slash cannot slip a request past a prefix-mounted gate. See normalize-path.ts.
+app.use((req, _res, next) => {
+  req.url = collapseDuplicateSlashes(req.url);
+  next();
+});
+
+// Cross-site requests are refused (Sec-Fetch-Site, Origin as the fallback):
+// after body parsing, before any route. See middleware/csrf.ts.
+app.use('/api', csrfProtection);
+
 // Vendor assets for artifact viewer — completely public, no CSRF/auth (loaded by iframe)
 // Mounted at /vendor (NOT /api/vendor) to avoid auth middleware interference
 // (ported from Aerie server.ts). The phone's Artifacts app fetches
@@ -213,15 +252,43 @@ app.use('/api/client-errors', clientErrorRoutes);
 // database). Ported from Aerie.
 app.use('/api/app', appShellRoutes);
 
+// Internal routes are NOT on this app any more — they listen on their own
+// loopback port that nothing fronts, so being able to reach them is the proof
+// rather than the absence of proxy headers. See internal-server.ts.
+//
+// This handler stands where they used to. Without it the address would fall to
+// the SPA fallback and answer 200 with index.html, and a local caller on the
+// old port would get a page instead of an error. A direct-local caller is told
+// where the door moved to; everyone else gets the same 404 the guard gave them,
+// so the port is not announced to the internet.
+app.use('/api/internal', (req, res) => {
+  const verdict = directLocalCheck(req as unknown as Parameters<typeof directLocalCheck>[0]);
+  if (!verdict.ok) {
+    console.warn(`[internal-guard] refused ${req.method} ${req.originalUrl} — ${verdict.why}`);
+    res.status(404).json({ error: 'Not found' });
+    return;
+  }
+  res.status(410).json({
+    error: 'The internal routes moved to their own loopback port',
+    port: INTERNAL_PORT,
+    hint: `http://127.0.0.1:${INTERNAL_PORT}${req.originalUrl}`,
+  });
+});
+
 // All API routes — auth middleware is applied selectively inside the router
 app.use('/api', apiRoutes);
 
-// Command Center MCP endpoint — localhost only. Its one caller is .mcp.json
-// (localhost:3002); with trust proxy on, tunnel traffic carries the outside
-// client's IP and is refused, same as /api/internal/*. It was open to the
-// internet with no auth until 2026-11-09.
+// The Command Center MCP answers on the loopback internal port only
+// (internal-server.ts). A local caller that still asks here is told the
+// port, the same as /api/internal.
 if (config.command_center.enabled) {
-  import('./routes/cc-mcp.js').then(m => app.use('/mcp/cc', requireLocalhost, m.default));
+  app.use('/mcp/cc', (req, res) => {
+    if (directLocalCheck(req as unknown as Parameters<typeof directLocalCheck>[0]).ok) {
+      res.status(410).json({ error: 'The Command Center MCP moved to the internal port', port: INTERNAL_PORT, hint: `http://127.0.0.1:${INTERNAL_PORT}/mcp/cc` });
+      return;
+    }
+    res.status(404).json({ error: 'Not found' });
+  });
 }
 
 // House tool-belt MCP endpoint. Mount synchronously before listen() so the
@@ -370,7 +437,17 @@ console.log('WebSocket server initialized');
 startMemoryProfiler();
 startMemoryMonitor();
 
-// Start server
+// Start server — hand the internal app the same live services the public
+// app carries, or its routes answer "not configured" for healthy services.
+const internalServer = startInternalServer(INTERNAL_PORT, {
+  orchestrator,
+  agentService,
+  voiceService,
+  pushService,
+  discordService,
+  telegramService,
+});
+
 server.listen(PORT, HOST, () => {
   console.log(`Server running at http://${HOST}:${PORT}`);
   console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
@@ -424,6 +501,9 @@ async function gracefulShutdown(signal: string): Promise<void> {
   // 3. Stop gateway services
   if (discordService) await discordService.stop().catch(() => {});
   if (telegramService) await telegramService.stop().catch(() => {});
+
+  // 3b. Close the internal (loopback) listener
+  internalServer.close();
 
   // 4. Close WebSocket connections
   wss.clients.forEach(ws => ws.close());

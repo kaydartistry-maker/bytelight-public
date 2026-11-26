@@ -19,7 +19,7 @@ A turn arrives as `[THE THEATER — <name> said something on the couch]`. It car
 - **Re-check the clock before talking about "now".** A turn can wait a while behind another. Read where the show is as it stands:
 
   ```
-  curl -s http://127.0.0.1:<port>/api/internal/theater
+  curl -s http://127.0.0.1:<internal port>/api/internal/theater
   ```
 
   (the turn gives you the full address). It answers `{ live, night, clock: { position, label, paused }, lookback: [{ start, end, text, at }] }`. Localhost only, read only. `live: false` means no night is on. This read is read only; the one thing you change from the couch is "next one" (below).
@@ -31,7 +31,7 @@ A turn arrives as `[THE THEATER — <name> said something on the couch]`. It car
 When your person asks for the next episode ("next one", "next episode", "put on the next"), do it, don't ask:
 
 ```
-curl -s -X POST http://127.0.0.1:<port>/api/internal/theater/nights/<night id>/next
+curl -s -X POST http://127.0.0.1:<internal port>/api/internal/theater/nights/<night id>/next
 ```
 
 (the night id is in the read above, `night.id`). The house ends this night, starts the next episode of the same show (same season, episode + 1, their settings carried over: how chatty, no spoilers, "Let them react") and finds its subtitles on its own. It answers `{ night, previous, subtitles: { loaded, name, error }, note }`. Their phone moves to the new night by itself. On a computer night nothing is downloaded: the next night is on the computer too and the Ear keeps listening; just tell them it's on.

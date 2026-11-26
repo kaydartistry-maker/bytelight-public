@@ -31,7 +31,7 @@ A book club turn is a book club turn: no code, no file edits.
 
 ## The routes
 
-On the house's own port, answered only from localhost (`server.port` in bytelight.yaml, 3002 unless the house changed it). Every turn spells out the exact door. The examples call it `$DOOR`; a shell does not keep it between commands, so set it at the top of each one: `DOOR=http://127.0.0.1:3002/api/internal/library/book-club`. No auth, JSON in and out, and every refusal is `{ "error": "one plain sentence" }`.
+On the house's internal port, a loopback-only door of its own (`server.internal_port` in bytelight.yaml, 3012 unless the house changed it). Every turn spells out the exact door. The examples call it `$DOOR`; a shell does not keep it between commands, so set it at the top of each one: `DOOR=http://127.0.0.1:3012/api/internal/library/book-club`. No auth, JSON in and out, and every refusal is `{ "error": "one plain sentence" }`.
 
 | What | Route | Body |
 |---|---|---|
@@ -48,7 +48,7 @@ Lengths: title and author 200 each, pitch 600.
 Build every body with `json.dumps`. A pitch with an apostrophe in it breaks a hand-quoted shell string.
 
 ```bash
-DOOR=http://127.0.0.1:3002/api/internal/library/book-club
+DOOR=http://127.0.0.1:3012/api/internal/library/book-club
 python3 - <<'EOF' | curl -s -X POST $DOOR/rounds/ROUND_ID/pitches \
   -H 'Content-Type: application/json' --data @-
 import json
@@ -67,7 +67,7 @@ The answer is `{ pitch }`; its `id` is what everyone votes with.
 ## Voting
 
 ```bash
-DOOR=http://127.0.0.1:3002/api/internal/library/book-club
+DOOR=http://127.0.0.1:3012/api/internal/library/book-club
 python3 - <<'EOF' | curl -s -X POST $DOOR/rounds/ROUND_ID/votes \
   -H 'Content-Type: application/json' --data @-
 import json

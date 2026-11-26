@@ -2,6 +2,8 @@
 
 byte-light runs on your machine. To access it from your phone, tablet, or when you're away from home, you need to expose it to the network. Here are three approaches, from simplest to most powerful.
 
+**Set a password first.** A house with no `auth.password` answers only its own machine: it will not start on an address other machines can reach (`0.0.0.0` or a network address), it refuses anything that arrives through a proxy or tunnel, and it answers only `localhost`/`127.0.0.1` plus any private-network names (home network, tailnet) you list in `cors.origins`. A public name in `cors.origins` is never answered without a password.
+
 ## Option 1: Local Network Only
 
 The easiest option. Access byte-light from any device on your WiFi.

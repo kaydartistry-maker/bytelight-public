@@ -935,10 +935,10 @@ function settingsJson(dir: string, version: [number, number, number] | null = cl
   );
 }
 
-/** Where a lane's hook reaches the house: the same port, loopback only. */
+/** Where a lane's hook reaches the house: the loopback internal port (internal-server.ts). */
 function internalBase(): string {
-  let port = 3002;
-  try { port = getBytelightConfig().server.port; } catch { /* no config (tests): the default */ }
+  let port = 3012;
+  try { port = getBytelightConfig().server.internal_port; } catch { /* no config (tests): the default */ }
   return `http://127.0.0.1:${port}`;
 }
 

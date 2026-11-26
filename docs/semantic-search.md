@@ -81,9 +81,11 @@ node tools/sc.mjs backfill 0    # processes 0, but shows indexed/total counts
 
 ### Internal API (for programmatic access)
 
+`INTERNAL_PORT` is `server.internal_port` in bytelight.yaml (default 3012), a loopback-only listener separate from the public port.
+
 ```bash
 # Semantic search (with optional filters)
-curl -X POST http://localhost:PORT/api/internal/search-semantic \
+curl -X POST http://127.0.0.1:INTERNAL_PORT/api/internal/search-semantic \
   -H "Content-Type: application/json" \
   -d '{
     "query": "your search",
@@ -95,7 +97,7 @@ curl -X POST http://localhost:PORT/api/internal/search-semantic \
   }'
 
 # Backfill embeddings
-curl -X POST http://localhost:PORT/api/internal/embed-backfill \
+curl -X POST http://127.0.0.1:INTERNAL_PORT/api/internal/embed-backfill \
   -H "Content-Type: application/json" \
   -d '{"batchSize": 50}'
 ```

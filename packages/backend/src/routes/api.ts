@@ -12,7 +12,6 @@ import { getBytelightConfig } from '../config.js';
 
 // Route modules
 import { createPublicRoutes } from './public-routes.js';
-import { createInternalRoutes } from './internal-routes.js';
 import ccRoutes from './cc-routes.js';
 import { createPreferencesRoutes } from './preferences-routes.js';
 import { createProfilesRoutes } from './profiles-routes.js';
@@ -73,9 +72,9 @@ const router = Router();
 router.use(createPublicRoutes());
 
 // ----------------------------------------------------------------------------
-// 2. Internal routes (localhost-only, no auth)
+// 2. Internal routes are NOT here: they listen on their own loopback port
+// (server.internal_port, internal-server.ts) that nothing fronts.
 // ----------------------------------------------------------------------------
-router.use(createInternalRoutes());
 
 // ----------------------------------------------------------------------------
 // 2b. The Theater's Ear (browser extension): no cookie session, its own

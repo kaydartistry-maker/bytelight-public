@@ -6,6 +6,12 @@ import { getDb } from './db/init.js';
 import { addFcmSubscription, listFcmSubscriptions } from './db/push.js';
 import { setSecret, deleteSecret } from './secrets.js';
 import { PushService } from './push.js';
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
+// Values are sealed at rest; keep the key file in a throwaway folder.
+process.env.BYTELIGHT_SECRETS_KEY_FILE = join(mkdtempSync(join(tmpdir(), 'push-fcm-key-')), 'secrets.key');
 
 const { privateKey, publicKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
 const account = {

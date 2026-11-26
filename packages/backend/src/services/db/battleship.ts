@@ -768,9 +768,8 @@ export function beginBattleshipCompanionResponse(
   const fleetHealth = companionView.fleetHealth
     .map((ship) => `${ship.name} ${ship.sunk ? 'SUNK' : `${ship.remaining}/${ship.length}`}`)
     .join('; ');
-  // The fire endpoint lives under /api/internal. byte-light serves it on the
-  // main port behind requireLocalhost (Aerie gives it a port of its own).
-  const port = getBytelightConfig().server.port;
+  // The fire endpoint lives under /api/internal, on the loopback internal port.
+  const port = getBytelightConfig().server.internal_port;
 
   const mustFire = game.status === 'playing' && game.turn === 'companions';
   const cast = fleetRoomCast();

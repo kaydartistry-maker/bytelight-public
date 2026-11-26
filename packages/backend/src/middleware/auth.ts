@@ -24,9 +24,10 @@ export function getCookieName(): string {
 
 function setSessionCookie(req: Request, res: Response, token: string): void {
   // Only mark the cookie Secure when the connection actually is HTTPS.
-  // X-Forwarded-Proto covers the cloudflared tunnel; plain HTTP (LAN) does
-  // not — a Secure cookie would be silently dropped by the browser.
-  const isSecure = req.headers['x-forwarded-proto'] === 'https' || req.secure;
+  // req.secure honors X-Forwarded-Proto via the configured trust proxy, so a
+  // TLS-terminating proxy still gets a Secure cookie; plain HTTP (LAN/Tailscale)
+  // does not — a Secure cookie would be silently dropped by the browser.
+  const isSecure = req.secure;
   res.cookie(COOKIE_NAME, token, {
     httpOnly: true,
     secure: isSecure,

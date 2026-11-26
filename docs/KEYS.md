@@ -7,6 +7,8 @@ Where they go:
 - **Settings → Keys** for everything in the tables below, unless it says otherwise.
 - **Settings → Providers** for the engine keys (OpenAI, OpenRouter, Groq, Grok).
 - Every key can instead be set as an environment variable (the name is in the table) if you run the house yourself. A key saved in the app is stored on your house and never logged.
+- Once saved, a key is write-only from the app: you can replace or clear it, but only the few a page actually uses (ElevenLabs and Giphy, which the phone calls directly, and per-companion voice IDs) can be revealed again.
+- Keys saved in the app are sealed at rest: the database holds them encrypted (AES-256-GCM) under a key file outside the repo, `~/.config/bytelight/secrets.key` (or the path in `BYTELIGHT_SECRETS_KEY_FILE`), readable only by the account that runs the house. It is made on the first start, and keys saved before that are sealed then. **Back up that file with the database**: a copy of the database restored without it treats every saved key as unset (keys from environment variables still work). Setting config `secrets.at_rest` to `off` writes new values plain.
 
 Keys marked *restart* only take effect after the house restarts.
 

@@ -6,6 +6,7 @@ import { getDiscordConfig, getAllowedUsers, getAllowedGuilds, getActiveChannels 
 import { getRulesData, saveRules } from '../services/discord/rules.js';
 import type { ServerRule, ChannelRule, UserRule, RulesData } from '../services/discord/rules.js';
 import { registry } from '../services/registry.js';
+import { shareWithInternal } from '../internal-server.js';
 
 export function createDiscordRoutes(): Router {
   const router = Router();
@@ -46,6 +47,7 @@ export function createDiscordRoutes(): Router {
         const service = new DiscordService(agentService, registry);
         await service.start();
         req.app.locals.discordService = service;
+        shareWithInternal('discordService', service);
         setConfig('discord.enabled', 'true');
         console.log('[Discord] Gateway enabled via settings toggle');
         res.json({ success: true, message: 'Discord gateway started' });
@@ -55,6 +57,7 @@ export function createDiscordRoutes(): Router {
         if (service) {
           await service.stop();
           req.app.locals.discordService = null;
+          shareWithInternal('discordService', null);
         }
         setConfig('discord.enabled', 'false');
         console.log('[Discord] Gateway disabled via settings toggle');

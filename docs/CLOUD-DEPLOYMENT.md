@@ -137,6 +137,7 @@ Edit `bytelight.yaml` and make sure:
 server:
   host: "127.0.0.1"    # Keep localhost — tunnel handles external access
   port: 3002
+  internal_port: 3012  # Loopback-only door for the companions' tools — never point a tunnel or proxy here
 
 agent:
   cwd: "/root/resonant"  # Or wherever you cloned it — absolute path
@@ -311,7 +312,10 @@ pm2 monit    # Live CPU/memory monitor
 
 ```bash
 cp /root/resonant/data/resonant.db /root/resonant-backup-$(date +%Y%m%d).db
+cp ~/.config/bytelight/secrets.key /root/secrets-key-backup-$(date +%Y%m%d)
 ```
+
+The saved keys in the database are sealed under `~/.config/bytelight/secrets.key`; keep a copy of that file with the database backup, or a restore elsewhere comes back with every saved key unset.
 
 ## Troubleshooting
 

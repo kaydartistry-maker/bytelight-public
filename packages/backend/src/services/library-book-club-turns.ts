@@ -161,7 +161,7 @@ async function runTurn(lane: BookClubLane, roundId: string, retry: boolean, root
     const seats = bookClubSeats();
     const prompt = buildBookClubPrompt(round, {
       owner: ownerName(),
-      port: getBytelightConfig().server.port,
+      port: getBytelightConfig().server.internal_port,
       seats,
       retry,
       shelf: readShelf(root).map((e) => ({ id: e.id, title: e.title, authors: e.authors, shelf: e.shelf })),

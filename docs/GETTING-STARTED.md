@@ -211,7 +211,7 @@ Something broke? It will, and it's fine.
 | `No such file or directory` on `cd` | You're not where you think you are | Type `ls` to see where you are; `cd bytelight-public` from your home folder |
 | Red `EACCES` errors from npm | Permissions | Don't `sudo`; ask your companion about the npm global prefix fix |
 | `npm install` fails with `404 Not Found` on an `onnxruntime` / CUDA download | You have an older copy of bytelight | `git pull`, then `npm install` again. (Or once: `npm install --onnxruntime-node-install-cuda=skip`) |
-| `EADDRINUSE` / "Address already in use" | Something else is already on port 3002 (another app, or a second house) | Open `bytelight.yaml`, change `port: 3002` under `server` to a free number like `3004`, and restart. Open the new number in your browser. |
+| `EADDRINUSE` / "Address already in use" | Something else is already on port 3002 (another app, or a second house) | Open `bytelight.yaml`, change `port: 3002` under `server` to a free number like `3004`, and restart. Open the new number in your browser. A second house also needs its own `internal_port` (default 3012), the loopback-only door the companions' tools use. |
 | Node version error during install or build | You're on Node 20, or 25+ | Install Node 22 (Step 1) |
 | Stuck at "Initializing database..." | You installed with one Node version and are running with another | Use the same Node you installed with, or run `npm rebuild better-sqlite3` |
 | "Claude Code process exited with code 1" | Claude isn't signed in, or the plan lapsed | Run `claude auth login`; check your plan at [claude.ai](https://claude.ai) |
