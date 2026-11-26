@@ -318,3 +318,37 @@ test("a guest never reads the house's config, databases or local state, even und
     }
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
+
+// A house that names its public copy in data/guest-public-tree.txt lets a
+// guest read only a file the public copy also has, and search inside the
+// public copy itself (higher trust could read files held back from the public).
+test('with a public copy named, a guest reads only what the public copy has', () => {
+  const { root, lane } = house();
+  const pub = mkdtempSync(join(tmpdir(), 'bytelight-public-'));
+  try {
+    mkdirSync(join(root, 'packages', 'backend', 'held'), { recursive: true });
+    writeFileSync(join(root, 'packages', 'backend', 'held', 'private.ts'), 'house only');
+    mkdirSync(join(pub, 'packages', 'backend'), { recursive: true });
+    writeFileSync(join(pub, 'packages', 'backend', 'thing.ts'), 'export const x = 1;\n');
+    mkdirSync(join(root, 'data'), { recursive: true });
+    audience(lane, GUEST('standard'));
+    // Before it is named, the whole tree is public, as it was.
+    assert.equal(gate(lane, 'Read', { file_path: join(root, 'packages', 'backend', 'held', 'private.ts') }).status, 0);
+    writeFileSync(join(root, 'data', 'guest-public-tree.txt'), pub + '\n');
+    assert.equal(gate(lane, 'Read', { file_path: join(root, 'packages', 'backend', 'thing.ts') }).status, 0, 'in the public copy too');
+    assert.equal(gate(lane, 'Read', { file_path: join(root, 'packages', 'backend', 'held', 'private.ts') }).status, 2, 'held back');
+    assert.equal(gate(lane, 'Grep', { pattern: 'x', path: join(root, 'packages') }).status, 2, 'a folder here would read the held files');
+    assert.equal(gate(lane, 'Grep', { pattern: 'x', path: join(pub, 'packages') }).status, 0, 'search the public copy instead');
+    assert.equal(gate(lane, 'Read', { file_path: join(pub, 'packages', 'backend', 'thing.ts') }).status, 0);
+    // Adapted: this tree keeps Full, which reads exactly like Standard here.
+    audience(lane, GUEST('full'));
+    assert.equal(gate(lane, 'Read', { file_path: join(root, 'packages', 'backend', 'held', 'private.ts') }).status, 2, 'full is held back too');
+    audience(lane, GUEST('limited'));
+    assert.equal(gate(lane, 'Read', { file_path: join(pub, 'packages', 'backend', 'thing.ts') }).status, 2, 'limited still reads nothing');
+  } finally { rmSync(root, { recursive: true, force: true }); rmSync(pub, { recursive: true, force: true }); }
+});
+
+test('a guest turn is told a trust level is never permission to share', () => {
+  const src = readFileSync(new URL('./provision.ts', import.meta.url), 'utf8');
+  assert.match(src, /it is never permission to share anything personal about the owner or the house/);
+});
