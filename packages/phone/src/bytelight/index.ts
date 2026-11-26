@@ -63,6 +63,7 @@ export {
   pinThread,
   unpinThread,
   sendUserMessage,
+  ensureActiveThread,
   sendUserMessageToThread,
   deleteMessage,
   editMessage,

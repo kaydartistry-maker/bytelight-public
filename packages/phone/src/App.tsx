@@ -1532,6 +1532,14 @@ export default function App() {
     const hasAttachments = !!objPayload && Array.isArray(objPayload.attachments) && objPayload.attachments.length > 0;
     const hasMetadata = !!objPayload?.metadata && Object.keys(objPayload.metadata).length > 0;
     const replyId = replyTo?.id;
+    // On a fresh install there is no thread yet and the send creates one
+    // first; if that fails, say so — never let the message vanish quietly.
+    const onSendFailed = (err: unknown) => {
+      console.error('[Bytelight] Send error:', err);
+      const why = err instanceof Error && err.message ? ` ${err.message}` : '';
+      setError(`That message did not send.${why}`);
+      setTimeout(() => setError(null), 8000);
+    };
     setIsSending(true);
     try {
       if (hasAttachments || hasMetadata) {
@@ -1541,14 +1549,14 @@ export default function App() {
         // scores, prepended to the agent prompt by the message hook).
         const metadata: Record<string, unknown> = { ...(objPayload?.metadata ?? {}) };
         if (hasAttachments) metadata.attachments = objPayload!.attachments;
-        sendUserMessage(objPayload!.text || '', 'text', metadata, replyId);
+        sendUserMessage(objPayload!.text || '', 'text', metadata, replyId).catch(onSendFailed);
       } else {
         const text = typeof content === 'string' ? content : String(content ?? '');
         if (!text.trim()) {
           setIsSending(false);
           return;
         }
-        sendUserMessage(text, 'text', undefined, replyId);
+        sendUserMessage(text, 'text', undefined, replyId).catch(onSendFailed);
       }
       setReplyTo(null);
     } catch (err) {
