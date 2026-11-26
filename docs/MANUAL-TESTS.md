@@ -106,6 +106,11 @@ Do these after every UI-touching batch.
 
 ## 🔍 Deeper Checks (≤ 5 minutes)
 
+### Old windows (Memory → Blocks)
+- [ ] The **Old windows** card shows under the Archivist settings. With nothing imported it says *No imported chats are indexed yet.*
+- [ ] With an empty index, chatting works as before: no errors, no old-window cards.
+- [ ] Once chats are imported: mention a moment from them → one card marked *old window* on the reply. Mention something unrelated → none. Turn the switch off → none.
+
 ### Codex MCP ownership and lifecycle
 - [ ] One-time Codex-only migration: remove the old `bytelight` entry from the Codex CLI's user-global config; do NOT remove or disable byte-light's managed/global MCP registry used by API-router, Ollama, OpenRouter, and other routed lanes
 - [ ] Start a Codex turn in byte-light → no `MCP startup incomplete (failed: bytelight)` warning and `/mcp/belt` reports one authenticated MCP session

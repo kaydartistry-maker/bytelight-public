@@ -1269,7 +1269,8 @@ export class InteractiveCliRuntime implements AgentRuntime {
     // A guest's turn gets no recall at all: the guest's own words would choose
     // which memories surfaced, into a room the guest reads.
     if (!guestTurn) try {
-      const recall = await ambientRecall(userContent, key, fresh);
+      // Old windows (imported chats) only on the person's own live turns, never a wake.
+      const recall = await ambientRecall(userContent, key, fresh, { oldWindows: !input.isAutonomous });
       whisperBlock = recall.block;
       recallSurfaced = recall.surfaced;
     } catch { /* never delay a turn */ }

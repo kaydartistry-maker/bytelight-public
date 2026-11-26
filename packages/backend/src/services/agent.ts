@@ -1693,7 +1693,8 @@ export class AgentService {
           const laneKey = `${runtimeDescriptor.runtimeId}:${thread.id}`;
           let unfiledBlock = '';
           try { unfiledBlock = unfiledNoticings(); } catch { /* never delay a turn */ }
-          const recall = await ambientRecall(effectiveContent || content, laneKey, false);
+          // Old windows (imported chats) only on the person's own live turns, never a wake.
+          const recall = await ambientRecall(effectiveContent || content, laneKey, false, { oldWindows: !isAutonomous });
           foreignRecallBlock = recall.block + unfiledBlock;
           // The shiver: only claim recall on the reply when the block
           // actually rode the turn.

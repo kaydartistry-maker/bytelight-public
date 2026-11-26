@@ -33,6 +33,8 @@ import { getBytelightConfig } from '../config.js';
 import { listMemoryLedger, markMemoryLedgerSeen } from '../services/memory-ledger.js';
 import { runMemoryDiet } from '../services/memory-diet.js';
 import { registry } from '../services/registry.js';
+import { OLD_WINDOWS_KEY, oldWindowsEnabled, historyIndexStats } from '../services/history-recall.js';
+import { setConfig } from '../services/db/config.js';
 import type { AgentService } from '../services/agent.js';
 
 // Announce a block write to every connected client so open panels re-fetch.
@@ -272,6 +274,22 @@ export function createMemoryRoutes(): Router {
     }
     markMemoryLedgerSeen(throughId);
     res.json({ success: true });
+  });
+
+  // Old windows: pieces of imported chats surfacing in the person's own turns
+  // (services/history-recall.ts, heartbeat/whisper.ts). On unless turned off.
+  router.get('/memory/old-windows', (_req, res) => {
+    res.json({ enabled: oldWindowsEnabled(), indexed: historyIndexStats() });
+  });
+
+  router.put('/memory/old-windows', (req, res) => {
+    const enabled = req.body?.enabled;
+    if (typeof enabled !== 'boolean') {
+      res.status(400).json({ error: 'enabled (true or false) is required' });
+      return;
+    }
+    setConfig(OLD_WINDOWS_KEY, enabled ? 'true' : 'false');
+    res.json({ enabled: oldWindowsEnabled(), indexed: historyIndexStats() });
   });
 
   // Archivist health for the banner on the Memory Blocks screen (Aerie's

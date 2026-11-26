@@ -8,6 +8,7 @@ import { cn } from '../lib/utils';
 import { apiFetch, useMemoryBlockVersion } from '../bytelight';
 import { normalizeCompanionRows } from '../lib/companion-row';
 import { MemoryBlockHistory, DeletedMemoryBlocks } from './MemoryBlockHistory';
+import { OldWindowsSwitch } from './OldWindowsSwitch';
 
 interface MemoryBlocksAppProps {
   onClose: () => void;
@@ -428,6 +429,8 @@ export function MemoryBlocksApp({ onClose, themeConfig, themeMode, embedded }: M
       )}
 
       <ArchivistSettings themeConfig={themeConfig} themeMode={themeMode} />
+
+      <OldWindowsSwitch colors={colors} />
 
       {/* Blocks list */}
       {tab === 'blocks' && (
