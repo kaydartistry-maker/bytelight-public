@@ -21,7 +21,7 @@ const TABS: { id: Tab; label: string }[] = [
   { id: 'mind', label: 'Mind' },
   { id: 'cortex', label: 'Cortex' },
   { id: 'blocks', label: 'Blocks' },
-  { id: 'selfknowledge', label: 'Self-Knowledge' },
+  { id: 'selfknowledge', label: 'Becoming' },
   { id: 'receipts', label: 'Receipts' },
   { id: 'compactions', label: 'Compactions' },
 ];

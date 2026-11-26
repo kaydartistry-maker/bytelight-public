@@ -262,7 +262,7 @@ export function CortexUrl({ themeConfig, themeMode, onSaved }: Props) {
       <div className="space-y-3">
         <p className={cn('text-[10px] leading-relaxed', colors.textMuted)}>
           Your companions' long-term memory. Optional: without it, Blocks and
-          Self-Knowledge still work. Changes take effect immediately.
+          Becoming still work. Changes take effect immediately.
         </p>
         <p className={cn('text-[10px] leading-relaxed', colors.textMuted)}>
           Don't have one? Deploy <span className="font-mono">workers/cortex</span> —

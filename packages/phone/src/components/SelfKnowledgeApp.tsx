@@ -278,7 +278,7 @@ export function SelfKnowledgeApp({ onClose, themeConfig, themeMode, embedded }: 
   return (
     <AppShell
       embedded={embedded}
-      title="Self-Knowledge"
+      title="Becoming"
       icon={Sparkles}
       onClose={onClose}
       themeConfig={themeConfig}
