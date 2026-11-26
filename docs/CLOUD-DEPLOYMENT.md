@@ -137,6 +137,7 @@ Edit `bytelight.yaml` and make sure:
 server:
   host: "127.0.0.1"    # Keep localhost — tunnel handles external access
   port: 3002
+  internal_port: 3012  # Loopback-only door for the companions' tools — never point a tunnel or proxy here
 
 agent:
   cwd: "/root/resonant"  # Or wherever you cloned it — absolute path

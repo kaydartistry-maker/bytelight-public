@@ -103,9 +103,10 @@ test('every route module imported by api.ts is used in its body', () => {
 
 // The auth boundary in api.ts is positional: express runs middleware in
 // registration order, so everything mounted BEFORE `router.use(authMiddleware)`
-// answers anonymously by construction. Today that is exactly two routers —
-// public (login et al.) and internal (every route carries requireLocalhost;
-// see internal-routes.guarded.test.ts). A third router drifting above the
+// answers anonymously by construction. Today that is exactly one router —
+// public (login et al.). The internal routes are not on this app at all: they
+// listen on their own loopback port (internal-server.ts, held by
+// internal-server.test.ts). A second router drifting above the
 // boundary would work perfectly and never see a session check. Aerie shipped
 // ~60 admin endpoints answering anonymously for exactly this reason
 // (her bc77444e, found by an outside audit).
@@ -114,7 +115,7 @@ test('every route module imported by api.ts is used in its body', () => {
 // browser extension with no cookie session. Its door carries its own gate:
 // every route but the one-time pairing claim requires the Ear's bearer token,
 // checked by the next test.
-test('only public and internal routes (and the bearer-gated Ear) mount before the auth boundary', () => {
+test('only public routes (and the bearer-gated Ear) mount before the auth boundary', () => {
   const api = readFileSync(join(ROUTES_DIR, 'api.ts'), 'utf8');
 
   const boundary = api.indexOf('router.use(authMiddleware)');
@@ -125,8 +126,8 @@ test('only public and internal routes (and the bearer-gated Ear) mount before th
 
   assert.deepEqual(
     mounts,
-    ['createPublicRoutes()', 'createInternalRoutes()', "'/theater-ear', createEarRoutes()"],
-    `Mounted above the auth boundary: ${mounts.join(' · ')}. Only the public and internal routers `
+    ['createPublicRoutes()', "'/theater-ear', createEarRoutes()"],
+    `Mounted above the auth boundary: ${mounts.join(' · ')}. Only the public router `
       + '(and the bearer-gated Ear) may sit above authMiddleware; anything else there answers without a session.',
   );
 });

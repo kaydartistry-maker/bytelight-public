@@ -94,18 +94,19 @@ interface BeltTool {
 
 // ─── localhost POST helper (mirrors sc.mjs `post()`) ─────────────────
 
-/** Resolve the backend's own port. Mirrors sc.mjs: RESONANT_PORT env
- *  first, then config, then 3002. Config read is guarded so the belt is
+/** Resolve the backend's loopback internal port (internal-server.ts), where
+ *  /api/internal lives. Mirrors sc.mjs: INTERNAL_PORT env first, then config
+ *  server.internal_port, then 3012. Config read is guarded so the belt is
  *  importable/testable before config load. */
 function resolvePort(): string {
-  if (process.env.RESONANT_PORT) return process.env.RESONANT_PORT;
+  if (process.env.INTERNAL_PORT) return process.env.INTERNAL_PORT;
   try {
     // Guarded: getBytelightConfig() throws if config isn't loaded (e.g. in a
     // unit test with fetch mocked) — fall back to the default port then.
-    const port = getBytelightConfig()?.server?.port;
+    const port = getBytelightConfig()?.server?.internal_port;
     if (port) return String(port);
   } catch { /* config not loaded — use default */ }
-  return '3002';
+  return '3012';
 }
 
 /**

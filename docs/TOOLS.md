@@ -215,7 +215,7 @@ sc tg text "proactive message"
 
 ## Command Center MCP Tools
 
-When `command_center.enabled` is true, 12 tools are available via the MCP endpoint at `/mcp/cc`. The companion uses these to manage life data from chat.
+When `command_center.enabled` is true, 12 tools are available via the MCP endpoint at `/mcp/cc` on the loopback internal port (`server.internal_port`, default 3012), e.g. `http://127.0.0.1:3012/mcp/cc` in `.mcp.json`. The public port answers that path with a 410 naming the internal port. The companion uses these to manage life data from chat.
 
 | Tool | Actions | Description |
 |------|---------|-------------|
@@ -331,7 +331,7 @@ Type `/` in the chat input to open the CommandPalette. Commands are auto-discove
 
 ## Internal API
 
-All tools wrap localhost-only REST endpoints. These require no authentication — just the request must come from `127.0.0.1`.
+All tools wrap localhost-only REST endpoints under `/api/internal`, served on their own loopback port (`server.internal_port` in bytelight.yaml, default 3012; env `INTERNAL_PORT`). Nothing fronts that port, so being able to open it is the proof a caller is on the box; it takes no authentication. A request that carries a proxy header, a non-loopback Host, or a browser's Origin/Sec-Fetch-Site is refused. The public port answers `/api/internal/*` from this machine with a 410 naming the internal port.
 
 | Endpoint | Purpose |
 |----------|---------|
@@ -352,7 +352,7 @@ The `sc` CLI is the recommended interface. Direct API access is available for cu
 
 ### Companion Journal (Wave 2 — stored in the Mind)
 
-Use the configured backend listener (default `http://127.0.0.1:3002`). These tools require localhost and use companion registry IDs. Entries are stored in the remote Mind, in the same archive as the long-standing Mind journals — writing here IS writing to the brain:
+Use the internal listener (default `http://127.0.0.1:3012`). These tools require localhost and use companion registry IDs. Entries are stored in the remote Mind, in the same archive as the long-standing Mind journals — writing here IS writing to the brain:
 
 - `POST /api/internal/journal`: `{ "companion": "<registry id>", "content": "...", "entryType": "journal" }`. Use `entryType: "dream"` with optional `dreamType` and `emergedQuestion` for a dream.
 - `GET /api/internal/journal?companion=<id>&type=dream`: read entries with effective vividness. Omit filters to read all; `limit` defaults to 20, maximum 100. Entry ids are prefixed — `j:<n>` for journals, `d:<n>` for dreams.

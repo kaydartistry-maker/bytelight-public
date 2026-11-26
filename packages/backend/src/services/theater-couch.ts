@@ -302,7 +302,7 @@ async function runTurn(lane: TheaterLane, nightId: string, root: string): Promis
     ran = true;
     const prompt = buildTheaterPrompt({
       owner: ownerName(),
-      port: getBytelightConfig().server.port,
+      port: getBytelightConfig().server.internal_port,
       seats: couchSeats(),
       ...theaterTurnContext(night),
       cause: { kind: 'said', lines: said.map(({ text, at }) => ({ text, at })) },
@@ -369,7 +369,7 @@ async function runBeat(lane: TheaterLane, nightId: string, note: string, root: s
     }
     const prompt = buildTheaterPrompt({
       owner: ownerName(),
-      port: getBytelightConfig().server.port,
+      port: getBytelightConfig().server.internal_port,
       seats: couchSeats(),
       ...theaterTurnContext(night, clockNow()),
       cause: { kind: 'beat', note },

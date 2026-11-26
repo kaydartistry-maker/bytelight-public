@@ -38,7 +38,7 @@ Turns run one at a time across the whole shelf. A line your person says at the t
 
 ## The routes
 
-All of them are on the house's own port, answered only from localhost: `server.port` in bytelight.yaml, 3002 unless the house changed it. Every page turn spells out the exact door. The examples below call it `$DOOR`; a shell does not keep it between commands, so set it at the top of each one: `DOOR=http://127.0.0.1:3002/api/internal/story-shelf`. No auth is needed, they take JSON, and every refusal is `{ "error": "one plain sentence" }`.
+All of them are on the house's internal port, a loopback-only door of its own: `server.internal_port` in bytelight.yaml, 3012 unless the house changed it. Every page turn spells out the exact door. The examples below call it `$DOOR`; a shell does not keep it between commands, so set it at the top of each one: `DOOR=http://127.0.0.1:3012/api/internal/story-shelf`. No auth is needed, they take JSON, and every refusal is `{ "error": "one plain sentence" }`.
 
 | What | Route | Body |
 |---|---|---|

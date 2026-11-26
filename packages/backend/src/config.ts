@@ -23,6 +23,8 @@ export interface BytelightConfig {
   server: {
     port: number;
     host: string;
+    /** Loopback-only port for /api/internal and /mcp/cc (internal-server.ts). Never fronted. */
+    internal_port: number;
     db_path: string;
   };
   auth: {
@@ -174,6 +176,7 @@ const DEFAULTS: BytelightConfig = {
   server: {
     port: 3002,
     host: '127.0.0.1',
+    internal_port: 3012,
     db_path: './data/bytelight.db',
   },
   auth: {
@@ -304,6 +307,7 @@ export function loadConfig(configPath?: string): BytelightConfig {
   // Environment variable overrides
   if (process.env.PORT) merged.server.port = parseInt(process.env.PORT, 10);
   if (process.env.HOST) merged.server.host = process.env.HOST;
+  if (process.env.INTERNAL_PORT) merged.server.internal_port = parseInt(process.env.INTERNAL_PORT, 10);
   if (process.env.DB_PATH) merged.server.db_path = process.env.DB_PATH;
   if (process.env.APP_PASSWORD) merged.auth.password = process.env.APP_PASSWORD;
   if (process.env.AGENT_CWD) merged.agent.cwd = process.env.AGENT_CWD;

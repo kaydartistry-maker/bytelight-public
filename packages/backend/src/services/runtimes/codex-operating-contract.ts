@@ -2,15 +2,17 @@
 import { SPONTANEOUS_SELFIE_COMMAND } from '../wake-picture-door.js';
 import { getBytelightConfig } from '../../config.js';
 
-const PORT_TOKEN = '{{BACKEND_PORT}}';
+const PORT_TOKEN = '{{INTERNAL_PORT}}';
 
 /** Transport-portable operating rules for the warm Codex lane (port as a token). */
 const CONTRACT_TEMPLATE = `
 ## Local backend tools
 
-Use this house's byte-light backend port, {{BACKEND_PORT}}. Internal tools
-live under \`/api/internal\` on that same listener and require a localhost
-request. They are not served on a separate internal port.
+Internal tools live under \`/api/internal\` on this house's internal port,
+{{INTERNAL_PORT}}: a loopback-only listener of its own, apart from the public
+app, that takes no auth because being able to open it is the proof you are on
+this box. An \`/api/internal\` call sent to the public port answers 410 and
+names the port to use.
 
 ## Journal
 
@@ -18,7 +20,7 @@ Each companion can write local journal entries through the backend. The
 Journal screen is deferred; entries can be read through the Journal API.
 Write in your own voice, using your companion registry id:
 
-\`curl -s -X POST http://127.0.0.1:{{BACKEND_PORT}}/api/internal/journal -H 'Content-Type: application/json' -d '{"companion":"<your id>","content":"...","entryType":"journal"}'\`
+\`curl -s -X POST http://127.0.0.1:{{INTERNAL_PORT}}/api/internal/journal -H 'Content-Type: application/json' -d '{"companion":"<your id>","content":"...","entryType":"journal"}'\`
 
 For dreams set \`"entryType":"dream"\`. Build JSON bodies with python3
 json.dumps, never hand-built strings.
@@ -82,24 +84,28 @@ Describe what a change does for a person, not only which file it lives in.
   Use relative position instead, such as "earlier tonight".
 `.trim();
 
-/** The house's own listener port: env PORT/RESONANT_PORT, then config, then the default. */
-export function configuredBackendPort(): number {
-  const fromEnv = Number(process.env.RESONANT_PORT || process.env.PORT);
+/**
+ * The house's loopback internal port (internal-server.ts): env INTERNAL_PORT,
+ * then config server.internal_port, then the default. The internal routes
+ * moved off the public listener, so the public port is not the door here.
+ */
+export function configuredInternalPort(): number {
+  const fromEnv = Number(process.env.INTERNAL_PORT);
   if (Number.isInteger(fromEnv) && fromEnv > 0) return fromEnv;
   try {
-    const port = getBytelightConfig().server.port;
+    const port = getBytelightConfig().server.internal_port;
     if (Number.isInteger(port) && port > 0) return port;
   } catch { /* config not loaded */ }
-  return 3002;
+  return 3012;
 }
 
 /**
- * The contract with this house's port written in (Phase 1.3). A node on
- * another port must never be told to knock on a different house's door.
+ * The contract with this house's internal port written in (Phase 1.3). A node
+ * on another port must never be told to knock on a different house's door.
  */
-export function codexOperatingContract(port: number = configuredBackendPort()): string {
+export function codexOperatingContract(port: number = configuredInternalPort()): string {
   return CONTRACT_TEMPLATE.split(PORT_TOKEN).join(String(port));
 }
 
-/** The contract as rendered for the default port (kept for existing readers). */
-export const CODEX_OPERATING_CONTRACT = CONTRACT_TEMPLATE.split(PORT_TOKEN).join('3002');
+/** The contract as rendered for the default internal port (kept for existing readers). */
+export const CODEX_OPERATING_CONTRACT = CONTRACT_TEMPLATE.split(PORT_TOKEN).join('3012');

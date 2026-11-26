@@ -12,6 +12,7 @@ identity:
 
 server:
   port: 3002                       # HTTP + WebSocket port
+  internal_port: 3012              # Loopback-only port for /api/internal and /mcp/cc (the companions' tools). Never front it.
   host: "127.0.0.1"               # Bind address (use 0.0.0.0 for remote access)
   db_path: "./data/bytelight.db"    # SQLite database location
 

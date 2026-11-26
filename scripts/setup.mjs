@@ -112,6 +112,7 @@ ${residentNames.map((n) => `    - name: ${yamlQuote(n)}`).join('\n')}
 server:
   port: 3002
   host: "127.0.0.1"
+  internal_port: 3012   # loopback-only door for the companions' tools; never front it
   db_path: "./data/bytelight.db"
 
 auth:

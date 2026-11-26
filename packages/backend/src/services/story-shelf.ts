@@ -32,9 +32,8 @@
  * byte-light adaptations (ported from Aerie): the live update goes through
  * byte-light's registry (services/registry.ts) and QUEUE_TIMEOUT_MESSAGE comes
  * from services/agent.ts, the same string Aerie keeps in agent-query-queue;
- * the house's config is getBytelightConfig(), which has no internal_port, so
- * the loopback door is server.port (byte-light serves /api/internal on its one
- * port, localhost-only); byte-light's image-gen has no normalizeGalleryFilename,
+ * the house's config is getBytelightConfig(), and the loopback door is
+ * server.internal_port (internal-server.ts); byte-light's image-gen has no normalizeGalleryFilename,
  * so the gallery lookup matches the plain filename (already checked to be a
  * bare name by galleryPicture) against listGallery(), which lists only images
  * and films; and the skill sits in the tracked skills/ folder, because
@@ -366,7 +365,7 @@ function turnExtras(book: StoryBook): StoryTurnExtras {
   const titles = new Map(listStoryBooks().map((summary) => [summary.id, summary.title]));
   return {
     ownerName: ownerName(),
-    port: getBytelightConfig().server.port,
+    port: getBytelightConfig().server.internal_port,
     keepsakeLines: storyKeepsakeLines(book.id, listStoryKeepsakes(), titles),
     spicyRules: book.spicy ? spicyRuleFiles() : null,
   };
