@@ -349,6 +349,36 @@ export function spontaneousDayFor(timezone: string, at: Date = new Date()): stri
   return new Date(Date.UTC(y, m - 1, d + offsetDays)).toISOString().slice(0, 10);
 }
 
+/**
+ * Pick `count` minute-marks in [startMin, endMin) for the spontaneous wakes,
+ * at least `minGapMin` apart, so the dice can't clump three bells into one
+ * half hour. A pick that lands too close to one already taken is re-drawn a
+ * few times; if the window is too crowded to fit it, that wake is dropped
+ * rather than squeezed in. Sorted ascending. `rand` is injectable for tests.
+ */
+export function pickSpontaneousMinutes(
+  count: number,
+  startMin: number,
+  endMin: number,
+  minGapMin: number,
+  rand: () => number = Math.random,
+): number[] {
+  const span = endMin - startMin;
+  if (count <= 0 || span <= 0) return [];
+  const gap = Math.max(0, minGapMin);
+  const picked: number[] = [];
+  for (let i = 0; i < count; i++) {
+    for (let attempt = 0; attempt < 20; attempt++) {
+      const m = startMin + Math.floor(rand() * span);
+      if (picked.every((p) => Math.abs(p - m) >= gap)) {
+        picked.push(m);
+        break;
+      }
+    }
+  }
+  return picked.sort((a, b) => a - b);
+}
+
 function parseWakePromptsFile(filePath: string, userName: string): WakePrompts {
   const defaults = getDefaultWakePrompts(userName);
 
@@ -1256,9 +1286,11 @@ export class Orchestrator {
       return;
     }
 
+    // Keep the bells spread out: no two closer than min_gap_minutes (Kay,
+    // Nov 25: three landed inside half an hour while she was trying to nap).
+    const minGap = Math.max(0, getConfigNumber('spontaneous.min_gap_minutes', 60));
     const firesAt: number[] = [];
-    for (let i = 0; i < count; i++) {
-      const targetMin = startMin + Math.floor(Math.random() * (endMin - startMin));
+    for (const targetMin of pickSpontaneousMinutes(count, startMin, endMin, minGap)) {
       const delayMs = (targetMin - nowMin) * 60_000 + Math.floor(Math.random() * 60_000);
       firesAt.push(Date.now() + delayMs);
       this.armSpontaneousTimer(delayMs);
@@ -1267,7 +1299,7 @@ export class Orchestrator {
     // never logged — the dice stay secret.
     setConfig('spontaneous.rolled_for', today);
     setConfig('spontaneous.rolled_times', JSON.stringify(firesAt));
-    olog(`SPONTANEOUS: dice rolled ${count} wake(s) for today`);
+    olog(`SPONTANEOUS: dice rolled ${firesAt.length} wake(s) for today`);
   }
 
   // --- Pulse config ---
