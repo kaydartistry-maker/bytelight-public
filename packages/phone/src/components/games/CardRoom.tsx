@@ -22,6 +22,7 @@ import { apiFetch } from '../../bytelight';
 import { useHouseRoster, OWNER_SIGIL } from '../../lib/house';
 import { cn } from '../../lib/utils';
 import { useBackHandler } from '../../lib/use-back-handler';
+import { resumeTab } from '../../lib/card-room-resume';
 import type { ThemeConfig } from '../../lib/theme';
 
 type CardId = string;
@@ -111,21 +112,15 @@ export function CardRoom({ colors }: CardRoomProps) {
         return;
       }
       setError(null);
-      setTable(body.table);
+      // A house that never dealt answers { table: null }. That is the bare
+      // table, not a failure — reading .game off null used to throw here and
+      // land in the catch below as 'Could not reach the table.'
+      const current: TableView | null = body.table ?? null;
+      setTable(current);
       if (!resumed.current) {
         resumed.current = true;
-        // The table stores 'rat-screw'; this room's tab is 'ratscrew'. Map
-        // explicitly — an unknown game name stays on the bare table.
-        const tab = body.table.game === 'rat-screw' ? 'ratscrew'
-          : body.table.game === 'golf' ? 'golf'
-          : body.table.game === 'eights' ? 'eights'
-          : body.table.game === 'president' ? 'president'
-          : body.table.game === 'hearts' ? 'hearts'
-          : body.table.game === 'spades' ? 'spades'
-          : body.table.game === 'euchre' ? 'euchre'
-          : body.table.game === 'klondike' ? 'klondike'
-          : null;
-        if (tab && body.table.status === 'playing') setMode(tab);
+        const tab = resumeTab(current);
+        if (tab) setMode(tab);
       }
     } catch {
       setError('Could not reach the table.');
