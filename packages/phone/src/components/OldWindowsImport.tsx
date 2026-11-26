@@ -217,7 +217,7 @@ export function OldWindowsImport({ colors, onImported }: { colors: Colors; onImp
       {!preview && (
         <>
           <div className={cn('text-[10px] mt-1 leading-relaxed', colors.textMuted)}>
-            Your data export, as it was emailed to you (the zip), or the conversations.json inside it. Claude exports can be read today. Nothing is written until you have seen what is inside.
+            Your data export, as it was emailed to you (the zip), or the conversations.json inside it. Claude and ChatGPT exports can be read today. Nothing is written until you have seen what is inside.
           </div>
           <input ref={fileInput} type="file" accept=".zip,.json,application/zip,application/json" className="hidden" onChange={(e) => void onFile(e.target.files?.[0])} />
           <button

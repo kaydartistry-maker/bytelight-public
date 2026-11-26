@@ -112,7 +112,7 @@ Do these after every UI-touching batch.
 - [ ] **Bring in old chats** → choose a Claude export → a preview shows chats, messages and drafts left out, with month chips. Nothing is written yet.
 - [ ] Pick one month → **Bring in** → a progress bar; leaving the screen and coming back shows it still going. Done says how many messages came in.
 - [ ] Bring the same export in again → *Everything in that export was already here.*
-- [ ] A ChatGPT export → named as ChatGPT and refused, nothing written.
+- [ ] A ChatGPT export → the preview says ChatGPT, with its chats and drafts left out; bringing it in works the same way.
 - [ ] Once chats are imported: mention a moment from them → one card marked *old window* on the reply. Mention something unrelated → none. Turn the switch off → none.
 
 ### Codex MCP ownership and lifecycle

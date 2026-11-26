@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { after, beforeEach, describe, it } from 'node:test';
 import Database from 'better-sqlite3';
 import { strToU8, zipSync } from 'fflate';
-import { claudeKeptPath, JsonArraySplitter, readClaudeChat, readExportElements } from './history-readers.js';
+import { claudeKeptPath, JsonArraySplitter, readChatGptChat, readClaudeChat, readExportElements } from './history-readers.js';
 import { importStatus, previewExport, resetImportStatus, startImport } from './history-import.js';
 
 const dir = mkdtempSync(join(tmpdir(), 'history-import-'));
@@ -23,6 +23,31 @@ function claudeChat(uuid: string, createdAt: string) {
       { uuid: `${uuid}-m3`, parent_message_uuid: `${uuid}-m2`, sender: 'human', created_at: `${createdAt.slice(0, 10)}T10:02:00Z`, text: 'a draft {that was} "abandoned" ]' },
       { uuid: `${uuid}-m4`, parent_message_uuid: `${uuid}-m2`, sender: 'human', created_at: `${createdAt.slice(0, 10)}T10:03:00Z`, text: said(4) },
     ],
+  };
+}
+
+/**
+ * A ChatGPT chat: hidden custom instructions, a system note, one regenerated
+ * answer (a1 abandoned for a2), a tool call and its result, and a cited answer.
+ */
+function gptChat(id: string, t: number) {
+  const node = (nid: string, parent: string | null, message: Record<string, unknown> | null) => ({ id: nid, parent, message, children: [] });
+  const msg = (mid: string, role: string, parts: unknown[], extra: Record<string, unknown> = {}) =>
+    ({ id: mid, author: { role }, create_time: t + Number(mid.replace(/\D/g, '') || 0), content: { content_type: 'text', parts }, recipient: 'all', ...extra });
+  return {
+    id, conversation_id: id, title: `GPT ${id}`, create_time: t, current_node: 'n8',
+    mapping: {
+      root: node('root', null, null),
+      n0: node('n0', 'root', msg('sys0', 'system', ['You are ChatGPT.'])),
+      n1: node('n1', 'n0', msg('ctx1', 'user', ['My custom instructions'], { content: { content_type: 'user_editable_context', user_profile: 'x' }, metadata: { is_visually_hidden_from_conversation: true } })),
+      n2: node('n2', 'n1', msg('u2', 'user', [said(2)])),
+      n3a: node('n3a', 'n2', msg('a3', 'assistant', ['An answer that was regenerated away.'])),
+      n3: node('n3', 'n2', msg('a4', 'assistant', [said(4)])),
+      n5: node('n5', 'n3', msg('u5', 'user', [said(5), { content_type: 'image_asset_pointer' }], { content: { content_type: 'multimodal_text', parts: [said(5), { content_type: 'image_asset_pointer' }] } })),
+      n6: node('n6', 'n5', msg('a6', 'assistant', ['search("x")'], { recipient: 'web' })),
+      n7: node('n7', 'n6', msg('t7', 'tool', ['results'])),
+      n8: node('n8', 'n7', msg('a8', 'assistant', [`${said(8)} \ue200cite\ue202turn0search0\ue201【3†source】`])),
+    },
   };
 }
 
@@ -83,9 +108,39 @@ describe('reading a Claude export', () => {
     assert.deepEqual(seen, ['aaa', 'bbb']);
   });
 
+  it('reads every part of an export split into numbered files', async () => {
+    const path = join(dir, 'parts.zip');
+    writeFileSync(path, zipSync({
+      'conversations-000.json': strToU8(JSON.stringify([claudeChat('aaa', '2026-10-07T10:00:00Z')])),
+      'conversations-001.json': strToU8(JSON.stringify([claudeChat('bbb', '2026-11-02T10:00:00Z')])),
+      'shared_conversations.json': strToU8('[{"id":"not-this"}]'),
+    }));
+    const seen: string[] = [];
+    await readExportElements(path, (raw) => seen.push((raw as { uuid: string }).uuid));
+    assert.deepEqual(seen, ['aaa', 'bbb']);
+  });
+
   it('says so when the zip has no conversations, or the file stops partway', async () => {
     await assert.rejects(readExportElements(zipOf('notes.json', '[]'), () => {}), /no conversations\.json/);
     await assert.rejects(readExportElements(jsonOf(exportJson.slice(0, 200)), () => {}), /ends partway/);
+  });
+});
+
+describe('reading a ChatGPT export', () => {
+  it('keeps only what was said on the branch that was kept', () => {
+    const chat = readChatGptChat(gptChat('g1', 1760000000))!;
+    assert.deepEqual(chat.lines.map((l) => [l.id, l.role, l.prev]), [
+      ['u2', 'user', null], ['a4', 'assistant', 'u2'], ['u5', 'user', 'a4'], ['a8', 'assistant', 'u5'],
+    ]);
+    assert.equal(chat.dropped, 1);
+    assert.equal(chat.title, 'GPT g1');
+    assert.equal(chat.startedAt, new Date(1760000000 * 1000).toISOString());
+  });
+
+  it('takes the words from a message with a picture, and strips citation markers', () => {
+    const chat = readChatGptChat(gptChat('g1', 1760000000))!;
+    assert.equal(chat.lines[2].text, said(5));
+    assert.equal(chat.lines[3].text, said(8));
   });
 });
 
@@ -110,13 +165,20 @@ describe('preview and import', () => {
   });
 
   it('names an export it cannot read yet instead of guessing', async () => {
-    const gpt = JSON.stringify([{ id: 'c1', title: 'x', mapping: {}, current_node: null }]);
-    const p = await previewExport(jsonOf(gpt));
-    assert.equal(p.sourceLabel, 'ChatGPT');
+    const other = JSON.stringify([{ conversation: { id: 'x' }, responses: [] }]);
+    const p = await previewExport(jsonOf(other));
     assert.equal(p.readable, false);
-    const s = await run(jsonOf(gpt));
+    const s = await run(jsonOf(other));
     assert.equal(s.state, 'failed');
-    assert.match(s.error ?? '', /ChatGPT, which this house cannot read yet/);
+    assert.match(s.error ?? '', /which this house cannot read yet/);
+  });
+
+  it('brings in a ChatGPT export the same way', async () => {
+    const zip = zipOf('conversations.json', JSON.stringify([gptChat('g1', 1760000000)]));
+    const p = await previewExport(zip);
+    assert.deepEqual([p.sourceLabel, p.readable, p.chats, p.messages, p.dropped], ['ChatGPT', true, 1, 4, 1]);
+    const s = await startImport(zip, {}, { embed, passagesPath: join(dir, 'gpt-passages.db'), indexPath: join(dir, 'gpt-index.db') });
+    assert.deepEqual([s.state, s.sourceLabel, s.stored], ['done', 'ChatGPT', 4]);
   });
 
   it('imports one month, then the rest, and a repeat adds nothing', async () => {

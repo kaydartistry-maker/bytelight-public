@@ -6,8 +6,8 @@
 // and let go before the next is read.
 //
 // One reader per app. Each turns that app's conversation into the messages
-// the person actually kept, in order. This slice reads Claude; an export from
-// anywhere else is named and refused, never guessed at.
+// the person actually kept, in order. Claude and ChatGPT are read today; an
+// export from anywhere else is named and refused, never guessed at.
 
 import { createReadStream } from 'node:fs';
 import { Unzip, UnzipInflate } from 'fflate';
@@ -76,24 +76,36 @@ export class JsonArraySplitter {
   get done(): boolean { return this.ended; }
 }
 
-const EXPORT_ENTRY = /(^|\/)conversations\.json$/i;
+/** conversations.json, or the numbered parts a large export is split into (conversations-000.json, …). */
+const EXPORT_ENTRY = /(^|\/)conversations(-\d+)?\.json$/i;
+
+const TRUNCATED = 'That export ends partway through. It may not have finished downloading.';
+
+/** One JSON array arriving in pieces, decoded and split as it comes. */
+function arrayReader(onElement: (raw: unknown) => void) {
+  const splitter = new JsonArraySplitter();
+  const decoder = new TextDecoder('utf-8');
+  return {
+    feed(bytes: Uint8Array, final: boolean) {
+      const text = decoder.decode(bytes, { stream: !final });
+      for (const el of splitter.push(text)) onElement(JSON.parse(el));
+      if (final && !splitter.done) throw new Error(TRUNCATED);
+    },
+  };
+}
 
 /**
  * Hand every element of the export's conversations array to `onElement`,
- * one at a time. Takes a zip (the download as emailed) or the
- * conversations.json inside it.
+ * one at a time. Takes a zip (the download as emailed; every conversations
+ * file inside it is read, in the order the zip holds them) or a
+ * conversations.json on its own.
  */
 export async function readExportElements(path: string, onElement: (raw: unknown) => void): Promise<void> {
-  const splitter = new JsonArraySplitter();
-  const decoder = new TextDecoder('utf-8');
-  const feed = (bytes: Uint8Array, final: boolean) => {
-    const text = decoder.decode(bytes, { stream: !final });
-    for (const el of splitter.push(text)) onElement(JSON.parse(el));
-  };
-
   const stream = createReadStream(path, { highWaterMark: 1 << 20 });
   let zip: Unzip | null = null;
-  let found = false;
+  let plain: ReturnType<typeof arrayReader> | null = null;
+  let found = 0;
+  let finished = 0;
   let failure: Error | null = null;
   let first = true;
   for await (const chunk of stream as AsyncIterable<Buffer>) {
@@ -101,33 +113,44 @@ export async function readExportElements(path: string, onElement: (raw: unknown)
       first = false;
       if (chunk[0] === 0x50 && chunk[1] === 0x4b) {
         zip = new Unzip((file) => {
-          if (found || !EXPORT_ENTRY.test(file.name)) return;
-          found = true;
+          if (failure || !EXPORT_ENTRY.test(file.name)) return;
+          found++;
+          const reader = arrayReader(onElement);
           file.ondata = (err, data, final) => {
             if (failure) return;
             if (err) { failure = err; return; }
-            try { feed(data, final); } catch (e) { failure = e as Error; }
+            try {
+              reader.feed(data, final);
+              if (final) finished++;
+            } catch (e) { failure = e as Error; }
           };
           file.start();
         });
         zip.register(UnzipInflate);
+      } else {
+        plain = arrayReader(onElement);
       }
     }
-    if (zip) zip.push(chunk);
-    else {
-      try { feed(chunk, false); } catch (e) { failure = e as Error; }
-    }
+    try {
+      if (zip) zip.push(chunk);
+      else plain!.feed(chunk, false);
+    } catch (e) { failure = failure ?? (e as Error); }
     if (failure) break;
   }
-  if (zip && !failure) zip.push(new Uint8Array(0), true);
-  if (!zip && !failure) feed(new Uint8Array(0), true);
+  if (!failure) {
+    try {
+      if (zip) zip.push(new Uint8Array(0), true);
+      else if (plain) plain.feed(new Uint8Array(0), true);
+      else throw new Error('That file is empty.');
+    } catch (e) { failure = failure ?? (e as Error); }
+  }
   if (failure) {
     stream.destroy();
     const f = failure as Error;
     throw f instanceof SyntaxError ? new Error(`That export could not be read: ${f.message}`) : f;
   }
   if (zip && !found) throw new Error('There is no conversations.json in that zip. Pick the export zip as it was emailed, or the conversations.json inside it.');
-  if (!splitter.done) throw new Error('That export ends partway through. It may not have finished downloading.');
+  if (zip && finished < found) throw new Error(TRUNCATED);
 }
 
 // ── Which app made it ────────────────────────────────────────────────────────
@@ -145,7 +168,7 @@ export function detectSource(raw: unknown): ExportSource {
 export const SOURCE_LABEL: Record<ExportSource, string> = { claude: 'Claude', chatgpt: 'ChatGPT', unknown: 'an app this house cannot read yet' };
 
 /** Sources this house can read today. */
-export const READABLE: ReadonlySet<ExportSource> = new Set(['claude']);
+export const READABLE: ReadonlySet<ExportSource> = new Set(['claude', 'chatgpt']);
 
 // ── One conversation, as kept ───────────────────────────────────────────────
 
@@ -224,6 +247,92 @@ export function readClaudeChat(raw: unknown): ReadChat | null {
   return { chat: c.uuid, title, startedAt: typeof c.created_at === 'string' ? c.created_at : lines[0].at, lines, dropped };
 }
 
+// ── ChatGPT ──────────────────────────────────────────────────────────────────
+//
+// Each conversation is a tree (`mapping`) of nodes, one per message, every
+// edit and regeneration a branch of its own. The conversation as it was left
+// is the branch ending at `current_node`, walked back through `parent`.
+// Along that branch only what was said between the person and the assistant
+// is kept: system and tool messages, the assistant's calls out to tools,
+// hidden context (custom instructions, memory) and reasoning summaries are
+// not anything either of them said in the chat.
+
+interface GptMessage {
+  id?: unknown;
+  author?: { role?: unknown } | null;
+  create_time?: unknown;
+  content?: { content_type?: unknown; parts?: unknown; text?: unknown } | null;
+  recipient?: unknown;
+  metadata?: { is_visually_hidden_from_conversation?: unknown } | null;
+}
+interface GptNode { id?: unknown; parent?: unknown; message?: GptMessage | null }
+
+const GPT_SPOKEN = new Set(['text', 'multimodal_text']);
+// Inline citation markers ChatGPT writes into answers that used search
+// (private-use characters around a reference, or 【12†source】).
+const GPT_CITATION = /\ue200[^\ue201]*\ue201|【[^】]*†[^】]*】/g;
+
+const gptTime = (v: unknown): string | null =>
+  typeof v === 'number' && Number.isFinite(v) && v > 0 ? new Date(v < 1e12 ? v * 1000 : v).toISOString() : null;
+
+/** What the person or the assistant said in this message, or '' when it was not said in the chat. */
+function gptSpoken(m: GptMessage | null | undefined): { role: 'user' | 'assistant'; text: string } | null {
+  if (!m) return null;
+  const role = m.author?.role;
+  if (role !== 'user' && role !== 'assistant') return null;
+  if (m.metadata?.is_visually_hidden_from_conversation === true) return null;
+  if (role === 'assistant' && m.recipient !== undefined && m.recipient !== 'all') return null;
+  const type = m.content?.content_type;
+  if (!GPT_SPOKEN.has(String(type))) return null;
+  const parts = Array.isArray(m.content?.parts) ? (m.content!.parts as unknown[]) : [];
+  const text = parts.filter((x): x is string => typeof x === 'string').join('\n').replace(GPT_CITATION, '').trim();
+  return text ? { role, text } : null;
+}
+
+export function readChatGptChat(raw: unknown): ReadChat | null {
+  const c = raw as { id?: unknown; conversation_id?: unknown; title?: unknown; create_time?: unknown; mapping?: Record<string, GptNode>; current_node?: unknown };
+  if (!c || !c.mapping || typeof c.mapping !== 'object') return null;
+  const chatId = typeof c.conversation_id === 'string' ? c.conversation_id : typeof c.id === 'string' ? c.id : null;
+  if (!chatId || !ID.test(chatId)) return null;
+  const mapping = c.mapping;
+
+  // Walk back from where the conversation was left.
+  const onPath = new Set<string>();
+  const chain: GptNode[] = [];
+  let at = typeof c.current_node === 'string' ? c.current_node : null;
+  while (at && mapping[at] && !onPath.has(at)) {
+    onPath.add(at);
+    chain.push(mapping[at]);
+    at = typeof mapping[at].parent === 'string' ? (mapping[at].parent as string) : null;
+  }
+  chain.reverse();
+
+  const lines: PassageIn[] = [];
+  for (const node of chain) {
+    const spoken = gptSpoken(node.message);
+    const id = typeof node.message?.id === 'string' ? node.message.id : typeof node.id === 'string' ? node.id : null;
+    if (!spoken || !id || !ID.test(id)) continue;
+    lines.push({
+      id,
+      prev: lines.length ? lines[lines.length - 1].id : null,
+      pos: lines.length,
+      role: spoken.role,
+      at: gptTime(node.message?.create_time),
+      text: spoken.text,
+    });
+  }
+  if (!lines.length) return null;
+
+  // Messages someone could have read that are not on the kept branch: the abandoned drafts.
+  let dropped = 0;
+  for (const [key, node] of Object.entries(mapping)) if (!onPath.has(key) && gptSpoken(node?.message)) dropped++;
+
+  const title = (typeof c.title === 'string' ? c.title.trim() : '').slice(0, 300) || 'Untitled conversation';
+  return { chat: chatId, title, startedAt: gptTime(c.create_time) ?? lines[0].at, lines, dropped };
+}
+
 export function readChat(source: ExportSource, raw: unknown): ReadChat | null {
-  return source === 'claude' ? readClaudeChat(raw) : null;
+  if (source === 'claude') return readClaudeChat(raw);
+  if (source === 'chatgpt') return readChatGptChat(raw);
+  return null;
 }
