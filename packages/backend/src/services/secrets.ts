@@ -110,7 +110,7 @@ export const SECRETS: SecretDef[] = [
     label: 'ElevenLabs API key',
     category: 'voice',
     envVar: 'ELEVENLABS_API_KEY',
-    hint: 'elevenlabs.io/app/settings/api-keys — TTS voice',
+    hint: 'elevenlabs.io/app/settings/api-keys — TTS voice. Talking stays off until a voice ID is set too: the default voice ID below, or one per companion in the Companions app.',
   },
   {
     name: 'elevenlabs_voice_id',
@@ -118,7 +118,7 @@ export const SECRETS: SecretDef[] = [
     category: 'voice',
     envVar: 'ELEVENLABS_VOICE_ID',
     fallback: () => safeConfig((c) => c.voice.elevenlabs_voice_id || undefined),
-    hint: 'Used when no per-companion voice is set',
+    hint: 'Needed for talking (with the API key above). Copy a voice ID from your ElevenLabs Voices page; used for any companion without their own.',
   },
   {
     name: 'hume_api_key',

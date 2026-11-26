@@ -1250,7 +1250,7 @@ export function MessageBubble({ message, onReact, onBookmark, onDelete, onEdit, 
                     disabled={isLoadingAudio}
                     className={cn("p-1 transition-colors opacity-60 hover:opacity-100 disabled:opacity-40", colors.textMuted)}
                     style={isPlaying ? { color: colors.accent } : undefined}
-                    title={apiKey ? (isPlaying ? 'Stop' : 'Read aloud') : 'Set ElevenLabs key in Settings → Data'}
+                    title={apiKey ? (isPlaying ? 'Stop' : 'Read aloud') : 'Talking needs an ElevenLabs API key and voice ID: Integrations → Secrets'}
                   >
                     {isLoadingAudio ? <Loader2 size={16} className="animate-spin" /> : isPlaying ? <Square size={14} fill="currentColor" /> : <Volume2 size={16} />}
                   </button>
