@@ -1202,6 +1202,9 @@ export class AgentService {
     // cleanly (finishReason 'stop') with no text is an intentional silent
     // finish — suppress the empty-message persistence, same as the stop paths.
     let endedSilently = false;
+    // The lane said outright that it passes on this turn ({"silent":true}):
+    // treated like [SILENT], so the tool it used to say so leaves no bubble.
+    let passedOutright = false;
     // The shiver: ambient memory recall that surfaced on this turn (emitted
     // once by the heartbeat runtime's whisper). Folded into the reply message's
     // metadata so the owner can SEE recall happened. Null when nothing surfaced
@@ -1942,6 +1945,9 @@ export class AgentService {
                   console.log('[Agent] Generation stopped by user');
                   registry.broadcast({ type: 'generation_stopped' });
                 }
+              } else if (event.finishReason === 'stop' && event.silent === true && !fullResponse.trim()) {
+                endedSilently = true;
+                passedOutright = true;
               } else if (event.finishReason === 'stop' && !fullResponse.trim()) {
                 // Clean stop with no text = heartbeat silent-completion
                 // sentinel. Mark it so finalization skips the '[No response]'
@@ -2317,7 +2323,7 @@ export class AgentService {
 
     // A deliberate pass ([SILENT], see isDeliberateSilence) posts nothing:
     // the sentinel is dropped here so no bubble, push or reply carries it.
-    const deliberateSilence = isDeliberateSilence(fullResponse);
+    const deliberateSilence = passedOutright || isDeliberateSilence(fullResponse);
     if (deliberateSilence) fullResponse = '';
 
     // Status tags ([companion-a mood: playful]) set what shows under their names on

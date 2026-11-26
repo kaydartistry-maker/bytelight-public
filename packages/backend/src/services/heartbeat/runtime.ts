@@ -1646,7 +1646,7 @@ export class InteractiveCliRuntime implements AgentRuntime {
             state.consumedOffset = offset;
             state.silentTimeouts = 0;
             session.clearBusy();
-            yield { type: 'done', finishReason: 'stop' };
+            yield { type: 'done', finishReason: 'stop', silent: true };
             return;
           }
           const content = typeof parsed.content === 'string' ? parsed.content : null;

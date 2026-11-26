@@ -270,8 +270,10 @@ export type AgentRuntimeEvent =
       dejavu: boolean;
     }
   /** Turn complete. `finishReason` mirrors OpenAI's vocabulary
-   *  because every provider can map to it. */
-  | { type: 'done'; finishReason: 'stop' | 'length' | 'tool_calls' | 'aborted' | 'error' }
+   *  because every provider can map to it. `silent` marks a turn the
+   *  companion chose to pass on outright (the heartbeat lane's
+   *  {"silent":true} sentinel): it leaves no bubble, tools or not. */
+  | { type: 'done'; finishReason: 'stop' | 'length' | 'tool_calls' | 'aborted' | 'error'; silent?: true }
   /** Unrecoverable runtime error. `recoverable: true` indicates the
    *  user can fix and retry (e.g. config error); `false` indicates
    *  a provider/network failure to surface as-is. */
