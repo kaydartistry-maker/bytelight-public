@@ -109,6 +109,10 @@ Do these after every UI-touching batch.
 ### Old windows (Memory → Blocks)
 - [ ] The **Old windows** card shows under the Archivist settings. With nothing imported it says *No imported chats are indexed yet.*
 - [ ] With an empty index, chatting works as before: no errors, no old-window cards.
+- [ ] **Bring in old chats** → choose a Claude export → a preview shows chats, messages and drafts left out, with month chips. Nothing is written yet.
+- [ ] Pick one month → **Bring in** → a progress bar; leaving the screen and coming back shows it still going. Done says how many messages came in.
+- [ ] Bring the same export in again → *Everything in that export was already here.*
+- [ ] A ChatGPT export → named as ChatGPT and refused, nothing written.
 - [ ] Once chats are imported: mention a moment from them → one card marked *old window* on the reply. Mention something unrelated → none. Turn the switch off → none.
 
 ### Codex MCP ownership and lifecycle

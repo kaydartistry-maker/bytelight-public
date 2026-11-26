@@ -35,6 +35,7 @@ import { runMemoryDiet } from '../services/memory-diet.js';
 import { registry } from '../services/registry.js';
 import { OLD_WINDOWS_KEY, oldWindowsEnabled, historyIndexStats } from '../services/history-recall.js';
 import { setConfig } from '../services/db/config.js';
+import { registerHistoryImportRoutes } from './history-import-routes.js';
 import type { AgentService } from '../services/agent.js';
 
 // Announce a block write to every connected client so open panels re-fetch.
@@ -291,6 +292,9 @@ export function createMemoryRoutes(): Router {
     setConfig(OLD_WINDOWS_KEY, enabled ? 'true' : 'false');
     res.json({ enabled: oldWindowsEnabled(), indexed: historyIndexStats() });
   });
+
+  // Bringing old chats in: upload or name an export, preview it, import it.
+  registerHistoryImportRoutes(router);
 
   // Archivist health for the banner on the Memory Blocks screen (Aerie's
   // routes/memory-blocks.ts). The phone already called this; it 404'd before.

@@ -1,9 +1,10 @@
 // The old-windows switch: whether pieces of imported chats may surface in
 // your companions' turns (backend services/history-recall.ts). Shown on the
 // Memory Blocks screen beside the Archivist settings.
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { apiFetch } from '../bytelight';
 import { cn } from '../lib/utils';
+import { OldWindowsImport } from './OldWindowsImport';
 
 interface Colors { accent: string; panelBg: string; panelBorder: string; textMuted: string }
 interface State { enabled: boolean; indexed: { pieces: number; builtAt: string | null } | null }
@@ -12,12 +13,13 @@ export function OldWindowsSwitch({ colors }: { colors: Colors }) {
   const [state, setState] = useState<State | null>(null);
   const [busy, setBusy] = useState(false);
 
-  useEffect(() => {
+  const load = useCallback(() => {
     apiFetch('/api/memory/old-windows')
       .then((r) => (r.ok ? r.json() : null))
       .then((d) => { if (d && typeof d.enabled === 'boolean') setState(d); })
       .catch(() => { /* the switch just stays hidden */ });
   }, []);
+  useEffect(load, [load]);
 
   if (!state) return null;
 
@@ -38,7 +40,8 @@ export function OldWindowsSwitch({ colors }: { colors: Colors }) {
 
   const count = state.indexed?.pieces ?? 0;
   return (
-    <div className={cn('mb-4 rounded-xl border px-3 py-2.5 flex items-center gap-3', colors.panelBorder, colors.panelBg)}>
+    <div className={cn('mb-4 rounded-xl border px-3 py-2.5', colors.panelBorder, colors.panelBg)}>
+    <div className="flex items-center gap-3">
       <div className="flex-1 min-w-0">
         <div className="text-xs font-medium">Old windows</div>
         <div className={cn('text-[10px] mt-0.5', colors.textMuted)}>
@@ -63,6 +66,8 @@ export function OldWindowsSwitch({ colors }: { colors: Colors }) {
           style={{ transform: state.enabled ? 'translateX(20px)' : 'translateX(0)' }}
         />
       </button>
+    </div>
+    <OldWindowsImport colors={colors} onImported={load} />
     </div>
   );
 }
