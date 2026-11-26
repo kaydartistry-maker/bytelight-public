@@ -25,8 +25,28 @@ export async function prepareVisionImage(
   filename: string,
   maxBytes = MODEL_IMAGE_MAX_BYTES,
 ): Promise<PreparedVisionImage> {
+  let original: Buffer;
   try {
-    const original = await readFile(filePath);
+    original = await readFile(filePath);
+  } catch (error) {
+    return {
+      resized: false,
+      warning: `[Vision warning: ${filename} could not be prepared for the model (${errMessage(error)}). The original upload is still preserved in chat, but the model cannot see this image.]`,
+    };
+  }
+  return prepareVisionImageBuffer(original, filename, maxBytes);
+}
+
+/**
+ * The same preparation as prepareVisionImage, for bytes already in hand (a
+ * picture fetched from Discord rather than read off disk).
+ */
+export async function prepareVisionImageBuffer(
+  original: Buffer,
+  filename: string,
+  maxBytes = MODEL_IMAGE_MAX_BYTES,
+): Promise<PreparedVisionImage> {
+  try {
     const metadata = await sharp(original, { limitInputPixels: MAX_INPUT_PIXELS, pages: 1 }).metadata();
     const mimeType = formatToMimeType(metadata.format);
     if (!mimeType) throw new Error(`unsupported image format: ${metadata.format || 'unknown'}`);

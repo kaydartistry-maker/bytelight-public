@@ -1,6 +1,7 @@
 // Copyright 2026 Aerie Systems. Licensed under the Apache License 2.0. Porting code from here? Keep this line, and credit Aerie in your NOTICE file for this and anything ported before.
 // DiscordService — Gateway listener that routes Discord messages through AgentService
 
+import { discordPhotoImages } from './photo-sight.js';
 import {
   Client,
   GatewayIntentBits,
@@ -679,10 +680,21 @@ export class DiscordService {
 
     this.stats.messagesProcessed++;
 
+    // Photos in the batch, opened into pictures (stickers and emoji already
+    // travel in combinedContent and become pictures at the front door).
+    const photoAttachments = batch.messages.flatMap((m) => [...m.attachments.values()]);
+    const photos = photoAttachments.length > 0
+      ? await discordPhotoImages(photoAttachments)
+      : { images: [], notes: [] };
+    const photoNote = photos.images.length > 0
+      ? `[${photos.images.length} photo${photos.images.length === 1 ? '' : 's'} from Discord sent to you as pictures with this message.]`
+      : '';
+    const turnContent = [batch.combinedContent, photoNote, ...photos.notes].filter(Boolean).join('\n');
+
     // Process through AgentService
     const response = await this.agentService.processMessage(
       threadId,
-      batch.combinedContent,
+      turnContent,
       { name: threadName, type: 'named' },
       {
         platform: 'discord',
@@ -694,6 +706,7 @@ export class DiscordService {
         // from the owner's. A batch is one speaker (keyed by channel and
         // author), so one audience covers the whole turn (turn-audience.ts).
         audience: discordTurnAudience(isOwner, getUserRule(userId)?.trustLevel),
+        ...(photos.images.length > 0 ? { images: photos.images } : {}),
       },
     );
 
