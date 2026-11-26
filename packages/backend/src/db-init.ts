@@ -1,4 +1,4 @@
-import 'dotenv/config';
+import './load-env.js';
 import { dirname } from 'path';
 import { existsSync, mkdirSync } from 'fs';
 import { loadConfig } from './config.js';

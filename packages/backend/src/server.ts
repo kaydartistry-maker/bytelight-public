@@ -1,4 +1,4 @@
-import 'dotenv/config';
+import './load-env.js';
 import cookieParser from 'cookie-parser';
 import cors from 'cors';
 import { residents } from './services/residents.js';
