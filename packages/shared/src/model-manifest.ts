@@ -332,6 +332,9 @@ export const MODELS: readonly ModelEntry[] = [
   codexCliEntry('gpt-5.6-luna', 'GPT-5.6 Luna (Codex CLI)', ['interactive', 'autonomous']),
   // Subscription-backed additions. Deliberately CLI-only: ChatGPT account
   // access must never be mistaken for an OpenAI API/BYOK entitlement.
+  // GPT-6.2 needs Codex CLI >= 0.172.0; older clients are not told it exists.
+  codexCliEntry('gpt-6.2-astra', 'GPT-6.2 Astra (Codex CLI)', ['interactive', 'autonomous']),
+  codexCliEntry('gpt-6.2-sol', 'GPT-6.2 Sol (Codex CLI)', ['interactive', 'autonomous']),
   codexCliEntry('gpt-6.1-terra', 'GPT-6.1 Terra (Codex CLI)', ['interactive', 'autonomous']),
   codexCliEntry('gpt-6.1-sol', 'GPT-6.1 Sol (Codex CLI)', ['interactive', 'autonomous']),
   codexCliEntry('gpt-6-astra', 'GPT-6 Astra (Codex CLI)', ['interactive', 'autonomous']),

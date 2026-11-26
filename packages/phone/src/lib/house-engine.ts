@@ -120,6 +120,8 @@ export const LEGACY_CLAUDE_OPTIONS: ModelOption[] = [
 // Codex CLI shelf used only when discovery for that lane comes back empty or
 // fails, so the lane stays pickable through a brief outage.
 export const CODEX_CLI_FALLBACK: ModelOption[] = [
+  { id: 'gpt-6.2-astra', name: 'GPT-6.2 Astra' },
+  { id: 'gpt-6.2-sol', name: 'GPT-6.2 Sol' },
   { id: 'gpt-6.1-terra', name: 'GPT-6.1 Terra' },
   { id: 'gpt-6.1-sol', name: 'GPT-6.1 Sol' },
   { id: 'gpt-6-astra', name: 'GPT-6 Astra' },

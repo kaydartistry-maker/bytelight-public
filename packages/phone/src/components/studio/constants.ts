@@ -2,7 +2,10 @@
 import type { AspectRatioValue, ThemeMode } from './types';
 
 export const CODEX_MODELS = [
-  { id: 'gpt-6.1-sol', name: 'GPT-6.1 Sol', desc: 'Latest Workhorse' },
+  // GPT-6.2 needs Codex CLI >= 0.172.0.
+  { id: 'gpt-6.2-astra', name: 'GPT-6.2 Astra', desc: 'Latest, Most Capable' },
+  { id: 'gpt-6.2-sol', name: 'GPT-6.2 Sol', desc: 'Latest Workhorse' },
+  { id: 'gpt-6.1-sol', name: 'GPT-6.1 Sol', desc: 'Workhorse' },
   // Needs Codex CLI >= 0.153.0; older clients are not even told it exists.
   { id: 'gpt-6-astra', name: 'GPT-6 Astra', desc: 'Most Capable' },
   { id: 'gpt-6-sol', name: 'GPT-6 Sol', desc: 'Workhorse' },
