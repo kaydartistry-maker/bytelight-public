@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { parseAttachmentMarkers, pickStoredFile, uploadName } from './attach-markers.js';
 
-const ID = 'cb1b6b99-3c55-4313-a5f4-5a64957e9f27';
+const ID = '7d2e9f10-5a4b-4c3d-8e2f-6b7a8c9d0e1f';
 
 test('the stored picture is picked, not the name tag that sits beside it', () => {
   // The order readdir handed over on Oct 20 2026: the sidecar first.

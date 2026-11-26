@@ -226,7 +226,7 @@ test('a squash stays on the shelf after Claude Code deletes the transcript it ca
   const house = freshHouse();
   const door = await phone();
   try {
-    const body = cliSummary('Carving the lid for the owner Rock Cut stone.');
+    const body = cliSummary('Sorting the bookshelf by colour before tea.');
     const path = house.write(house.laneProject('primary'), 'aaa.jsonl', [squash('2026-10-19T15:00:00.000Z', body)]);
 
     const before = await door.get('/api/compactions');
@@ -237,7 +237,7 @@ test('a squash stays on the shelf after Claude Code deletes the transcript it ca
     const after = await door.get('/api/compactions');
     assert.equal(after.status, 200);
     assert.deepEqual(after.json.compactions.map((r: any) => r.id), [id], 'still listed with its transcript gone');
-    assert.equal(after.json.compactions[0].preview, 'Carving the lid for the owner Rock Cut stone.');
+    assert.equal(after.json.compactions[0].preview, 'Sorting the bookshelf by colour before tea.');
     const opened = await door.get(`/api/compactions/${id}`);
     assert.equal(opened.json.compaction.summary, body, 'and still readable in full');
   } finally {

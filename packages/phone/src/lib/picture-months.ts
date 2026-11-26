@@ -1,6 +1,6 @@
 // Copyright 2026 Aerie Systems. Licensed under the Apache License 2.0.
 // House pictures grouped by the month they were made, on the phone's own
-// calendar, newest month first. Ported from Reverie (Tris's fork of Aerie). A picture whose date cannot be read is left
+// calendar, newest month first. Ported from Tris's Aerie work. A picture whose date cannot be read is left
 // out of the months (it is still under All) rather than filed somewhere made up.
 
 export interface PictureMonth {

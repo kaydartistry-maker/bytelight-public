@@ -1,5 +1,5 @@
 /**
- * Codex authored perspective thought cards (Reverie Integration Phase B,
+ * Codex authored perspective thought cards (thought-card integration Phase B,
  * Slice 4).
  *
  * A codex-cli turn is asked to author ONE first-person reflection per
@@ -10,10 +10,10 @@
  * "reflection" card; the marker is stripped before display.
  *
  * PORT SOURCE / ATTRIBUTION: the pattern (marker + system-prompt contract +
- * extract/spoken/merge helpers) is ported whole from Tris's Reverie fork
+ * extract/spoken/merge helpers) is ported whole from Tris's Aerie work
  * (`packages/backend/src/services/runtimes/codex-thought-card.ts`). Ported
  * per the code-surgeon port protocol: copied whole, then identity-quarantined
- * for byte-light — Reverie's `[AERIE_THOUGHT]` marker became the
+ * for byte-light — Aerie's `[AERIE_THOUGHT]` marker became the
  * byte-light-native `[BYTELIGHT_THOUGHT]`, "Aerie" became the house,
  * "Tris" became the operator, and the companion perspective is Companion A / Companion B / Companion C.
  * The routing logic and the leading-perspective / shared-"we" semantics are

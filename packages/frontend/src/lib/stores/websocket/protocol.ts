@@ -74,7 +74,7 @@ export type ToolEvent = {
   elapsed?: number;
 };
 
-// Thinking events per streaming message. `kind` is the Reverie
+// Thinking events per streaming message. `kind` is the Aerie
 // thought-semantics classification (Slice 3) — absent on legacy events.
 export type ThinkingEvent = { content: string; summary: string; textOffset: number; kind?: ThoughtKind };
 

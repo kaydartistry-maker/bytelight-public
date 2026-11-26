@@ -175,7 +175,7 @@ export class VoiceService {
   }
 
   /**
-   * Live ElevenLabs credit usage for the meter. Copied whole from Reverie
+   * Live ElevenLabs credit usage for the meter. Copied whole from Aerie
    * d070b26f; only the existing byte-light DB-first key getter differs.
    */
   async getElevenLabsUsage(): Promise<ElevenLabsUsage> {

@@ -139,7 +139,7 @@ export interface Canvas {
 }
 
 /**
- * Semantic kind of a thought (thinking) segment — Reverie thought-semantics
+ * Semantic kind of a thought (thinking) segment — Aerie thought-semantics
  * contract (integration plan Phase B, Slice 3):
  * - `authored`  — companion-written reflection (the companion deliberately
  *                 wrote it, e.g. the warm-CLI lane's `thinking` reply field).

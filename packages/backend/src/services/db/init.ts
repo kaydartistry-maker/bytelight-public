@@ -149,7 +149,7 @@ export function initDb(dbPath: string): Database.Database {
     }
   }
 
-  // PORT ADAPTATION (Reverie usage meters): Reverie reads Codex transcripts
+  // PORT ADAPTATION (Aerie usage meters): Aerie reads Codex transcripts
   // on demand. byte-light already receives the same signal live, so persist
   // the latest standing per lane/window in a bounded, idempotent table.
   runMigration(db, 'migrations/016_subscription_usage_windows.sql');

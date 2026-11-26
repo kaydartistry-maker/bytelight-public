@@ -41,7 +41,7 @@ test('the house from before the owner restart still reads, without the strays fr
   const read = rowsFrom({
     compactions: [
       { sessionId: 'aaa', project: '-home-x-bytelight-data-heartbeat-primary', at: '2026-10-20T10:00:00.000Z', chars: 22000, summary: 'This session is being continued', truncated: true },
-      { sessionId: 'bbb', project: '-home-x-bytelight-data-heartbeat-095dabe5-b95d-4f39-b788-67b5fecae60d', at: '2026-10-20T09:00:00.000Z', chars: 7000, summary: 'short', truncated: false },
+      { sessionId: 'bbb', project: '-home-x-bytelight-data-heartbeat-4f1c2a7e-0d3b-4e9a-9b6c-1a2b3c4d5e6f', at: '2026-10-20T09:00:00.000Z', chars: 7000, summary: 'short', truncated: false },
       { sessionId: 'ccc', project: '-tmp', at: '2026-10-09T06:27:54.996Z', chars: 1929, summary: 'the Archivist', truncated: false },
     ],
   });
@@ -49,7 +49,7 @@ test('the house from before the owner restart still reads, without the strays fr
   assert.equal(read.hasMore, false, 'an older house never says there is more, so the page asks once');
   assert.deepEqual(read.rows.map((r) => [r.key, r.id, r.whose, r.preview, r.previewFrom, r.cut]), [
     ['aaa|2026-10-20T10:00:00.000Z', null, 'Shared room', 'This session is being continued', null, true],
-    ['bbb|2026-10-20T09:00:00.000Z', null, 'Lane 095dabe5', 'short', null, false],
+    ['bbb|2026-10-20T09:00:00.000Z', null, 'Lane 4f1c2a7e', 'short', null, false],
   ]);
 });
 
@@ -113,6 +113,6 @@ test('the preview says where it came from, in their words', () => {
 
 test('a lane folder reads as a room', () => {
   assert.equal(laneName('-home-x-bytelight-data-heartbeat-primary'), 'Shared room');
-  assert.equal(laneName('-home-x-bytelight-data-heartbeat-095dabe5-b95d-4f39-b788-67b5fecae60d'), 'Lane 095dabe5');
+  assert.equal(laneName('-home-x-bytelight-data-heartbeat-4f1c2a7e-0d3b-4e9a-9b6c-1a2b3c4d5e6f'), 'Lane 4f1c2a7e');
   assert.equal(laneName('-home-x-bytelight-data-heartbeat-fleet-room'), 'Lane fleet room');
 });

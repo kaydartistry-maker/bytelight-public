@@ -3,7 +3,7 @@ import test from 'node:test';
 import { findNeighbors, findNeighborsWithin, type NeighborDeps } from './memory-neighbors.js';
 
 function fakeEmbed(text: string): Promise<Float32Array> {
-  const angle = /ratio/i.test(text) ? 0 : /spoon/i.test(text) ? Math.PI / 2 : Math.PI;
+  const angle = /ratio/i.test(text) ? 0 : /lantern/i.test(text) ? Math.PI / 2 : Math.PI;
   return Promise.resolve(Float32Array.from([Math.cos(angle), Math.sin(angle)]));
 }
 
@@ -13,7 +13,7 @@ function deps(blocks: { scope: string; label: string; content: string }[]): Neig
 
 const LINE_A = 'the studio ratio list is closed and an unknown one goes square';
 const LINE_B = 'a request for a ratio is a hint rather than a contract, read the pixels';
-const LINE_C = 'the spoon docket is open in perpetuity and cannot be promoted';
+const LINE_C = 'the lantern list stays open all winter and is never archived';
 
 test('a shared wall returns the line it already holds', async () => {
   const report = await findNeighbors(
@@ -43,7 +43,7 @@ test("another companion's private wall crosses as a count and never as text", as
 test('a thought with no nearby line returns empty rather than nearest-anyway', async () => {
   const report = await findNeighbors(
     'companion-a',
-    'the spoon stays exactly where it is',
+    'the lantern stays exactly where it is',
     deps([{ scope: 'shared', label: 'neighbor-status-2', content: `${LINE_A}\n${LINE_B}` }]),
   );
   assert.equal(report.near.length, 0);
@@ -89,7 +89,7 @@ test('overlapping searches on a cold wall share one embed per line instead of ea
     return fakeEmbed(text);
   };
   const blocks = [{ scope: 'shared', label: 'neighbor-overlap', content: `${LINE_A}\n${LINE_B}` }];
-  const probe = 'the spoon stays exactly where it is';
+  const probe = 'the lantern stays exactly where it is';
   const first = findNeighbors('companion-a', probe, { getBlocks: () => blocks, embed: gated });
   const second = findNeighbors('companion-a', probe, { getBlocks: () => blocks, embed: gated });
   await new Promise((resolve) => setTimeout(resolve, 10));

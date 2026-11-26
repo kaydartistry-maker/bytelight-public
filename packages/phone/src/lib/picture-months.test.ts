@@ -1,5 +1,5 @@
 // Copyright 2026 Aerie Systems. Licensed under the Apache License 2.0.
-// Ported from Reverie (Tris's fork of Aerie). On Eastern time an evening is
+// Ported from Tris's Aerie work. On Eastern time an evening is
 // already the next day by the world clock, and sometimes the next month.
 process.env.TZ = 'America/New_York';
 

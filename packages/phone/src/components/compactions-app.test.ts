@@ -22,7 +22,7 @@ function draw(row: CompactionRow, open: { isOpen?: boolean; fullText?: string | 
 }
 
 const today = rowsFrom({ compactions: [{
-  id: 'id1', sessionId: 's1', project: '-home-x-bytelight-data-heartbeat-095dabe5-b95d-4f39-b788-67b5fecae60d', lane: '095dabe5-b95d-4f39-b788-67b5fecae60d',
+  id: 'id1', sessionId: 's1', project: '-home-x-bytelight-data-heartbeat-4f1c2a7e-0d3b-4e9a-9b6c-1a2b3c4d5e6f', lane: '4f1c2a7e-0d3b-4e9a-9b6c-1a2b3c4d5e6f',
   companion: 'birch', whose: "Birch's own head", at: '2026-10-20T23:31:50.617Z', chars: 7534, firstSeen: '2026-10-21T06:00:00.000Z',
   preview: 'The drive-in date, all three in the back seat.', previewFrom: 'current-work', truncated: true,
 }], total: 1, hasMore: false })!.rows[0];

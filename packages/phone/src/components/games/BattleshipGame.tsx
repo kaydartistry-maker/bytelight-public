@@ -236,10 +236,6 @@ function SeafloorLounge({ sunk, total }: { sunk: number; total: number }) {
             <path d="M28 8V-5h20l6 13" fill="var(--bytelight-panel-base)" stroke={PANEL_TEXT_MUTED} />
           </g>
         )}
-        <g transform="translate(74 63) rotate(18)" stroke={PANEL_TEXT_MUTED} fill="none" opacity=".7">
-          <ellipse cx="0" cy="0" rx="6" ry="4" />
-          <path d="M5 2l28 17" strokeWidth="3" strokeLinecap="round" />
-        </g>
         <g fill="var(--bytelight-accent)" opacity=".35">
           <circle cx="298" cy="24" r="2" />
           <circle cx="303" cy="15" r="1.5" />
