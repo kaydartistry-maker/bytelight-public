@@ -100,6 +100,7 @@ import {
   addReaction,
   removeReaction,
   toPhoneMessage,
+  fetchWholeThread,
   stopGeneration,
   syncEmojis,
   listEmojiPacks,
@@ -1380,7 +1381,23 @@ export default function App() {
   };
 
   const exportChat = async (_type: 'main' | 'private' = 'main') => {
-    const sourceMessages = messages;
+    // The screen only holds the pages scrolled into view; export the whole
+    // thread from the house instead. If that fails, say so rather than save
+    // a fragment that looks like the full conversation.
+    let sourceMessages = messages;
+    if (ksActiveThreadId) {
+      try {
+        const whole = await fetchWholeThread(ksActiveThreadId);
+        sourceMessages = whole
+          .filter((m) => !m.deleted_at && !(m.role === 'companion' && m.content === '[No response]'))
+          .map(toPhoneMessage);
+      } catch (e) {
+        console.error('Failed to fetch the thread for export:', e);
+        setError('Could not fetch the whole conversation to export. Please try again.');
+        setTimeout(() => setError(null), 5000);
+        return;
+      }
+    }
     const formattedText = sourceMessages.map(msg => {
       const date = new Date(msg.timestamp).toLocaleString();
       const sender = msg.direction === 'inbound' ? 'You' : (msg.sender || Object.values(contacts).map(c => c.name).join(' & '));
