@@ -217,9 +217,9 @@ export function OldWindowsImport({ colors, onImported }: { colors: Colors; onImp
       {!preview && (
         <>
           <div className={cn('text-[10px] mt-1 leading-relaxed', colors.textMuted)}>
-            Claude or ChatGPT: the data export zip as it was emailed to you, or the conversations.json inside it. Gemini: a Google Takeout with only My Activity → Gemini Apps ticked, in JSON. Letta: the agent file (.af). Nothing is written until you have seen what is inside.
+            Claude, ChatGPT or Grok: the data export zip as it was emailed to you, unopened, or the conversations file inside it (Grok's is prod-grok-backend.json). Gemini: a Google Takeout with only My Activity → Gemini Apps ticked, in JSON. Copilot: the activity export from Microsoft's privacy dashboard (a CSV). Letta: the agent file (.af). Nothing is written until you have seen what is inside.
           </div>
-          {/* No accept filter: a phone picker hides files whose type it does not know (a Letta .af). The house checks the file instead. */}
+          {/* No accept filter: a phone picker hides files whose type it does not know (a Letta .af, a CSV). The house checks the file instead. */}
           <input ref={fileInput} type="file" className="hidden" onChange={(e) => void onFile(e.target.files?.[0])} />
           <button
             onClick={() => fileInput.current?.click()}

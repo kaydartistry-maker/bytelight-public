@@ -38,11 +38,13 @@ export interface ImportPreview {
   sample: PreviewChat[];
 }
 
+const PICK_ONE = 'Pick the export zip, the conversations file inside it, a Copilot activity CSV, or a Letta agent file (.af).';
+
 const monthOf = (iso: string | null) => (iso && /^\d{4}-\d{2}/.test(iso) ? iso.slice(0, 7) : 'undated');
 
 function assertFile(path: string): void {
   if (!path || !existsSync(path) || !statSync(path).isFile()) throw new Error('That file is not there.');
-  if (!/\.(zip|json|af)$/i.test(path)) throw new Error('Pick the export zip, its conversations.json, or a Letta agent file (.af).');
+  if (!/\.(zip|json|af|csv)$/i.test(path)) throw new Error(PICK_ONE);
 }
 
 /** Read an export and describe it. Writes nothing. */
@@ -164,7 +166,7 @@ async function runImport(path: string, opts: { month?: string }, deps: ImportDep
       if (!source) {
         source = detectSource(raw);
         status.sourceLabel = SOURCE_LABEL[source];
-        if (!READABLE.has(source)) throw new Error(`This looks like an export from ${SOURCE_LABEL[source]}, which this house cannot read yet.`);
+        if (!READABLE.has(source)) throw new Error(source === 'unknown' ? 'This house cannot read this kind of export yet.' : `This looks like an export from ${SOURCE_LABEL[source]}, which this house cannot read yet.`);
         reader = chatReader(source);
       }
       reader!.take(raw).forEach(keep);

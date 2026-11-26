@@ -7,8 +7,9 @@
 //
 // One reader per app. Each turns that app's conversation into the messages
 // the person actually kept, in order: Claude, ChatGPT, Gemini (Google
-// Takeout activity) and Letta agent files today. An export from anywhere else
-// is named and refused, never guessed at.
+// Takeout activity), Grok, Copilot (Microsoft's activity CSV) and Letta agent
+// files today. An export from anywhere else is named and refused, never
+// guessed at.
 
 import { createReadStream } from 'node:fs';
 import { createHash } from 'node:crypto';
@@ -81,11 +82,15 @@ export class JsonArraySplitter {
 /**
  * The files in an export zip that hold conversations: conversations.json, or
  * the numbered parts a large export is split into (conversations-000.json, …),
- * or, in a Google Takeout, the Gemini Apps activity (MyActivity.json).
+ * in a Google Takeout the Gemini Apps activity (MyActivity.json), in xAI's
+ * export prod-grok-backend.json, and in Microsoft's the Copilot activity CSV.
  */
-const EXPORT_ENTRY = /(^|\/)conversations(-\d+)?\.json$|(^|\/)Gemini Apps\/MyActivity\.json$/i;
-/** A file read whole rather than streamed (a Letta agent file is one JSON object). */
+const EXPORT_ENTRY = /(^|\/)conversations(-\d+)?\.json$|(^|\/)Gemini Apps\/MyActivity\.json$|(^|\/)prod-grok-backend\.json$|(^|\/)[^/]*activity[^/]*\.csv$/i;
+/** Entries that are one JSON object, or a CSV, and so are read whole rather than streamed. */
+const WHOLE_ENTRY = /(^|\/)prod-grok-backend\.json$|\.csv$/i;
+/** A file read whole rather than streamed (a Letta agent file, Grok's export, a Copilot CSV). */
 const MAX_WHOLE_BYTES = 300 * 1024 * 1024;
+const TOO_LARGE = 'That file is too large to read in one piece.';
 
 const TRUNCATED = 'That export ends partway through. It may not have finished downloading.';
 
@@ -104,11 +109,72 @@ function arrayReader(onElement: (raw: unknown) => void) {
 
 const firstChar = (b: Buffer) => b.toString('utf-8', 0, Math.min(b.length, 64)).replace(/^\uFEFF/, '').trimStart()[0];
 
-/** A file that is one object: a Letta agent file holds its agents in `agents`. */
+const NOT_AN_EXPORT = 'That file is not a chat export this house can read.';
+
+/**
+ * A file that is one object: a Letta agent file holds its agents in `agents`;
+ * Grok's export holds its chats in `conversations`.
+ */
 function emitObject(obj: unknown, onElement: (raw: unknown) => void): void {
-  const agents = (obj as { agents?: unknown })?.agents;
-  if (!Array.isArray(agents)) throw new Error('That file is not a chat export this house can read.');
-  for (const a of agents) onElement({ ...(a as object), __letta: true });
+  const o = (obj ?? {}) as { agents?: unknown; conversations?: unknown };
+  if (Array.isArray(o.agents)) { for (const a of o.agents) onElement({ ...(a as object), __letta: true }); return; }
+  if (Array.isArray(o.conversations)) { for (const c of o.conversations) onElement(c); return; }
+  throw new Error(NOT_AN_EXPORT);
+}
+
+/** Split CSV text into rows of fields (quoted fields may hold commas, quotes and line breaks). */
+export function parseCsv(text: string): string[][] {
+  const rows: string[][] = [];
+  let row: string[] = [];
+  let field = '';
+  let quoted = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (quoted) {
+      if (ch === '"') {
+        if (text[i + 1] === '"') { field += '"'; i++; } else quoted = false;
+      } else field += ch;
+    } else if (ch === '"') quoted = true;
+    else if (ch === ',') { row.push(field); field = ''; }
+    else if (ch === '\n' || ch === '\r') {
+      if (ch === '\r' && text[i + 1] === '\n') i++;
+      row.push(field); field = '';
+      if (row.length > 1 || row[0] !== '') rows.push(row);
+      row = [];
+    } else field += ch;
+  }
+  if (field !== '' || row.length) { row.push(field); rows.push(row); }
+  return rows;
+}
+
+/**
+ * A Copilot activity CSV (Conversation, Time, Author, Message): each row is
+ * handed on as one element, numbered in the order the file lists them.
+ */
+function emitCsv(text: string, onElement: (raw: unknown) => void): void {
+  const rows = parseCsv(text.replace(/^\uFEFF/, ''));
+  const head = (rows.shift() ?? []).map((h) => h.trim().toLowerCase());
+  const [ci, ti, ai, mi] = ['conversation', 'time', 'author', 'message'].map((n) => head.indexOf(n));
+  if ([ci, ti, ai, mi].some((i) => i < 0)) throw new Error(NOT_AN_EXPORT);
+  rows.forEach((r, order) => onElement({ __copilot: true, order, conversation: r[ci] ?? '', time: r[ti] ?? '', author: r[ai] ?? '', message: r[mi] ?? '' }));
+}
+
+/** One file gathered whole, then read as an object or a CSV. */
+function wholeReader(csv: boolean, onElement: (raw: unknown) => void) {
+  const parts: Buffer[] = [];
+  let bytes = 0;
+  return {
+    feed(chunk: Uint8Array, final: boolean) {
+      bytes += chunk.length;
+      if (bytes > MAX_WHOLE_BYTES) throw new Error(TOO_LARGE);
+      parts.push(Buffer.from(chunk));
+      if (!final) return;
+      const text = Buffer.concat(parts).toString('utf-8');
+      parts.length = 0;
+      if (csv) emitCsv(text, onElement);
+      else emitObject(JSON.parse(text.replace(/^\uFEFF/, '')), onElement);
+    },
+  };
 }
 
 /**
@@ -120,9 +186,7 @@ function emitObject(obj: unknown, onElement: (raw: unknown) => void): void {
 export async function readExportElements(path: string, onElement: (raw: unknown) => void): Promise<void> {
   const stream = createReadStream(path, { highWaterMark: 1 << 20 });
   let zip: Unzip | null = null;
-  let plain: ReturnType<typeof arrayReader> | null = null;
-  let whole: Buffer[] | null = null;
-  let wholeBytes = 0;
+  let plain: { feed(bytes: Uint8Array, final: boolean): void } | null = null;
   let found = 0;
   let finished = 0;
   let failure: Error | null = null;
@@ -134,7 +198,7 @@ export async function readExportElements(path: string, onElement: (raw: unknown)
         zip = new Unzip((file) => {
           if (failure || !EXPORT_ENTRY.test(file.name)) return;
           found++;
-          const reader = arrayReader(onElement);
+          const reader = WHOLE_ENTRY.test(file.name) ? wholeReader(/\.csv$/i.test(file.name), onElement) : arrayReader(onElement);
           file.ondata = (err, data, final) => {
             if (failure) return;
             if (err) { failure = err; return; }
@@ -146,26 +210,21 @@ export async function readExportElements(path: string, onElement: (raw: unknown)
           file.start();
         });
         zip.register(UnzipInflate);
-      } else if (firstChar(chunk) === '{') {
-        whole = [];
       } else {
-        plain = arrayReader(onElement);
+        // An array streams; an object (a Letta agent file, Grok's export) or a CSV is read whole.
+        const c = firstChar(chunk);
+        plain = c === '[' ? arrayReader(onElement) : wholeReader(c !== '{', onElement);
       }
     }
     try {
       if (zip) zip.push(chunk);
-      else if (whole) {
-        wholeBytes += chunk.length;
-        if (wholeBytes > MAX_WHOLE_BYTES) throw new Error('That file is too large to read in one piece.');
-        whole.push(chunk);
-      } else plain!.feed(chunk, false);
+      else plain!.feed(chunk, false);
     } catch (e) { failure = failure ?? (e as Error); }
     if (failure) break;
   }
   if (!failure) {
     try {
       if (zip) zip.push(new Uint8Array(0), true);
-      else if (whole) emitObject(JSON.parse(Buffer.concat(whole).toString('utf-8')), onElement);
       else if (plain) plain.feed(new Uint8Array(0), true);
       else throw new Error('That file is empty.');
     } catch (e) { failure = failure ?? (e as Error); }
@@ -175,13 +234,13 @@ export async function readExportElements(path: string, onElement: (raw: unknown)
     const f = failure as Error;
     throw f instanceof SyntaxError ? new Error(`That export could not be read: ${f.message}`) : f;
   }
-  if (zip && !found) throw new Error('There is no conversations.json in that zip. Pick the export zip as it was emailed, or the conversations.json inside it.');
+  if (zip && !found) throw new Error('There are no chats in that zip that this house knows how to find. Pick the export zip as it was emailed, or the conversations file inside it.');
   if (zip && finished < found) throw new Error(TRUNCATED);
 }
 
 // ── Which app made it ────────────────────────────────────────────────────────
 
-export type ExportSource = 'claude' | 'chatgpt' | 'gemini' | 'letta' | 'unknown';
+export type ExportSource = 'claude' | 'chatgpt' | 'gemini' | 'grok' | 'copilot' | 'letta' | 'unknown';
 
 export function detectSource(raw: unknown): ExportSource {
   if (!raw || typeof raw !== 'object') return 'unknown';
@@ -189,16 +248,18 @@ export function detectSource(raw: unknown): ExportSource {
   if (Array.isArray(r.chat_messages)) return 'claude';
   if (r.mapping && typeof r.mapping === 'object') return 'chatgpt';
   if (r.__letta === true && Array.isArray(r.messages)) return 'letta';
+  if (r.__copilot === true) return 'copilot';
+  if (Array.isArray(r.responses) && r.conversation && typeof r.conversation === 'object') return 'grok';
   if (isGeminiActivity(r)) return 'gemini';
   return 'unknown';
 }
 
 export const SOURCE_LABEL: Record<ExportSource, string> = {
-  claude: 'Claude', chatgpt: 'ChatGPT', gemini: 'Gemini', letta: 'Letta', unknown: 'an app this house cannot read yet',
+  claude: 'Claude', chatgpt: 'ChatGPT', gemini: 'Gemini', grok: 'Grok', copilot: 'Copilot', letta: 'Letta', unknown: 'an app this house cannot read yet',
 };
 
 /** Sources this house can read today. */
-export const READABLE: ReadonlySet<ExportSource> = new Set(['claude', 'chatgpt', 'gemini', 'letta']);
+export const READABLE: ReadonlySet<ExportSource> = new Set(['claude', 'chatgpt', 'gemini', 'grok', 'copilot', 'letta']);
 
 // ── One conversation, as kept ───────────────────────────────────────────────
 
@@ -448,6 +509,88 @@ function geminiChats(groups: Map<string, GeminiRow[]>): ReadChat[] {
   return out;
 }
 
+// ── Grok ─────────────────────────────────────────────────────────────────────
+//
+// xAI's export holds prod-grok-backend.json: {conversations: [{conversation:
+// {id, title, create_time}, responses: [{response: {_id, sender, message,
+// create_time}}]}]}. Times come plain or in MongoDB's extended form
+// ({$date: {$numberLong}}). The responses are kept in their own order,
+// steadied by their times when every one has a time. A Grok chat has no
+// branches, so nothing is dropped.
+
+function grokTime(v: unknown): number | null {
+  if (v && typeof v === 'object' && '$date' in (v as Record<string, unknown>)) {
+    const d = (v as { $date: unknown }).$date;
+    if (d && typeof d === 'object' && '$numberLong' in (d as Record<string, unknown>)) return Number((d as { $numberLong: unknown }).$numberLong) || null;
+    return grokTime(d);
+  }
+  if (typeof v === 'number' && Number.isFinite(v) && v > 0) return v < 1e12 ? v * 1000 : v;
+  if (typeof v === 'string' && v) { const t = Date.parse(v); return Number.isNaN(t) ? null : t; }
+  return null;
+}
+
+const idOf = (v: unknown): string | null => {
+  const s = typeof v === 'string' ? v : v && typeof v === 'object' && typeof (v as { $oid?: unknown }).$oid === 'string' ? (v as { $oid: string }).$oid : null;
+  return s && ID.test(s) ? s : null;
+};
+
+export function readGrokChat(raw: unknown): ReadChat | null {
+  const item = raw as { conversation?: Record<string, unknown>; responses?: unknown[] };
+  if (!item || !Array.isArray(item.responses)) return null;
+  const conv = item.conversation ?? {};
+  const rows = item.responses
+    .map((r, i) => {
+      const x = ((r as { response?: unknown })?.response ?? r) as Record<string, unknown>;
+      const t = grokTime(x?.create_time);
+      return { i, t, id: idOf(x?._id) ?? idOf(x?.id) ?? `r${i}`, who: String(x?.sender ?? '').toLowerCase(), text: String(x?.message ?? '').trim() };
+    })
+    .filter((m) => m.text);
+  if (!rows.length) return null;
+  if (rows.every((m) => m.t !== null)) rows.sort((a, b) => (a.t! - b.t!) || (a.i - b.i));
+  const lines: PassageIn[] = [];
+  for (const m of rows) {
+    const at = m.t !== null ? new Date(m.t).toISOString() : null;
+    lines.push({ id: m.id, prev: lines.length ? lines[lines.length - 1].id : null, pos: lines.length, role: m.who === 'human' || m.who === 'user' ? 'user' : 'assistant', at, text: m.text });
+  }
+  const started = grokTime(conv.create_time);
+  const title = typeof conv.title === 'string' && conv.title.trim() ? conv.title.trim() : 'Untitled conversation';
+  return {
+    chat: idOf(conv.id) ?? idOf(conv._id) ?? `grok-${shortHash(lines.slice(0, 3).map((l) => l.text).join('|'))}`,
+    title,
+    startedAt: started !== null ? new Date(started).toISOString() : lines[0].at,
+    lines,
+    dropped: 0,
+  };
+}
+
+// ── Copilot ──────────────────────────────────────────────────────────────────
+//
+// Microsoft's Copilot activity export is a CSV (Conversation, Time, Author,
+// Message), newest first, with the reply listed above the person's message
+// when both carry the same second. The rows are gathered back into their
+// conversations by name and read oldest first.
+
+interface CopilotRow { t: number; order: number; at: string | null; role: 'user' | 'assistant'; text: string }
+
+function copilotChats(groups: Map<string, CopilotRow[]>): ReadChat[] {
+  const out: ReadChat[] = [];
+  for (const [title, rows] of groups) {
+    rows.sort((a, b) => (a.t - b.t) || (b.order - a.order));
+    const lines: PassageIn[] = [];
+    const seen = new Map<string, number>();
+    for (const row of rows) {
+      const base = shortHash(`${row.at}|${row.role}|${row.text}`);
+      const n = seen.get(base) ?? 0;
+      seen.set(base, n + 1);
+      const id = n ? `${base}-${n}` : base;
+      lines.push({ id, prev: lines.length ? lines[lines.length - 1].id : null, pos: lines.length, role: row.role, at: row.at, text: row.text });
+    }
+    if (!lines.length) continue;
+    out.push({ chat: `copilot-${shortHash(title)}`, title, startedAt: lines[0].at, lines, dropped: 0 });
+  }
+  return out;
+}
+
 // ── Letta ────────────────────────────────────────────────────────────────────
 //
 // A Letta agent file (.af) holds whole agents, each with its message history
@@ -545,6 +688,25 @@ export interface ChatReader {
 }
 
 export function chatReader(source: ExportSource): ChatReader {
+  if (source === 'copilot') {
+    const groups = new Map<string, CopilotRow[]>();
+    return {
+      take(raw) {
+        const r = raw as { __copilot?: unknown; order?: unknown; conversation?: unknown; time?: unknown; author?: unknown; message?: unknown };
+        if (!r || r.__copilot !== true) return [];
+        const text = String(r.message ?? '').trim();
+        if (!text) return [];
+        const title = String(r.conversation ?? '').trim() || 'Untitled conversation';
+        const ms = Date.parse(String(r.time ?? ''));
+        const who = String(r.author ?? '').trim().toLowerCase();
+        const rows = groups.get(title) ?? [];
+        rows.push({ t: Number.isNaN(ms) ? 0 : ms, order: Number(r.order) || 0, at: Number.isNaN(ms) ? null : new Date(ms).toISOString(), role: who === 'ai' || who === 'copilot' || who === 'assistant' ? 'assistant' : 'user', text });
+        groups.set(title, rows);
+        return [];
+      },
+      finish: () => copilotChats(groups),
+    };
+  }
   if (source === 'gemini') {
     const groups = new Map<string, GeminiRow[]>();
     let order = 0;
@@ -565,6 +727,7 @@ export function chatReader(source: ExportSource): ChatReader {
   const one = (raw: unknown): ReadChat[] => {
     if (source === 'claude') { const c = readClaudeChat(raw); return c ? [c] : []; }
     if (source === 'chatgpt') { const c = readChatGptChat(raw); return c ? [c] : []; }
+    if (source === 'grok') { const c = readGrokChat(raw); return c ? [c] : []; }
     if (source === 'letta') return readLettaAgent(raw);
     return [];
   };

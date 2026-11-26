@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { after, beforeEach, describe, it } from 'node:test';
 import Database from 'better-sqlite3';
 import { strToU8, zipSync } from 'fflate';
-import { chatReader, claudeKeptPath, htmlToText, JsonArraySplitter, readChatGptChat, readClaudeChat, readExportElements, readLettaAgent } from './history-readers.js';
+import { chatReader, claudeKeptPath, htmlToText, JsonArraySplitter, parseCsv, readChatGptChat, readClaudeChat, readExportElements, readGrokChat, readLettaAgent } from './history-readers.js';
 import { importStatus, previewExport, resetImportStatus, startImport } from './history-import.js';
 
 const dir = mkdtempSync(join(tmpdir(), 'history-import-'));
@@ -121,7 +121,7 @@ describe('reading a Claude export', () => {
   });
 
   it('says so when the zip has no conversations, or the file stops partway', async () => {
-    await assert.rejects(readExportElements(zipOf('notes.json', '[]'), () => {}), /no conversations\.json/);
+    await assert.rejects(readExportElements(zipOf('notes.json', '[]'), () => {}), /no chats in that zip/);
     await assert.rejects(readExportElements(jsonOf(exportJson.slice(0, 200)), () => {}), /ends partway/);
   });
 });
@@ -235,6 +235,92 @@ describe('Gemini from a Takeout zip', () => {
   });
 });
 
+const grokExport = {
+  conversations: [
+    {
+      conversation: { id: 'grok-conv-1', title: 'Rocket talk', create_time: '2026-10-07T09:00:00Z' },
+      responses: [
+        // Listed out of order on purpose; the times put them right.
+        { response: { _id: 'r2', sender: 'ASSISTANT', message: 'Rockets are loud.', create_time: { $date: { $numberLong: String(Date.parse('2026-10-07T09:00:05Z')) } } } },
+        { response: { _id: 'r1', sender: 'human', message: 'Tell me about rockets', create_time: { $date: { $numberLong: String(Date.parse('2026-10-07T09:00:00Z')) } } } },
+        { response: { _id: 'r3', sender: 'assistant', message: '   ', create_time: { $date: { $numberLong: String(Date.parse('2026-10-07T09:00:09Z')) } } } },
+      ],
+    },
+    { conversation: { id: 'grok-conv-2', title: 'Second', create_time: 1793000000 }, responses: [{ response: { _id: { $oid: 'abc123' }, sender: 'human', message: 'hi' } }] },
+  ],
+  account: { email: 'never read' },
+};
+
+describe('reading a Grok export', () => {
+  it('keeps the words in time order, whoever said them, and skips the empty ones', () => {
+    const c = readGrokChat(grokExport.conversations[0])!;
+    assert.deepEqual([c.chat, c.title, c.startedAt], ['grok-conv-1', 'Rocket talk', '2026-10-07T09:00:00.000Z']);
+    assert.deepEqual(c.lines.map((l) => [l.id, l.role, l.text, l.prev]), [
+      ['r1', 'user', 'Tell me about rockets', null],
+      ['r2', 'assistant', 'Rockets are loud.', 'r1'],
+    ]);
+    const second = readGrokChat(grokExport.conversations[1])!;
+    assert.deepEqual([second.lines[0].id, second.startedAt?.slice(0, 10)], ['abc123', '2026-10-26']);
+  });
+
+  it('finds prod-grok-backend.json in the zip and imports it', async () => {
+    const path = join(dir, 'grok.zip');
+    writeFileSync(path, zipSync({ 'ttl/30d/export_data/x/prod-grok-backend.json': strToU8(JSON.stringify(grokExport)), 'ttl/30d/export_data/x/prod-mc-auth-mgmt-api.json': strToU8('{}') }));
+    const p = await previewExport(path);
+    assert.deepEqual([p.sourceLabel, p.chats, p.messages], ['Grok', 2, 3]);
+    const s = await startImport(path, {}, { embed: async () => Float32Array.from([1, 0, 0]), passagesPath: join(dir, 'grok-p.db'), indexPath: join(dir, 'grok-i.db') });
+    assert.deepEqual([s.state, s.sourceLabel, s.stored], ['done', 'Grok', 3]);
+  });
+
+  it('reads the json on its own too, and refuses an object that is neither', async () => {
+    const p = await previewExport(jsonOf(JSON.stringify(grokExport)));
+    assert.equal(p.sourceLabel, 'Grok');
+    await assert.rejects(previewExport(jsonOf('{"settings": {}}')), /not a chat export/);
+  });
+});
+
+// Newest first, as Microsoft lists it; the reply sits above the question when both share a second.
+const copilotCsv = '\uFEFFConversation,Time,Author,Message\r\n'
+  + 'Garden plans,2026-10-08T10:00:01Z,AI,"Plant ""tomatoes"", then basil,\nin that order."\r\n'
+  + 'Garden plans,2026-10-08T10:00:01Z,Human,What first?\r\n'
+  + 'Dinner,2026-10-07T18:00:00Z,Copilot,Pasta.\r\n'
+  + 'Dinner,2026-10-07T18:00:00Z,Human,What for dinner?\r\n'
+  + 'Garden plans,2026-10-08T09:59:00Z,AI,Sure.\r\n'
+  + 'Garden plans,2026-10-08T09:59:00Z,Human,Help me plan a garden\r\n';
+
+describe('reading a Copilot activity CSV', () => {
+  it('splits quoted fields with commas, quotes and line breaks in them', () => {
+    assert.deepEqual(parseCsv('a,"b, ""c""\nd",e\r\n1,2,3'), [['a', 'b, "c"\nd', 'e'], ['1', '2', '3']]);
+  });
+
+  it('gathers the rows back into conversations, oldest first, question before answer', async () => {
+    const path = join(dir, 'Copilot-Activity-History.csv');
+    writeFileSync(path, copilotCsv);
+    const p = await previewExport(path);
+    assert.deepEqual([p.sourceLabel, p.chats, p.messages], ['Copilot', 2, 6]);
+    const reader = chatReader('copilot');
+    await readExportElements(path, (raw) => { reader.take(raw); });
+    const chats = reader.finish();
+    const garden = chats.find((c) => c.title === 'Garden plans')!;
+    assert.deepEqual(garden.lines.map((l) => `${l.role}: ${l.text}`), [
+      'user: Help me plan a garden', 'assistant: Sure.', 'user: What first?', 'assistant: Plant "tomatoes", then basil,\nin that order.',
+    ]);
+    assert.equal(garden.startedAt, '2026-10-08T09:59:00.000Z');
+  });
+
+  it('imports it, and a repeat adds nothing', async () => {
+    const path = join(dir, 'copilot-activity.csv');
+    writeFileSync(path, copilotCsv);
+    const deps = { embed: async () => Float32Array.from([1, 0, 0]), passagesPath: join(dir, 'cop-p.db'), indexPath: join(dir, 'cop-i.db') };
+    assert.deepEqual([(await startImport(path, {}, deps)).stored], [6]);
+    assert.deepEqual([(await startImport(path, {}, deps)).stored], [0]);
+  });
+
+  it('refuses a CSV that is not Copilot activity', async () => {
+    await assert.rejects(previewExport(jsonOf('name,age\nSam,4').replace(/\.json$/, '.json')), /not a chat export/);
+  });
+});
+
 describe('preview and import', () => {
   const passagesPath = join(dir, 'passages.db');
   const indexPath = join(dir, 'index.db');
@@ -256,12 +342,12 @@ describe('preview and import', () => {
   });
 
   it('names an export it cannot read yet instead of guessing', async () => {
-    const other = JSON.stringify([{ conversation: { id: 'x' }, responses: [] }]);
+    const other = JSON.stringify([{ id: 'x', messages_somewhere_else: [] }]);
     const p = await previewExport(jsonOf(other));
     assert.equal(p.readable, false);
     const s = await run(jsonOf(other));
     assert.equal(s.state, 'failed');
-    assert.match(s.error ?? '', /which this house cannot read yet/);
+    assert.match(s.error ?? '', /This house cannot read this kind of export yet/);
   });
 
   it('brings in a ChatGPT export the same way', async () => {

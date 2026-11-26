@@ -20,7 +20,7 @@ import { embed } from '../services/embeddings.js';
 import { importStatus, previewExport, startImport } from '../services/history-import.js';
 
 const UPLOAD_DIR = join(PROJECT_ROOT, 'data', 'uploads', 'history-import');
-const UPLOAD_NAME = /^export-[a-f0-9]{16}\.(zip|json|af)$/;
+const UPLOAD_NAME = /^export-[a-f0-9]{16}\.(zip|json|af|csv)$/;
 const MAX_UPLOAD_BYTES = 2 * 1024 * 1024 * 1024;
 const MONTH = /^\d{4}-\d{2}$/;
 
@@ -31,12 +31,12 @@ const upload = multer({
     },
     filename: (_req, file, cb) => {
       const given = extname(file.originalname || '').toLowerCase();
-      const ext = given === '.json' || given === '.af' ? given : '.zip';
+      const ext = given === '.json' || given === '.af' || given === '.csv' ? given : '.zip';
       cb(null, `export-${randomBytes(8).toString('hex')}${ext}`);
     },
   }),
   limits: { fileSize: MAX_UPLOAD_BYTES, files: 1 },
-  fileFilter: (_req, file, cb) => cb(null, /\.(zip|json|af)$/i.test(file.originalname || '')),
+  fileFilter: (_req, file, cb) => cb(null, /\.(zip|json|af|csv)$/i.test(file.originalname || '')),
 });
 
 /** The file a request names, and whether the house made it (so may remove it). */
@@ -67,7 +67,7 @@ export function registerHistoryImportRoutes(router: Router): void {
         const tooBig = err instanceof multer.MulterError && err.code === 'LIMIT_FILE_SIZE';
         return res.status(400).json({ error: tooBig ? 'That file is too big to send. Put it on the house\'s machine and give its path instead.' : 'The upload did not come through.' });
       }
-      if (!req.file) return res.status(400).json({ error: 'Pick the export zip, its conversations.json, or a Letta agent file (.af).' });
+      if (!req.file) return res.status(400).json({ error: 'Pick the export zip, the conversations file inside it, a Copilot activity CSV, or a Letta agent file (.af).' });
       res.json({ upload: req.file.filename, bytes: req.file.size });
     });
   });
