@@ -18,3 +18,9 @@ test('reveal is only offered on writable slots holding a value', () => {
   assert.equal(canReveal({ hasValue: false }), false);
   assert.equal(canReveal({ hasValue: true, readonly: true }), false);
 });
+
+test('a write-only key offers no reveal and says why if asked anyway', () => {
+  assert.equal(canReveal({ hasValue: true, revealable: false }), false);
+  assert.equal(canReveal({ hasValue: true, revealable: true }), true);
+  assert.deepEqual(revealResult(403, { error: 'not revealable' }), { kind: 'error', message: 'write-only' });
+});

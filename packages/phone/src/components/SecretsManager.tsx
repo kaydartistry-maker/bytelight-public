@@ -45,7 +45,7 @@ export function SecretsManager({ themeConfig, themeMode }: SecretsManagerProps) 
     setRevealNote((n) => ({ ...n, [name]: undefined }));
     try {
       const res = await apiFetch(`/api/secrets/${encodeURIComponent(name)}`);
-      const body = res.ok ? await res.json().catch(() => null) : null;
+      const body = await res.json().catch(() => null);
       const result = revealResult(res.status, body);
       if (result.kind === 'value') setRevealed((r) => ({ ...r, [name]: result.value }));
       else setRevealNote((n) => ({ ...n, [name]: result.message }));
@@ -190,7 +190,7 @@ export function SecretsManager({ themeConfig, themeMode }: SecretsManagerProps) 
                       disabled={!canReveal(s) || revealing === s.name}
                       className={cn('rounded-md p-1.5 hover:bg-black/5 dark:hover:bg-white/5 disabled:opacity-30', colors.textMuted)}
                       style={isShown ? { color: colors.accent } : undefined}
-                      title={s.hasValue ? (isShown ? 'Hide value' : 'Reveal stored value') : 'Nothing stored to reveal'}
+                      title={s.revealable === false ? 'Write-only: saved here, never shown again' : s.hasValue ? (isShown ? 'Hide value' : 'Reveal stored value') : 'Nothing stored to reveal'}
                       aria-label={isShown ? 'Hide value' : 'Reveal stored value'}
                       aria-pressed={isShown}
                     >

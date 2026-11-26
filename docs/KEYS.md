@@ -7,6 +7,7 @@ Where they go:
 - **Settings → Keys** for everything in the tables below, unless it says otherwise.
 - **Settings → Providers** for the engine keys (OpenAI, OpenRouter, Groq, Grok).
 - Every key can instead be set as an environment variable (the name is in the table) if you run the house yourself. A key saved in the app is stored on your house and never logged.
+- Once saved, a key is write-only from the app: you can replace or clear it, but only the few a page actually uses (ElevenLabs and Giphy, which the phone calls directly, and per-companion voice IDs) can be revealed again.
 
 Keys marked *restart* only take effect after the house restarts.
 
