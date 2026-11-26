@@ -215,7 +215,7 @@ Something broke? It will, and it's fine.
 | Node version error during install or build | You're on Node 20, or 25+ | Install Node 22 (Step 1) |
 | Stuck at "Initializing database..." | You installed with one Node version and are running with another | Use the same Node you installed with, or run `npm rebuild better-sqlite3` |
 | "Claude Code process exited with code 1" | Claude isn't signed in, or the plan lapsed | Run `claude auth login`; check your plan at [claude.ai](https://claude.ai) |
-| "The Claude CLI lane is switched off in this house" | Your `.env` is from an older install | Run `npm run setup` again (it adds the missing switch and keeps everything else), or add `CLAUDE_CLI_HEARTBEAT_ENABLED=true` to `.env`. Restart. |
+| "The Claude CLI lane is switched off in this house" | The house didn't find `CLAUDE_CLI_HEARTBEAT_ENABLED=true` in the `.env` at the top of your `bytelight-public` folder | Run `npm run setup` again (it adds the missing switch and keeps everything else), or add that line to `.env` yourself. If your copy is older than this guide, `git pull` and `npm run build` first: older copies didn't read that file under `npm start`. Restart. |
 | The app says **offline** when you open it through a tunnel or domain | The house only accepts live connections from addresses it knows | Add your address under `cors.origins` in `bytelight.yaml` (see "Reaching it from anywhere"), then restart |
 | Check-ins arrive hours early or late | The house is on the wrong timezone (usually UTC on a VM) | Set `timezone` under `identity` in `bytelight.yaml`, or run `npm run setup` again |
 | "Cannot find module" | Dependencies are missing | Run `npm install` again from inside `bytelight-public` |

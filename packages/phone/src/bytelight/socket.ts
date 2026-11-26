@@ -1062,29 +1062,59 @@ export function dropArchivedThread(threadId: string): void {
 // Phase 1.1: the backend seats nobody on its own, so a new thread always
 // carries an explicit roster. No pick means "the house's residents" (what the
 // old default seating meant). Created over REST, which doesn't broadcast
-// thread_created, so the list is refreshed here.
+// thread_created, so the list is refreshed here. Resolves to the new thread's
+// id; throws with a message fit to show the owner.
+async function postThread(name: string, companionIds?: string[]): Promise<string> {
+  const roster = companionIds && companionIds.length > 0
+    ? companionIds
+    : (await loadHouseRoster()).residents.map((r) => r.id);
+  if (roster.length === 0) throw new Error('Nobody lives here yet to seat in a thread.');
+  const res = await apiFetch('/api/threads', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name, companionIds: roster }),
+  });
+  if (!res.ok) {
+    console.error(`Create thread failed: ${res.status} ${await res.text().catch(() => '')}`);
+    throw new Error('Could not create the thread.');
+  }
+  const body = await res.json().catch(() => null) as { thread?: { id?: unknown } } | null;
+  await loadThreads();
+  const id = body?.thread?.id;
+  if (typeof id !== 'string' || !id) throw new Error('Could not create the thread.');
+  return id;
+}
+
 export function createThread(name: string, companionIds?: string[]): void {
-  void (async () => {
-    try {
-      const roster = companionIds && companionIds.length > 0
-        ? companionIds
-        : (await loadHouseRoster()).residents.map((r) => r.id);
-      if (roster.length === 0) {
-        setState({ lastError: { code: 'create_thread', message: 'Nobody lives here yet to seat in a thread.' } });
-        return;
-      }
-      const res = await apiFetch('/api/threads', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, companionIds: roster }),
-      });
-      if (!res.ok) throw new Error(`Create thread failed: ${res.status} ${await res.text().catch(() => '')}`);
-      await loadThreads();
-    } catch (err) {
-      console.error('Failed to create thread:', err);
-      setState({ lastError: { code: 'create_thread', message: 'Could not create the thread.' } });
-    }
-  })();
+  void postThread(name, companionIds).catch((err) => {
+    console.error('Failed to create thread:', err);
+    setState({ lastError: { code: 'create_thread', message: err instanceof Error ? err.message : 'Could not create the thread.' } });
+  });
+}
+
+// A fresh install has no conversation at all, and the message box is the
+// first thing the owner touches. Rather than drop that first message, open a
+// thread for it the way New Thread would (the house's residents, seated), then
+// send into it. Concurrent sends share the one creation.
+export const FIRST_THREAD_NAME = 'First thread';
+let firstThreadInFlight: Promise<string> | null = null;
+
+export function ensureActiveThread(): Promise<string> {
+  const st = getState();
+  if (st.activeThreadId) return Promise.resolve(st.activeThreadId);
+  const existing = st.threads[0]?.id;
+  if (existing) {
+    switchThread(existing);
+    return Promise.resolve(existing);
+  }
+  if (!firstThreadInFlight) {
+    firstThreadInFlight = (async () => {
+      const id = await postThread(FIRST_THREAD_NAME);
+      if (!getState().activeThreadId) switchThread(id);
+      return getState().activeThreadId ?? id;
+    })().finally(() => { firstThreadInFlight = null; });
+  }
+  return firstThreadInFlight;
 }
 
 export function pinThread(threadId: string): void {
@@ -1095,18 +1125,23 @@ export function unpinThread(threadId: string): void {
   send({ type: 'unpin_thread', threadId });
 }
 
+// Sends into the open thread. With no thread open (a fresh install), one is
+// created first; the returned promise rejects if that fails, so the caller can
+// tell the owner instead of the message vanishing.
 export function sendUserMessage(
   content: string,
   contentType: 'text' | 'image' | 'audio' | 'file' | 'sticker' = 'text',
   metadata?: Record<string, unknown>,
   replyToId?: string,
-): void {
+): Promise<void> {
   const threadId = getState().activeThreadId;
-  if (!threadId) {
-    console.warn('Cannot send message: no active thread');
-    return;
+  if (threadId) {
+    send({ type: 'message', threadId, content, contentType, metadata, replyToId });
+    return Promise.resolve();
   }
-  send({ type: 'message', threadId, content, contentType, metadata, replyToId });
+  return ensureActiveThread().then((id) => {
+    send({ type: 'message', threadId: id, content, contentType, metadata, replyToId });
+  });
 }
 
 /**

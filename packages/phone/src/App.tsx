@@ -100,6 +100,7 @@ import {
   addReaction,
   removeReaction,
   toPhoneMessage,
+  fetchWholeThread,
   stopGeneration,
   syncEmojis,
   listEmojiPacks,
@@ -1380,7 +1381,23 @@ export default function App() {
   };
 
   const exportChat = async (_type: 'main' | 'private' = 'main') => {
-    const sourceMessages = messages;
+    // The screen only holds the pages scrolled into view; export the whole
+    // thread from the house instead. If that fails, say so rather than save
+    // a fragment that looks like the full conversation.
+    let sourceMessages = messages;
+    if (ksActiveThreadId) {
+      try {
+        const whole = await fetchWholeThread(ksActiveThreadId);
+        sourceMessages = whole
+          .filter((m) => !m.deleted_at && !(m.role === 'companion' && m.content === '[No response]'))
+          .map(toPhoneMessage);
+      } catch (e) {
+        console.error('Failed to fetch the thread for export:', e);
+        setError('Could not fetch the whole conversation to export. Please try again.');
+        setTimeout(() => setError(null), 5000);
+        return;
+      }
+    }
     const formattedText = sourceMessages.map(msg => {
       const date = new Date(msg.timestamp).toLocaleString();
       const sender = msg.direction === 'inbound' ? 'You' : (msg.sender || Object.values(contacts).map(c => c.name).join(' & '));
@@ -1532,6 +1549,14 @@ export default function App() {
     const hasAttachments = !!objPayload && Array.isArray(objPayload.attachments) && objPayload.attachments.length > 0;
     const hasMetadata = !!objPayload?.metadata && Object.keys(objPayload.metadata).length > 0;
     const replyId = replyTo?.id;
+    // On a fresh install there is no thread yet and the send creates one
+    // first; if that fails, say so — never let the message vanish quietly.
+    const onSendFailed = (err: unknown) => {
+      console.error('[Bytelight] Send error:', err);
+      const why = err instanceof Error && err.message ? ` ${err.message}` : '';
+      setError(`That message did not send.${why}`);
+      setTimeout(() => setError(null), 8000);
+    };
     setIsSending(true);
     try {
       if (hasAttachments || hasMetadata) {
@@ -1541,14 +1566,14 @@ export default function App() {
         // scores, prepended to the agent prompt by the message hook).
         const metadata: Record<string, unknown> = { ...(objPayload?.metadata ?? {}) };
         if (hasAttachments) metadata.attachments = objPayload!.attachments;
-        sendUserMessage(objPayload!.text || '', 'text', metadata, replyId);
+        sendUserMessage(objPayload!.text || '', 'text', metadata, replyId).catch(onSendFailed);
       } else {
         const text = typeof content === 'string' ? content : String(content ?? '');
         if (!text.trim()) {
           setIsSending(false);
           return;
         }
-        sendUserMessage(text, 'text', undefined, replyId);
+        sendUserMessage(text, 'text', undefined, replyId).catch(onSendFailed);
       }
       setReplyTo(null);
     } catch (err) {

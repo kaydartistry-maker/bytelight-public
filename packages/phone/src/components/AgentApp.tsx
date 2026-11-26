@@ -55,9 +55,7 @@ export function AgentApp({ onClose, themeConfig, themeMode, onOpenIntegrations }
       {tab === 'models' && <PreferencesApp embedded onClose={onClose} themeConfig={themeConfig} themeMode={themeMode} />}
       {tab === 'skills' && <SkillsApp embedded onClose={onClose} themeConfig={themeConfig} themeMode={themeMode} />}
       {tab === 'wakes' && <OrchestratorApp embedded onClose={onClose} themeConfig={themeConfig} themeMode={themeMode} />}
-      {/* Both engines: Claude (CLI lane / SDK) and Codex (which login it stands on).
-          The per-lane report (RuntimeApp, on /orchestrator/runtime, which main
-          lacks) returns with its own port slice. */}
+      {/* Both engines: Claude (CLI lane / SDK) and Codex (which login it stands on). */}
       {tab === 'runtime' && (
         <>
           <RuntimeHealthCard themeConfig={themeConfig} themeMode={themeMode} />

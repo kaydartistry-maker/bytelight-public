@@ -12,7 +12,10 @@
  * drawer of reference images under data/image-refs/<subject>/. Those files are
  * passed to the model so we stay looking like ourselves shot to shot.
  *
- * The whole feature remains opt-in through Studio settings.
+ * On by default, so a new companion can make a picture: the default backend
+ * is the Codex subscription (no key, no per-picture cost), and the metered
+ * OpenAI backend only works once its own key is set. Studio settings can
+ * still switch it off.
  */
 
 import { spawn } from 'child_process';
@@ -105,7 +108,7 @@ export function getImageGenSettings(): ImageGenSettings {
   const quality = (getConfig('image_gen.quality') as Quality) || 'auto';
   const antigravityModel = getConfig('image_gen.antigravity_model') as AntigravityModel || 'Gemini 3.5 Flash (Medium)';
   return {
-    enabled: getConfigBool('image_gen.enabled', false),
+    enabled: getConfigBool('image_gen.enabled', true),
     backend: ['codex', 'openai', 'cloudflare', 'antigravity', 'openart'].includes(backend) ? backend as ImageGenSettings['backend'] : 'codex',
     size: SIZE_MAP[size] ? size : 'square',
     quality: VALID_QUALITY.includes(quality) ? quality : 'auto',

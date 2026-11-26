@@ -63,6 +63,7 @@ export {
   pinThread,
   unpinThread,
   sendUserMessage,
+  ensureActiveThread,
   sendUserMessageToThread,
   deleteMessage,
   editMessage,
@@ -79,6 +80,7 @@ export {
 } from './socket';
 
 export { toPhoneMessage, streamingToPhoneMessage, reactionsToEmojiList } from './adapter';
+export { fetchWholeThread } from './thread-export';
 export { api, apiFetch, checkAuth, login, logout, stopAuthPolling } from './api';
 export {
   listEmojis,

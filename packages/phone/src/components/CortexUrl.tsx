@@ -264,11 +264,6 @@ export function CortexUrl({ themeConfig, themeMode, onSaved }: Props) {
           Your companions' long-term memory. Optional: without it, Blocks and
           Becoming still work. Changes take effect immediately.
         </p>
-        <p className={cn('text-[10px] leading-relaxed', colors.textMuted)}>
-          Don't have one? Deploy <span className="font-mono">workers/cortex</span> —
-          its readme is four steps. Both fields below belong to it: the address it
-          answers on, and the token it refuses to serve without.
-        </p>
 
         <div className="space-y-1">
           <p className={cn('text-[10px] uppercase tracking-wider', colors.textMuted)}>Worker URL</p>

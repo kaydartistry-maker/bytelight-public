@@ -17,9 +17,14 @@ interface MemoryAppProps {
 }
 
 type Tab = 'mind' | 'cortex' | 'blocks' | 'selfknowledge' | 'receipts' | 'compactions';
+// Cortex is hidden in the public app: it needs a Cortex worker this repo does
+// not ship, and the backend has no cortex_mcp_url/cortex_auth_token settings
+// or /api/cortex routes, so the tab could only ask for a worker nobody can
+// deploy. CortexApp stays in the tree for a house that brings its own.
+const CORTEX_SHIPPED = false;
 const TABS: { id: Tab; label: string }[] = [
   { id: 'mind', label: 'Mind' },
-  { id: 'cortex', label: 'Cortex' },
+  ...(CORTEX_SHIPPED ? [{ id: 'cortex' as const, label: 'Cortex' }] : []),
   { id: 'blocks', label: 'Blocks' },
   { id: 'selfknowledge', label: 'Becoming' },
   { id: 'receipts', label: 'Receipts' },
@@ -52,7 +57,7 @@ export function MemoryApp({ onClose, themeConfig, themeMode }: MemoryAppProps) {
       </div>
 
             {tab === 'mind' && <MindApp themeConfig={themeConfig} themeMode={themeMode} />}
-{tab === 'cortex' && <CortexApp embedded onClose={onClose} themeConfig={themeConfig} themeMode={themeMode} />}
+{CORTEX_SHIPPED && tab === 'cortex' && <CortexApp embedded onClose={onClose} themeConfig={themeConfig} themeMode={themeMode} />}
       {tab === 'blocks' && <MemoryBlocksApp embedded onClose={onClose} themeConfig={themeConfig} themeMode={themeMode} />}
       {tab === 'receipts' && <ReceiptsApp themeConfig={themeConfig} themeMode={themeMode} />}
       {tab === 'selfknowledge' && <SelfKnowledgeApp embedded onClose={onClose} themeConfig={themeConfig} themeMode={themeMode} />}

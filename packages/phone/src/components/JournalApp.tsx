@@ -63,10 +63,12 @@ export function JournalApp({ onClose, themeConfig, themeMode, embedded }: Journa
   const [source, setSource] = useState<Source>('house');
   const [mindJournals, setMindJournals] = useState<any[]>([]);
   const [mindLoading, setMindLoading] = useState(false);
+  const [mindNotConnected, setMindNotConnected] = useState(false);
   async function loadMindJournals() {
     setMindLoading(true);
     try {
       const res = await apiFetch('/api/mind/journals');
+      setMindNotConnected(res.status === 503);
       if (res.ok) {
         const jr = await res.json();
         setMindJournals(jr.results || jr.observations || jr.journals || (Array.isArray(jr) ? jr : []));
@@ -77,6 +79,10 @@ export function JournalApp({ onClose, themeConfig, themeMode, embedded }: Journa
   useEffect(() => { if (source === 'mind' && mindJournals.length === 0) loadMindJournals(); }, [source]); // eslint-disable-line react-hooks/exhaustive-deps
   const [loading, setLoading] = useState(true);
   const [recalling, setRecalling] = useState<string | null>(null);
+  // Why the list is empty when it is not simply empty: the journal lives in
+  // the Mind Bridge brain, and a house without one (or one that can't reach
+  // it) used to fall through to 'No entries yet', which read as a blank diary.
+  const [houseProblem, setHouseProblem] = useState<'no-brain' | 'unreachable' | null>(null);
 
   async function load() {
     setLoading(true);
@@ -86,13 +92,19 @@ export function JournalApp({ onClose, themeConfig, themeMode, embedded }: Journa
       else if (filter !== 'all') params.set('companion', filter);
       params.set('limit', '100');
       const [journalRes, companionsRes] = await Promise.all([
-        apiFetch(`/api/journal?${params}`).then((r) => (r.ok ? r.json() : { entries: [] })),
+        apiFetch(`/api/journal?${params}`).then(async (r) => {
+          if (r.ok) return { ...(await r.json()), problem: null };
+          const body = await r.json().catch(() => null) as { code?: string } | null;
+          return { entries: [], problem: body?.code === 'brain_not_connected' ? 'no-brain' as const : 'unreachable' as const };
+        }),
         apiFetch('/api/companions').then((r) => (r.ok ? r.json() : { companions: [] })),
       ]);
       setEntries(journalRes.entries || []);
+      setHouseProblem(journalRes.problem);
       setCompanions(normalizeCompanionRows(companionsRes.companions) as typeof companions);
     } catch (err) {
       console.error('Failed to load journal:', err);
+      setHouseProblem('unreachable');
     } finally {
       setLoading(false);
     }
@@ -266,7 +278,9 @@ export function JournalApp({ onClose, themeConfig, themeMode, embedded }: Journa
           <div className={cn('rounded-2xl border py-6 text-center text-xs backdrop-blur-md', colors.panelBg, colors.panelBorder, colors.textMuted)}>Loading…</div>
         ) : mindJournals.length === 0 ? (
           <div className={cn('rounded-2xl border py-6 text-center text-xs backdrop-blur-md', colors.panelBg, colors.panelBorder, colors.textMuted)}>
-            No Mind journals surfaced — the bridge may need mind_api secrets.
+            {mindNotConnected
+              ? 'No brain is connected yet. Add the Mind Bridge API URL and key under Integrations → Secrets to read its journals here.'
+              : 'No Mind journals surfaced yet.'}
           </div>
         ) : (
           mindJournals.map((mj: any, i: number) => (
@@ -288,6 +302,15 @@ export function JournalApp({ onClose, themeConfig, themeMode, embedded }: Journa
         )
       ) : loading && entries.length === 0 ? (
         <div className={cn('rounded-2xl border py-6 text-center text-xs backdrop-blur-md', colors.panelBg, colors.panelBorder, colors.textMuted)}>Loading…</div>
+      ) : entries.length === 0 && houseProblem === 'no-brain' ? (
+        <div className={cn('rounded-2xl border px-4 py-6 text-center text-xs leading-relaxed backdrop-blur-md', colors.panelBg, colors.panelBorder, colors.textMuted)}>
+          No brain is connected yet, so there is no journal to read. The journal lives in a Mind Bridge brain:
+          add its URL and key under Integrations → Secrets (Mind Bridge API URL and Mind Bridge API key), and entries will show here.
+        </div>
+      ) : entries.length === 0 && houseProblem === 'unreachable' ? (
+        <div className={cn('rounded-2xl border px-4 py-6 text-center text-xs leading-relaxed backdrop-blur-md', colors.panelBg, colors.panelBorder, colors.textMuted)}>
+          Could not reach the brain that holds the journal. Check that it is running and that its address and key are right, then refresh.
+        </div>
       ) : entries.length === 0 ? (
         <div className={cn('rounded-2xl border py-6 text-center text-xs backdrop-blur-md', colors.panelBg, colors.panelBorder, colors.textMuted)}>
           No entries yet. The pages are waiting.
