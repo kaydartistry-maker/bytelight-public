@@ -34,6 +34,17 @@ const GATES: { id: GateMode; label: string; hint: string }[] = [
   { id: 'ignore', label: 'Ignore', hint: "Doesn't read this room at all." },
 ];
 
+// What each trust level does, said under the picker. No level ever lets a
+// guest's turn run commands, change files, use outside tools or read the
+// owner's side notes. Full keeps its own meaning in this house (family: the
+// judge and the bot allowance treat it apart from Standard), so it stays.
+const TRUST_NOTES: Record<string, string> = {
+  full: "Family. We talk builds and the house with them, and can read the house's public code while we do.",
+  standard: "We answer them, friendly and general, and can read the house's public code while we do. For friends who build.",
+  limited: 'We answer them briefly and see only the pictures they send. Where everyone new starts.',
+  blocked: 'We never answer them, anywhere, and nothing they say reaches you.',
+};
+
 function isGate(value: unknown): value is GateMode {
   return GATES.some((g) => g.id === value);
 }
@@ -149,7 +160,8 @@ export function DiscordRules({ themeConfig, themeMode }: DiscordRulesProps) {
         ? { id: newId.trim(), name: newName.trim(), context: '', gateMode: 'tag-only' }
         : tab === 'channel'
           ? { id: newId.trim(), name: newName.trim(), serverId: '' }
-          : { id: newId.trim(), name: newName.trim(), trustLevel: 'standard' };
+          // A new person starts at Limited; raise them when they are a friend.
+          : { id: newId.trim(), name: newName.trim(), trustLevel: 'limited' };
     try {
       const res = await apiFetch(`/api/discord/rules/${tab}`, {
         method: 'POST',
@@ -239,11 +251,14 @@ export function DiscordRules({ themeConfig, themeMode }: DiscordRulesProps) {
         {tab === 'user' && (
           <>
             <div className={cn(fieldLabel, 'mt-2')}>Trust level</div>
-            <select className={input} value={d.trustLevel || 'standard'} onChange={(e) => setField(id, 'trustLevel', e.target.value)}>
+            {/* A rule with no level is read as Limited by the backend, so it shows as Limited. */}
+            <select className={input} value={d.trustLevel || 'limited'} onChange={(e) => setField(id, 'trustLevel', e.target.value)}>
               <option value="full">Full</option>
               <option value="standard">Standard</option>
               <option value="limited">Limited</option>
+              <option value="blocked">Blocked</option>
             </select>
+            <div className={cn('mt-1 text-[11px]', colors.textMuted)}>{TRUST_NOTES[d.trustLevel || 'limited'] ?? ''}</div>
             <div className={cn(fieldLabel, 'mt-2')}>Relationship</div>
             <input className={input} value={d.relationship || ''} onChange={(e) => setField(id, 'relationship', e.target.value)} />
           </>

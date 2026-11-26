@@ -53,7 +53,8 @@ export interface UserRule {
   context?: string;
   allowedServers?: string[];
   blockedServers?: string[];
-  trustLevel: 'full' | 'standard' | 'limited';
+  // 'blocked' is never answered, anywhere; a blocked bot is turned away at the gateway.
+  trustLevel: 'full' | 'standard' | 'limited' | 'blocked';
   relationship?: string;
 }
 
@@ -229,12 +230,18 @@ export function requiresMention(channelId: string, guildId: string | null, defau
   return gateModeFor(channelId, guildId, defaultRequirement, parentChannelId, ['ignore', 'read-only']) === 'tag-only';
 }
 
-/** No rule = Limited (the operator's call). */
-export type TrustLevel = UserRule['trustLevel'];
+/** No rule = Limited (the operator's call). The levels a person can be answered at. */
+export type TrustLevel = Exclude<UserRule['trustLevel'], 'blocked'>;
 
 export function effectiveTrustLevel(rule: Pick<UserRule, 'trustLevel'> | undefined): TrustLevel {
   const level = rule?.trustLevel;
+  // A blocked rule never gets this far (ruleBlocks); if it did, it reads as the narrowest.
   return level === 'full' || level === 'standard' || level === 'limited' ? level : 'limited';
+}
+
+/** Whether a rule says never to answer this person or bot, anywhere. */
+export function ruleBlocks(rule: Pick<UserRule, 'trustLevel'> | undefined): boolean {
+  return rule?.trustLevel === 'blocked';
 }
 
 /**
