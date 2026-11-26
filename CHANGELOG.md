@@ -6,6 +6,15 @@ byte-light is a fork of [Resonant](https://github.com/codependentai/resonant), t
 
 ---
 
+## 2026-11-26 — security hardening
+
+- **Internal routes on a port of their own.** `/api/internal` and the Command Center MCP (`/mcp/cc`) now listen on a loopback-only port, `server.internal_port` (default 3012, env `INTERNAL_PORT`), that nothing fronts. The public port answers those paths from this machine with a 410 naming the new port. `tools/sc.mjs`, the chat tool belt, the lanes' hooks, the Codex contract and every turn prompt use the new port. **Upgrading:** port 3012 must be free on 127.0.0.1, and a `command-center` entry in `.mcp.json` must point at `http://127.0.0.1:3012/mcp/cc`.
+- **A house with no password answers only its own machine.** It will not start on `0.0.0.0` or a network address, refuses anything that came through a proxy or tunnel, and answers only `localhost` plus private-network names listed in `cors.origins`. **Upgrading:** a house reached from another device or through a tunnel needs `auth.password` set.
+- **Cross-site requests are refused** (Sec-Fetch-Site, Origin as the fallback), on loopback too when a password is set. `security.csrf_mode: report` logs instead.
+- **Forwarding headers are trusted only from a proxy on this machine** (`trust proxy` is `loopback`).
+- **Keys are write-only from a client** except the few a page shows (ElevenLabs, Giphy, Cortex, Lovense, voice IDs), and the settings views no longer carry stored keys. The generic settings door refuses keys, security switches, auth and program paths.
+- **Keys sealed at rest.** Saved keys are encrypted in the database under `~/.config/bytelight/secrets.key` (or `BYTELIGHT_SECRETS_KEY_FILE`), made on first start; existing plain keys are sealed then. **Upgrading:** back up that file with the database.
+
 ## 2026-11-24 — the house kit on a Claude CLI lane, and follow-ups that listen
 
 - **The house kit, as real tools.** A Claude CLI lane now holds the house's own tools (voice notes, images, canvases, reactions, stars, timers, impulses and watchers, the wake schedule, Telegram, core memory, the library, status, follow-ups, search and the rest) as `mcp__bytelight__*` tools, loaded every session, instead of reaching them only through the `sc` command line. The lane names itself when it connects, so a tool call lands in the chat that lane's turn belongs to (never in whichever chat Codex is working in), a thread-bound tool with no turn running is refused, and a guest's turn reaches the kit as a guest. The kit's credential is referenced by env name, never written into the lane's config. A session that names no lane (the Codex app-server) behaves as before.

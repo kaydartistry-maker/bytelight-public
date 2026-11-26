@@ -65,6 +65,11 @@ restart, a model change or a first watchdog kill, the stale-id
 fallback, the stderr ring and exit log, persisted handover and turn
 watermarks with the silent-turn rollback, the resume catch-up, the
 transcript trim, held instructions and the mid-turn replacement guard).
+Security hardening: the loopback-only internal port and its guard
+(internal-server, internal-guard, normalize-path), the no-password host
+guard (open-house), the cross-site request check (csrf), the revealable
+secrets allowlist, the settings view and settings-door guard, and keys
+sealed at rest (secret-box).
 Aerie is built by Tris.
 Copyright 2026 Aerie Systems.
 Licensed under Apache License 2.0.
