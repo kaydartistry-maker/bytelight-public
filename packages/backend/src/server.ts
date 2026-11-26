@@ -10,7 +10,7 @@ import { createServer } from 'http';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { existsSync, mkdirSync } from 'fs';
-import { loadConfig, PROJECT_ROOT } from './config.js';
+import { loadConfig, getBytelightConfig, PROJECT_ROOT } from './config.js';
 import { initDb, deleteExpiredSessions } from './services/db.js';
 import { seedDefaultBlocks, ensureCompanionBlocks, ensureHumanBlock } from './services/memory-blocks.js';
 import { getSecret } from './services/secrets.js';
@@ -40,6 +40,7 @@ import { closeMcpJsonClients } from './services/mcp-json-bridge.js';
 import clientErrorRoutes from './routes/client-errors.js';
 import appShellRoutes from './routes/app.js';
 import { requireLocalhost } from './middleware/localhost.js';
+import { isLoopbackBind, allowedHostsFrom, openHouseGuard } from './middleware/open-house.js';
 import { armTheaterMouth, stopTheaterMouth } from './services/theater-mouth.js';
 
 // Load config FIRST — before any other initialization
@@ -113,6 +114,14 @@ try {
 
 // Create Express app
 const app = express();
+
+// A house with no password answers only this machine's address (see
+// middleware/open-house.ts), and refuses to start on one other machines reach.
+if (!config.auth.password && !isLoopbackBind(HOST)) {
+  console.error(`Refusing to start: server.host is ${HOST} and no password is set, so every route would be open to the network. Set auth.password in bytelight.yaml, or bind to 127.0.0.1.`);
+  process.exit(1);
+}
+app.use(openHouseGuard(() => !!getBytelightConfig().auth.password, allowedHostsFrom(config.cors.origins)));
 
 // Trust proxy headers (Cloudflare tunnel, tailscale serve, nginx) only from a
 // proxy on this machine. Reached directly over the network, X-Forwarded-For is

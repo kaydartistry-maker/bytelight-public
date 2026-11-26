@@ -16,7 +16,7 @@ server:
   db_path: "./data/bytelight.db"    # SQLite database location
 
 auth:
-  password: ""                     # Optional web UI password (leave empty to disable)
+  password: ""                     # Web UI password. Empty = this machine only (no network, no tunnel)
 
 agent:
   cwd: "."                         # Working directory for Claude Agent SDK
