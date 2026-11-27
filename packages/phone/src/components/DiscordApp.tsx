@@ -6,7 +6,7 @@ import { ThemeConfig } from '../lib/theme';
 import { cn } from '../lib/utils';
 import { apiFetch } from '../bytelight';
 import { DiscordRules } from './DiscordRules';
-import { NamePicker, useDiscordDirectory, guildOptions, channelOptions, userOptions } from './DiscordPickers';
+import { NamePicker, useDiscordDirectory, guildOptions, userOptions } from './DiscordPickers';
 
 interface DiscordAppProps {
   onClose: () => void;
@@ -53,7 +53,9 @@ interface DiscordSettings {
   ownerMentions: boolean;
   allowedUsers: string[];
   allowedGuilds: string[];
-  activeChannels: string[];
+  // discord.activeChannels is still stored and returned, but nothing in the
+  // house has ever read it: the room gates do that job. Not shown (Kay, 2026-11-27).
+  activeChannels?: string[];
 }
 
 export function DiscordApp({ onClose, themeConfig, themeMode, embedded }: DiscordAppProps) {
@@ -493,14 +495,6 @@ export function DiscordApp({ onClose, themeConfig, themeMode, embedded }: Discor
                   onChange={(v) => patchSettings({ allowedGuilds: v })}
                   colors={colors}
                   noOptions="Turn the gateway on to see your servers."
-                />
-                <NamePicker
-                  label="Active channels"
-                  value={settings.activeChannels}
-                  options={channelOptions(directory)}
-                  onChange={(v) => patchSettings({ activeChannels: v })}
-                  colors={colors}
-                  noOptions="Turn the gateway on to see your channels."
                 />
                 <NamePicker
                   label="People we answer anywhere"
