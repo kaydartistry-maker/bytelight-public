@@ -21,7 +21,8 @@ export interface CompanionRowFields {
 export function normalizeCompanionRow<T extends Record<string, unknown>>(row: T): T & CompanionRowFields {
   const id = String(row.id ?? row.slug ?? '');
   const str = (v: unknown): string | null => (typeof v === 'string' ? v : null);
-  const slug = str(row.slug) ?? id;
+  // An empty slug is no slug: fall back to the id so the row can still be matched.
+  const slug = str(row.slug) || id;
   // Main's live profile for this identity (photo + emoji), when it has been
   // read; the row's own avatar is the seeded copy and only a fallback.
   const profile = getProfiles()?.[slug] ?? null;

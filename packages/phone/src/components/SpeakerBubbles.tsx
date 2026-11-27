@@ -72,6 +72,7 @@ function SpeakerFace({ face, fallbackEmoji, name }: { face?: RosterFace; fallbac
 export function SpeakerBubbles({ rows, roster, colors, textColorClass, isLightText, customEmojis }: SpeakerBubblesProps) {
   const faceFor = (speaker: string): RosterFace | undefined =>
     roster?.find((c) => c.slug === speaker || c.display_name.toLowerCase() === speaker);
+  const nameFor = (speaker: string): string => NAMES[speaker] ?? faceFor(speaker)?.display_name ?? speaker;
   return (
     <div className="flex flex-col gap-1.5">
       {rows.map((row, i) => {
@@ -81,8 +82,8 @@ export function SpeakerBubbles({ rows, roster, colors, textColorClass, isLightTe
           {row.speaker !== 'fallback' && (
             <SpeakerFace
               face={faceFor(row.speaker)}
-              fallbackEmoji={AVATAR[row.speaker]}
-              name={NAMES[row.speaker] ?? row.speaker}
+              fallbackEmoji={AVATAR[row.speaker] ?? AVATAR.fallback}
+              name={nameFor(row.speaker)}
             />
           )}
           <div
@@ -98,7 +99,7 @@ export function SpeakerBubbles({ rows, roster, colors, textColorClass, isLightTe
           >
           {row.speaker !== 'fallback' && (
             <div className={cn('mb-0.5 text-[11px] font-bold tracking-wide opacity-80 select-none', textColorClass)}>
-              {NAMES[row.speaker] ?? row.speaker}
+              {nameFor(row.speaker)}
             </div>
           )}
           <div

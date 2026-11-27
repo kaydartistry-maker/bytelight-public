@@ -589,7 +589,7 @@ export function MessageBubble({ message, onReact, onBookmark, onDelete, onEdit, 
   const splitEligible = !isUser && !isPrivateTab && !isSystem && !isGuest && !isVoice && !isGif && !isImage;
   // A reply from one companion's own lane is stamped with him: draw it whole
   // as his bubble. The shared lane ('companion-a-b') splits by its headers.
-  const wholeSpeaker = wholeSpeakerFor(message.companionId);
+  const wholeSpeaker = wholeSpeakerFor(message.companionId, voiceRoster);
   const speakerRows =
     splitEligible && !hasSegments && textContent
       ? (wholeSpeaker ? [{ speaker: wholeSpeaker, text: textContent }] : splitBySpeaker(textContent))

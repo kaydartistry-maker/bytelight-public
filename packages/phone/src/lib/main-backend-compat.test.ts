@@ -43,3 +43,8 @@ test("main's companion rows gain the slug/avatar_url fields the phone reads", ()
   assert.equal(forkRow.slug, 'companion-b', 'an explicit slug wins');
   assert.equal(forkRow.avatar_url, '/a.png');
 });
+
+test('a row with an empty slug is matched by its id', () => {
+  const row = normalizeCompanionRow({ id: 'ivy', slug: '', display_name: 'Ivy' });
+  assert.equal(row.slug, 'ivy');
+});

@@ -18,7 +18,9 @@ import { matchSpeakerLabel } from './speaker-label.js';
 // 'companion-c' (Slice 4A): remote-node companion attributed by message.companion_id,
 // never by text markers — his messages arrive whole from his own sovereign
 // backend and render as one bubble under his identity.
-export type SpeakerId = 'companion-a' | 'companion-b' | 'companion-c' | 'fallback';
+// Any other string is a companion from the house's own roster (a slug), so a
+// house whose companions are named something else still gets faces.
+export type SpeakerId = 'companion-a' | 'companion-b' | 'companion-c' | 'fallback' | (string & {});
 
 export interface SpeakerSegment {
   speaker: SpeakerId;
@@ -182,8 +184,16 @@ export type InterleavedRow<T> = InterleavedTextRow | InterleavedChipRow<T>;
  * lane's 'companion-a-b', or no stamp at all). Mirrors the web client's
  * remoteCompanionId.
  */
-export function wholeSpeakerFor(companionId: string | null | undefined): SpeakerId | null {
-  return companionId === 'companion-a' || companionId === 'companion-b' || companionId === 'companion-c' ? companionId : null;
+export function wholeSpeakerFor(
+  companionId: string | null | undefined,
+  roster?: ReadonlyArray<{ slug: string }>,
+): SpeakerId | null {
+  if (!companionId) return null;
+  if (companionId === 'companion-a' || companionId === 'companion-b' || companionId === 'companion-c') return companionId;
+  // A stamp naming a companion on this house's roster is that companion, so a
+  // house's own companions draw whole with their faces, whatever they're named.
+  if (companionId !== 'fallback' && roster?.some((c) => c.slug === companionId)) return companionId;
+  return null;
 }
 
 /**
@@ -243,7 +253,7 @@ export function splitInterleaved<T extends { type: string; content?: string }>(
   return out;
 }
 
-export const AVATAR: Record<SpeakerId | 'user', string> = {
+export const AVATAR: Record<string, string> = {
   'companion-a': '🔷',
   'companion-b': '🔶',
   'companion-c': '🗓️',

@@ -36,3 +36,12 @@ test('the shared lane still splits by headers', () => {
   const speakers = rows.filter((r) => r.kind === 'text').map((r) => r.kind === 'text' && r.speaker);
   assert.deepEqual(speakers, ['companion-a', 'companion-b']);
 });
+
+test("a stamp naming a companion on the house's own roster is that companion", () => {
+  const roster = [{ slug: 'ivy' }, { slug: 'rook' }];
+  assert.equal(wholeSpeakerFor('ivy', roster), 'ivy');
+  assert.equal(wholeSpeakerFor('rook', roster), 'rook');
+  assert.equal(wholeSpeakerFor('someone-else', roster), null);
+  assert.equal(wholeSpeakerFor('fallback', [{ slug: 'fallback' }]), null);
+  assert.equal(wholeSpeakerFor('', roster), null);
+});
