@@ -18,7 +18,7 @@ import { MessageDebouncer } from './debouncer.js';
 import { preflight, noteJudgedAnswer, ownerMentionIn } from './preflight.js';
 import { getSecret } from '../secrets.js';
 import { PairingService } from './pairing.js';
-import { getUserRule, ruleBlocks } from './rules.js';
+import { getUserRule, ruleBlocks, getServerRule, noteSeenAuthor } from './rules.js';
 import { discordTurnAudience } from '../turn-audience.js';
 import { buildRulesContext, gateModeFor, trustGuidance, publicSafetyLine } from './rules.js';
 import {
@@ -225,6 +225,9 @@ export interface CustomEmoji {
 // recentActivity/getDiscordActivity module accessor above.
 let activeDiscordService: DiscordService | null = null;
 
+export interface DiscordDirectoryChannel { id: string; name: string; category: string | null; position: number }
+export interface DiscordDirectoryGuild { id: string; name: string; icon: string | null; channels: DiscordDirectoryChannel[] }
+
 /**
  * Flat list of every custom emoji across the connected guilds. Empty when the
  * gateway isn't started or no guilds are cached — never throws. Read live from
@@ -311,6 +314,24 @@ export class DiscordService {
 
       // Whoever was typing has said it now, heard by us or not. (Aerie.)
       noteSpoke(message.channelId, message.author.id);
+
+      // Anyone speaking where we listen lands on the Users list by name, so
+      // Kay taps a trust level instead of pasting an id. Unknown bots go on as
+      // Blocked, which is what they already were.
+      if (!message.guildId || DISCORD_CONFIG.allowedGuilds.has(message.guildId) || getServerRule(message.guildId)) {
+        try {
+          noteSeenAuthor(
+            {
+              id: message.author.id,
+              name: message.member?.displayName || message.author.globalName || message.author.username,
+              bot: message.author.bot,
+            },
+            DISCORD_CONFIG.ownerUserId,
+          );
+        } catch (err) {
+          console.warn('[Discord] Could not add a new face to the list:', errMessage(err));
+        }
+      }
 
       // Ignore unknown bots — allow bots with UserRules
       if (message.author.bot) {
@@ -1173,6 +1194,26 @@ export class DiscordService {
    * cache live (kept current by the Guilds intent), so no snapshot to go stale.
    * Returns [] if the gateway isn't ready — never throws.
    */
+  /**
+   * Every server we are in and its text rooms, by name, read live from the
+   * discord.js cache, so the Discord tab can offer names to tap instead of ids.
+   */
+  listDirectory(): DiscordDirectoryGuild[] {
+    if (!this.client.isReady()) return [];
+    const out: DiscordDirectoryGuild[] = [];
+    for (const guild of this.client.guilds.cache.values()) {
+      const channels: DiscordDirectoryChannel[] = [];
+      for (const ch of guild.channels.cache.values()) {
+        if (!ch.isTextBased() || ch.isThread() || ch.isVoiceBased()) continue;
+        const parent = 'parent' in ch && ch.parent ? ch.parent.name : null;
+        channels.push({ id: ch.id, name: ch.name, category: parent, position: 'rawPosition' in ch ? ch.rawPosition : 0 });
+      }
+      channels.sort((a, b) => (a.category ?? '').localeCompare(b.category ?? '') || a.position - b.position);
+      out.push({ id: guild.id, name: guild.name, icon: guild.iconURL({ size: 64 }) ?? null, channels });
+    }
+    return out.sort((a, b) => a.name.localeCompare(b.name));
+  }
+
   listCustomEmojis(): CustomEmoji[] {
     if (!this.client.isReady()) return [];
     const out: CustomEmoji[] = [];

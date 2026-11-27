@@ -56,6 +56,10 @@ export interface UserRule {
   // 'blocked' is never answered, anywhere; a blocked bot is turned away at the gateway.
   trustLevel: 'full' | 'standard' | 'limited' | 'blocked';
   relationship?: string;
+  /** Added by the house the first time they spoke near us, not by Kay. */
+  auto?: boolean;
+  /** When the house first saw them (ISO). */
+  seenAt?: string;
 }
 
 export interface RulesData {
@@ -330,4 +334,39 @@ export function reloadRules(data?: RulesData): void {
   for (const [k, v] of Object.entries(d.channels)) channelRules.set(k, v);
   for (const [k, v] of Object.entries(d.users)) userRules.set(k, v);
   console.log(`[Discord Rules] Reloaded: ${serverRules.size} server, ${channelRules.size} channel, ${userRules.size} user rules`);
+}
+
+// --- People who appear on their own (Kay, 2026-11-27) ---
+
+/**
+ * The rule the house writes for someone it hears for the first time, or null
+ * when it writes none. It changes nothing about who is answered: a person
+ * with no rule is already treated as Limited, and a bot with no rule is
+ * already turned away, which is what Blocked does. They simply become a name
+ * in the Users list that Kay can raise with one tap.
+ */
+export function autoRuleFor(
+  author: { id: string; name: string; bot: boolean },
+  opts: { ownerUserId: string; existing: UserRule | undefined; now: string },
+): UserRule | null {
+  if (!author.id || opts.existing) return null;
+  if (opts.ownerUserId && author.id === opts.ownerUserId) return null;
+  return {
+    id: author.id,
+    name: author.name || author.id,
+    trustLevel: author.bot ? 'blocked' : 'limited',
+    auto: true,
+    seenAt: opts.now,
+  };
+}
+
+/** Write the auto rule for a first-time speaker. True when one was added. */
+export function noteSeenAuthor(author: { id: string; name: string; bot: boolean }, ownerUserId: string): boolean {
+  ensureRulesLoaded();
+  const rule = autoRuleFor(author, { ownerUserId, existing: userRules.get(author.id), now: new Date().toISOString() });
+  if (!rule) return false;
+  userRules.set(rule.id, rule);
+  setConfig('discord.rules', JSON.stringify(getRulesData()));
+  console.log(`[Discord Rules] New ${author.bot ? 'bot' : 'person'} on the list: ${rule.name} (${rule.trustLevel})`);
+  return true;
 }

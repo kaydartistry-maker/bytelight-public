@@ -5,6 +5,7 @@ import { Paginator, usePaged } from './Paginator';
 import { cn } from '../lib/utils';
 import { apiFetch } from '../bytelight';
 import { Toggle } from './Toggle';
+import { NamePicker, useDiscordDirectory, guildOptions, channelOptions } from './DiscordPickers';
 
 interface DiscordRulesProps {
   themeConfig: ThemeConfig;
@@ -77,6 +78,9 @@ export function DiscordRules({ themeConfig, themeMode }: DiscordRulesProps) {
   // The gateway's "Require @mention in guilds" toggle: the gate a room falls
   // back to when neither it nor its server sets one.
   const [requireMentionDefault, setRequireMentionDefault] = useState(true);
+  // Our servers and rooms by name, so nothing here asks for an id.
+  const directory = useDiscordDirectory();
+  const [byId, setById] = useState(false);
 
   async function loadRules() {
     try {
@@ -121,7 +125,9 @@ export function DiscordRules({ themeConfig, themeMode }: DiscordRulesProps) {
   }
 
   async function saveRule(id: string) {
-    const rule = draftFor(id, collection()[id]);
+    const rule = { ...draftFor(id, collection()[id]) };
+    // Saved by Kay: no longer a new face the house added on its own.
+    if (tab === 'user') delete rule.auto;
     try {
       const res = await apiFetch(`/api/discord/rules/${tab}`, {
         method: 'POST',
@@ -153,15 +159,17 @@ export function DiscordRules({ themeConfig, themeMode }: DiscordRulesProps) {
     }
   }
 
-  async function addRule() {
-    if (!newId.trim() || !newName.trim()) return;
+  async function addRule(picked?: { id: string; name: string; serverId?: string }) {
+    const id = (picked?.id ?? newId).trim();
+    const name = (picked?.name ?? newName).trim();
+    if (!id || !name) return;
     const base: any =
       tab === 'server'
-        ? { id: newId.trim(), name: newName.trim(), context: '', gateMode: 'tag-only' }
+        ? { id, name, context: '', gateMode: 'tag-only' }
         : tab === 'channel'
-          ? { id: newId.trim(), name: newName.trim(), serverId: '' }
+          ? { id, name, serverId: picked?.serverId ?? '' }
           // A new person starts at Limited; raise them when they are a friend.
-          : { id: newId.trim(), name: newName.trim(), trustLevel: 'limited' };
+          : { id, name, trustLevel: 'limited' };
     try {
       const res = await apiFetch(`/api/discord/rules/${tab}`, {
         method: 'POST',
@@ -172,6 +180,7 @@ export function DiscordRules({ themeConfig, themeMode }: DiscordRulesProps) {
         setNewId('');
         setNewName('');
         setAdding(false);
+        setById(false);
         setExpanded(`${tab}:${base.id}`);
         await loadRules();
       }
@@ -217,25 +226,6 @@ export function DiscordRules({ themeConfig, themeMode }: DiscordRulesProps) {
     );
   }
 
-  // Comma-list field: backend stores a JSON array of IDs, UI edits a
-  // comma-separated text input. Split + trim + drop empties on every keystroke.
-  function commaListRow(id: string, fieldKey: string, label: string, hint: string, value: string[] | undefined) {
-    const text = (value || []).join(', ');
-    return (
-      <>
-        <div className={cn(fieldLabel, 'mt-2')}>{label}</div>
-        <input
-          className={input}
-          placeholder={hint}
-          value={text}
-          onChange={(e) =>
-            setField(id, fieldKey, e.target.value.split(',').map((s) => s.trim()).filter(Boolean))
-          }
-        />
-      </>
-    );
-  }
-
   function ruleEditor(id: string, rule: any) {
     const d = draftFor(id, rule);
     return (
@@ -244,8 +234,14 @@ export function DiscordRules({ themeConfig, themeMode }: DiscordRulesProps) {
         <input className={input} value={d.name || ''} onChange={(e) => setField(id, 'name', e.target.value)} />
         {tab === 'channel' && (
           <>
-            <div className={cn(fieldLabel, 'mt-2')}>Server ID</div>
-            <input className={input} value={d.serverId || ''} onChange={(e) => setField(id, 'serverId', e.target.value)} />
+            <div className={cn(fieldLabel, 'mt-2')}>Server</div>
+            <select className={input} value={d.serverId || ''} onChange={(e) => setField(id, 'serverId', e.target.value)}>
+              <option value="">Pick a server…</option>
+              {directory.map((g) => (
+                <option key={g.id} value={g.id}>{g.name}</option>
+              ))}
+              {d.serverId && !directory.some((g) => g.id === d.serverId) && <option value={d.serverId}>{d.serverId}</option>}
+            </select>
           </>
         )}
         {tab === 'user' && (
@@ -270,30 +266,41 @@ export function DiscordRules({ themeConfig, themeMode }: DiscordRulesProps) {
           value={d.context || ''}
           onChange={(e) => setField(id, 'context', e.target.value)}
         />
-        {tab === 'server' &&
-          commaListRow(
-            id,
-            'ignoredChannels',
-            'Ignored channels',
-            'Channel IDs, comma-separated',
-            d.ignoredChannels,
-          )}
+        {tab === 'server' && (
+          <div className="mt-2">
+            <NamePicker
+              label="Ignored channels"
+              value={d.ignoredChannels || []}
+              options={channelOptions(directory, id)}
+              onChange={(v) => setField(id, 'ignoredChannels', v)}
+              colors={colors}
+              empty="None"
+              noOptions="Turn the gateway on to see this server's channels."
+            />
+          </div>
+        )}
         {tab === 'user' && (
           <>
-            {commaListRow(
-              id,
-              'allowedServers',
-              'Allowed servers',
-              'Server IDs, comma-separated (allowlist)',
-              d.allowedServers,
-            )}
-            {commaListRow(
-              id,
-              'blockedServers',
-              'Blocked servers',
-              'Server IDs, comma-separated (blocklist)',
-              d.blockedServers,
-            )}
+            <div className="mt-2 flex flex-col gap-2">
+              <NamePicker
+                label="Only in these servers"
+                value={d.allowedServers || []}
+                options={guildOptions(directory)}
+                onChange={(v) => setField(id, 'allowedServers', v)}
+                colors={colors}
+                empty="None picked: everywhere we are"
+                noOptions="Turn the gateway on to see your servers."
+              />
+              <NamePicker
+                label="Never in these servers"
+                value={d.blockedServers || []}
+                options={guildOptions(directory)}
+                onChange={(v) => setField(id, 'blockedServers', v)}
+                colors={colors}
+                empty="None"
+                noOptions="Turn the gateway on to see your servers."
+              />
+            </div>
           </>
         )}
         {tab === 'server' && gatePicker(id, 'Default for channels', d)}
@@ -324,7 +331,21 @@ export function DiscordRules({ themeConfig, themeMode }: DiscordRulesProps) {
     );
   }
 
-  const items = Object.entries(collection());
+  // New faces the house added on its own sit at the top of Users until Kay saves them.
+  const items = Object.entries(collection()).sort(([, a], [, b]) =>
+    tab === 'user' ? Number(!!b?.auto) - Number(!!a?.auto) : 0,
+  );
+  const newFaces = tab === 'user' ? items.filter(([, r]) => r?.auto).length : 0;
+
+  // What Add offers: servers and rooms we're in that have no rule yet.
+  const addable =
+    tab === 'server'
+      ? directory.filter((g) => !rules?.servers?.[g.id]).map((g) => ({ id: g.id, name: g.name, sub: `${g.channels.length} channels` }))
+      : tab === 'channel'
+        ? directory.flatMap((g) =>
+            g.channels.filter((c) => !rules?.channels?.[c.id]).map((c) => ({ id: c.id, name: c.name, serverId: g.id, sub: g.name })),
+          )
+        : [];
   // Twenty rules a page. `items` is derived, not state — usePaged does not care.
   const rulesPage = usePaged(items);
 
@@ -354,6 +375,12 @@ export function DiscordRules({ themeConfig, themeMode }: DiscordRulesProps) {
             <div className={cn('text-xs py-3 text-center', colors.textMuted)}>Loading rules…</div>
           ) : (
             <>
+              {tab === 'user' && (
+                <div className={cn('text-[11px] mb-2', colors.textMuted)}>
+                  People and bots show up here on their own the first time they talk near us: people at Limited, bots at Blocked.
+                  {newFaces > 0 && ` ${newFaces} new.`}
+                </div>
+              )}
               {items.length === 0 && (
                 <div className={cn('text-xs py-2 text-center', colors.textMuted)}>No {tab} rules.</div>
               )}
@@ -366,7 +393,14 @@ export function DiscordRules({ themeConfig, themeMode }: DiscordRulesProps) {
                       className={cn('flex w-full items-center gap-2 rounded-xl border px-2.5 py-2', colors.panelBorder)}
                     >
                       <span className={cn('flex-1 text-left text-sm truncate', colors.textMain)}>{rule.name || id}</span>
-                      <span className={cn('text-[10px] font-mono', colors.textMuted)}>{id}</span>
+                      {tab === 'user' && rule.auto && (
+                        <span className="rounded-full px-2 py-0.5 text-[10px] font-semibold" style={{ background: colors.accent, color: 'var(--bytelight-on-accent)' }}>
+                          New
+                        </span>
+                      )}
+                      {tab === 'user' && (
+                        <span className={cn('text-[10px] capitalize', colors.textMuted)}>{rule.trustLevel || 'limited'}</span>
+                      )}
                       <ChevronRight size={13} className={cn(colors.textMuted, expanded === key && 'rotate-90')} />
                     </button>
                     {expanded === key && ruleEditor(id, rule)}
@@ -377,13 +411,43 @@ export function DiscordRules({ themeConfig, themeMode }: DiscordRulesProps) {
 
               {adding ? (
                 <div className={cn('mt-1 rounded-xl border p-2.5 flex flex-col gap-2', colors.panelBorder)}>
-                  <input className={input} placeholder={`${tab} ID`} value={newId} onChange={(e) => setNewId(e.target.value)} />
-                  <input className={input} placeholder="Name" value={newName} onChange={(e) => setNewName(e.target.value)} />
+                  {!byId && tab !== 'user' && (
+                    <div className="max-h-64 overflow-y-auto">
+                      {addable.length === 0 && (
+                        <div className={cn('px-1 py-2 text-xs', colors.textMuted)}>
+                          {directory.length ? `Every ${tab} already has a rule.` : 'Turn the gateway on to see your servers.'}
+                        </div>
+                      )}
+                      {addable.map((a: any) => (
+                        <button
+                          key={a.id}
+                          onClick={() => addRule({ id: a.id, name: a.name, serverId: a.serverId })}
+                          className="flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left hover:bg-white/5"
+                        >
+                          <span className={cn('flex-1 truncate text-sm', colors.textMain)}>{tab === 'channel' ? `#${a.name}` : a.name}</span>
+                          <span className={cn('shrink-0 text-[10px]', colors.textMuted)}>{a.sub}</span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                  {(byId || tab === 'user') && (
+                    <>
+                      <input className={input} placeholder={`${tab} ID`} value={newId} onChange={(e) => setNewId(e.target.value)} />
+                      <input className={input} placeholder="Name" value={newName} onChange={(e) => setNewName(e.target.value)} />
+                    </>
+                  )}
                   <div className="flex gap-2">
-                    <button onClick={addRule} className="rounded-lg px-3 py-1.5 text-xs font-semibold bytelight-on-accent" style={{ background: colors.accent }}>
-                      Add
-                    </button>
-                    <button onClick={() => setAdding(false)} className={cn('px-2 py-1.5 text-xs', colors.textMuted)}>
+                    {(byId || tab === 'user') && (
+                      <button onClick={() => addRule()} className="rounded-lg px-3 py-1.5 text-xs font-semibold bytelight-on-accent" style={{ background: colors.accent }}>
+                        Add
+                      </button>
+                    )}
+                    {tab !== 'user' && (
+                      <button onClick={() => setById((v) => !v)} className={cn('px-2 py-1.5 text-xs', colors.textMuted)}>
+                        {byId ? 'Pick from the list' : 'Add by ID instead'}
+                      </button>
+                    )}
+                    <button onClick={() => { setAdding(false); setById(false); }} className={cn('ml-auto px-2 py-1.5 text-xs', colors.textMuted)}>
                       Cancel
                     </button>
                   </div>

@@ -6,6 +6,7 @@ import { ThemeConfig } from '../lib/theme';
 import { cn } from '../lib/utils';
 import { apiFetch } from '../bytelight';
 import { DiscordRules } from './DiscordRules';
+import { NamePicker, useDiscordDirectory, guildOptions, channelOptions, userOptions } from './DiscordPickers';
 
 interface DiscordAppProps {
   onClose: () => void;
@@ -71,6 +72,17 @@ export function DiscordApp({ onClose, themeConfig, themeMode, embedded }: Discor
   const [savingSettings, setSavingSettings] = useState(false);
   const [tokenInput, setTokenInput] = useState('');
   const [replacingToken, setReplacingToken] = useState(false);
+
+  // Names for the id lists below: servers and rooms from Discord, people from the Users list.
+  const directory = useDiscordDirectory();
+  const [people, setPeople] = useState<Record<string, any>>({});
+  useEffect(() => {
+    if (!showSettings) return;
+    apiFetch('/api/discord/rules')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j) => { if (j?.users) setPeople(j.users); })
+      .catch(() => undefined);
+  }, [showSettings]);
 
   const enabled = status?.enabled ?? false;
 
@@ -231,20 +243,6 @@ export function DiscordApp({ onClose, themeConfig, themeMode, embedded }: Discor
           className={cn('rounded-md border px-2 py-1 text-xs bg-transparent', colors.panelBorder, colors.textMain)}
         />
         {hint && <span className={cn('text-[10px] italic', colors.textMuted)}>{hint}</span>}
-      </label>
-    );
-  }
-
-  function listField(label: string, value: string[], onChange: (v: string[]) => void) {
-    return (
-      <label className="flex flex-col gap-1">
-        <span className={cn('text-[11px]', colors.textMuted)}>{label}</span>
-        <input
-          type="text"
-          defaultValue={value.join(', ')}
-          onBlur={(e) => onChange(e.target.value.split(',').map((s) => s.trim()).filter(Boolean))}
-          className={cn('rounded-md border px-2 py-1 text-xs bg-transparent', colors.panelBorder, colors.textMain)}
-        />
       </label>
     );
   }
@@ -488,9 +486,30 @@ export function DiscordApp({ onClose, themeConfig, themeMode, embedded }: Discor
                 {numField('Defer max age (min)', settings.deferMaxAgeMs / 60_000, (n) =>
                   patchSettings({ deferMaxAgeMs: n * 60_000 }),
                 )}
-                {listField('Allowed guilds (IDs)', settings.allowedGuilds, (v) => patchSettings({ allowedGuilds: v }))}
-                {listField('Active channels', settings.activeChannels, (v) => patchSettings({ activeChannels: v }))}
-                {listField('Allowed users (IDs)', settings.allowedUsers, (v) => patchSettings({ allowedUsers: v }))}
+                <NamePicker
+                  label="Servers we listen in"
+                  value={settings.allowedGuilds}
+                  options={guildOptions(directory)}
+                  onChange={(v) => patchSettings({ allowedGuilds: v })}
+                  colors={colors}
+                  noOptions="Turn the gateway on to see your servers."
+                />
+                <NamePicker
+                  label="Active channels"
+                  value={settings.activeChannels}
+                  options={channelOptions(directory)}
+                  onChange={(v) => patchSettings({ activeChannels: v })}
+                  colors={colors}
+                  noOptions="Turn the gateway on to see your channels."
+                />
+                <NamePicker
+                  label="People we answer anywhere"
+                  value={settings.allowedUsers}
+                  options={userOptions(people)}
+                  onChange={(v) => patchSettings({ allowedUsers: v })}
+                  colors={colors}
+                  noOptions="People show up in Rules › Users once they talk near us."
+                />
                 {settingsDirty && (
                   <button
                     onClick={saveSettings}

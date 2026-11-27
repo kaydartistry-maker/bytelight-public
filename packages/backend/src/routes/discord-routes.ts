@@ -29,6 +29,18 @@ export function createDiscordRoutes(): Router {
     }
   });
 
+  // Servers and their rooms by name, for the tab's pickers. Empty while the
+  // gateway is off: the tab falls back to showing ids.
+  router.get('/discord/directory', (req, res) => {
+    try {
+      const discordService = req.app.locals.discordService as DiscordService | null;
+      res.json({ guilds: discordService?.listDirectory() ?? [] });
+    } catch (error) {
+      console.error('Error reading the Discord directory:', error);
+      res.status(500).json({ error: 'Failed to read the Discord directory' });
+    }
+  });
+
   router.post('/discord/toggle', async (req, res) => {
     try {
       const { enabled } = req.body as { enabled: boolean };
