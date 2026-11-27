@@ -27,7 +27,7 @@ import type { Message as PhoneMessage } from '../../types';
 import { useHouseRoster, OWNER_SIGIL, getOwnerAvatar, type HouseCompanion } from '../../lib/house';
 import type { ResolvedThemeColors, ThemeColors } from '../../lib/theme';
 import { cn } from '../../lib/utils';
-import { splitMessageVoices } from '../../lib/voices';
+import { railVoiceSections } from '../../lib/rail-voices';
 import { getOwnSendIcon } from '../../lib/sendIcons';
 
 /** The owner's side is 'owner'; the backend never sends a person's name here. */
@@ -549,13 +549,7 @@ const RailConversation = React.memo(function RailConversation({
           read: 1,
           companionSlug: message.companionSlug || undefined,
         };
-        const sections = splitMessageVoices(phoneMessage, companions)
-          ?? [{
-            voice: message.companionSlug
-              ? companions.find((companion) => companion.slug === message.companionSlug) || null
-              : null,
-            content: message.content,
-          }];
+        const sections = railVoiceSections(phoneMessage, companions);
 
         return (
           <div key={message.id} className="space-y-2">
