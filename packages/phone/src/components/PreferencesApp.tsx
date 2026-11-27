@@ -6,6 +6,7 @@ import { Toggle } from './Toggle';
 import { ThemeConfig } from '../lib/theme';
 import { cn } from '../lib/utils';
 import { apiFetch } from '../bytelight';
+import { loadHouseRoster } from '../lib/residents';
 import {
   houseBrain,
   PROVIDER_ROWS,
@@ -92,6 +93,10 @@ export function PreferencesApp({ onClose, themeConfig, themeMode, embedded }: Pr
   // companion row this answers (system fallback), so the picker always shows
   // the engine that would actually run.
   async function loadEngines(): Promise<void> {
+    // Know whose engine this is before reading or writing it. Until the
+    // house's roster has been read, houseBrain() is the built-in default id,
+    // and a save made in that window landed on a brain nobody lives in.
+    await loadHouseRoster().catch(() => undefined);
     const [inter, wake] = await Promise.all([readTier('interactive'), readTier('autonomous')]);
     if (inter) setChat(inter);
     if (wake) setAuto(wake);
@@ -173,6 +178,7 @@ export function PreferencesApp({ onClose, themeConfig, themeMode, embedded }: Pr
         setError(data.error || 'Failed to save');
         return;
       }
+      await loadHouseRoster().catch(() => undefined);
       for (const body of defaultEngineBodies(chat, auto, split)) {
         const r = await apiFetch('/api/companion-settings/default', {
           method: 'PUT',
