@@ -4,6 +4,7 @@ import { DiscordService } from '../services/discord/index.js';
 import type { AgentService } from '../services/agent.js';
 import { getDiscordConfig, getAllowedUsers, getAllowedGuilds, getActiveChannels } from '../services/discord/config.js';
 import { getRulesData, saveRules } from '../services/discord/rules.js';
+import { getDiscordRouting, setDiscordRouting, getOwnThreadChannels, setOwnThreadChannels, DISCORD_ROUTINGS, type DiscordRouting } from '../services/discord/routing.js';
 import type { ServerRule, ChannelRule, UserRule, RulesData } from '../services/discord/rules.js';
 import { registry } from '../services/registry.js';
 import { shareWithInternal } from '../internal-server.js';
@@ -146,6 +147,8 @@ export function createDiscordRoutes(): Router {
         allowedUsers: [...getAllowedUsers()],
         allowedGuilds: [...getAllowedGuilds()],
         activeChannels: [...getActiveChannels()],
+        routing: getDiscordRouting(),
+        ownThreadChannels: getOwnThreadChannels(),
       });
     } catch (error) {
       console.error('Error fetching Discord settings:', error);
@@ -197,6 +200,15 @@ export function createDiscordRoutes(): Router {
         }
       }
 
+      if (typeof body.routing === 'string' && DISCORD_ROUTINGS.includes(body.routing as DiscordRouting)) {
+        setDiscordRouting(body.routing as DiscordRouting);
+        updated++;
+      }
+      if (Array.isArray(body.ownThreadChannels)) {
+        setOwnThreadChannels(body.ownThreadChannels.filter((v): v is string => typeof v === 'string'));
+        updated++;
+      }
+
       // Return current state after update
       const config = getDiscordConfig();
       res.json({
@@ -206,6 +218,8 @@ export function createDiscordRoutes(): Router {
         allowedUsers: [...getAllowedUsers()],
         allowedGuilds: [...getAllowedGuilds()],
         activeChannels: [...getActiveChannels()],
+        routing: getDiscordRouting(),
+        ownThreadChannels: getOwnThreadChannels(),
       });
     } catch (error) {
       console.error('Error updating Discord settings:', error);

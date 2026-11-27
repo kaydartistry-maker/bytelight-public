@@ -132,6 +132,9 @@ import { RateLimitBanner } from './components/RateLimitBanner';
 import { SearchResults, type SearchResult } from './components/SearchResults';
 import { StarredSheet } from './components/StarredSheet';
 import { DateDivider } from './components/DateDivider';
+import { RoomDivider } from './components/RoomDivider';
+import { roomBreaks } from './lib/discord-rooms';
+import { useDiscordDirectory } from './components/DiscordPickers';
 import { splitMessageVoices } from './lib/voices';
 import { deliverLastCrashReport } from './bytelight/pocket-voice';
 import { normalizeCompanionRow } from './lib/companion-row';
@@ -1771,8 +1774,22 @@ export default function App() {
   // toasts) skip re-splitting voices and re-parsing markdown for the whole
   // history — unchanged element references let React bail out of each
   // bubble's subtree entirely.
+  // Room names for older Discord messages that didn't keep them.
+  const discordDirectory = useDiscordDirectory();
+  const discordNames = useMemo(() => {
+    const channels = new Map<string, string>();
+    const guilds = new Map<string, string>();
+    for (const g of discordDirectory) {
+      guilds.set(g.id, g.name);
+      for (const c of g.channels) channels.set(c.id, c.name);
+    }
+    return { channel: (id: string) => channels.get(id), guild: (id: string) => guilds.get(id) };
+  }, [discordDirectory]);
+
   const renderedMessages = useMemo(() => {
     const voiceRoster = threadCompanions.length > 0 ? threadCompanions : dbCompanions;
+    // Where Discord talk moved to, one quiet line per room change.
+    const rooms = roomBreaks(filteredMessages, discordNames);
     return filteredMessages.flatMap((msg, index) => {
       const prev = index > 0 ? filteredMessages[index - 1] : null;
       const showDate =
@@ -1787,6 +1804,11 @@ export default function App() {
             themeConfig={activeTheme}
             themeMode={theme.mode}
           />,
+        );
+      }
+      if (rooms[index]) {
+        nodes.push(
+          <RoomDivider key={`room-${msg.id}`} label={rooms[index]!} themeConfig={activeTheme} themeMode={theme.mode} />,
         );
       }
       // Multi-voice companion replies split into one bubble per
@@ -1901,6 +1923,7 @@ export default function App() {
     appSettings.customEmojis,
     ownerAvatar,
     appSettings.userAvatarColor,
+    discordNames,
   ]);
 
   useEffect(() => {

@@ -6,7 +6,7 @@ import { ThemeConfig } from '../lib/theme';
 import { cn } from '../lib/utils';
 import { apiFetch } from '../bytelight';
 import { DiscordRules } from './DiscordRules';
-import { NamePicker, useDiscordDirectory, guildOptions, userOptions } from './DiscordPickers';
+import { NamePicker, useDiscordDirectory, guildOptions, channelOptions, userOptions } from './DiscordPickers';
 
 interface DiscordAppProps {
   onClose: () => void;
@@ -56,6 +56,10 @@ interface DiscordSettings {
   // discord.activeChannels is still stored and returned, but nothing in the
   // house has ever read it: the room gates do that job. Not shown (Kay, 2026-11-27).
   activeChannels?: string[];
+  /** Where Discord talk lands: Home, one Discord thread, or each room its own. */
+  routing?: 'home' | 'one' | 'per-room';
+  /** Rooms that keep their own thread whatever the routing says. */
+  ownThreadChannels?: string[];
 }
 
 export function DiscordApp({ onClose, themeConfig, themeMode, embedded }: DiscordAppProps) {
@@ -451,6 +455,36 @@ export function DiscordApp({ onClose, themeConfig, themeMode, embedded }: Discor
             </button>
             {showSettings && settings && (
               <div className="mt-3 flex flex-col gap-2.5">
+                <label className="flex flex-col gap-1">
+                  <span className={cn('text-[11px]', colors.textMuted)}>Where Discord talk lands</span>
+                  <select
+                    value={settings.routing ?? 'home'}
+                    onChange={(e) => patchSettings({ routing: e.target.value as DiscordSettings['routing'] })}
+                    className={cn('rounded-md border px-2 py-1.5 text-xs bg-transparent', colors.panelBorder, colors.textMain)}
+                  >
+                    <option value="home">Follow me home</option>
+                    <option value="one">One Discord thread</option>
+                    <option value="per-room">Each room its own thread</option>
+                  </select>
+                  <span className={cn('text-[10px] italic', colors.textMuted)}>
+                    {(settings.routing ?? 'home') === 'home'
+                      ? 'Discord talk lands in Home with everything else.'
+                      : settings.routing === 'one'
+                        ? 'Every room lands in one thread called Discord, made the first time it is needed.'
+                        : 'Each room gets its own thread, named for its server and room. Direct messages get their own too.'}
+                  </span>
+                </label>
+                {(settings.routing ?? 'home') !== 'per-room' && (
+                  <NamePicker
+                    label="Rooms that keep their own thread"
+                    value={settings.ownThreadChannels ?? []}
+                    options={channelOptions(directory)}
+                    onChange={(v) => patchSettings({ ownThreadChannels: v })}
+                    colors={colors}
+                    empty="None"
+                    noOptions="Turn the gateway on to see your channels."
+                  />
+                )}
                 {numField('Debounce window (ms)', settings.debounceMs, (n) => patchSettings({ debounceMs: n }))}
                 <div className="flex items-center justify-between">
                   <span className={cn('text-[11px]', colors.textMuted)}>Require @mention in guilds</span>

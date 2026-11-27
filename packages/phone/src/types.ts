@@ -46,6 +46,8 @@ export interface Message {
   // (currently 'Discord'). Guest messages pair this with sender for the
   // name label; the owner's own bridged messages show it as a badge.
   via?: string;
+  /** The Discord room a bridged message came from (lib/discord-rooms.ts). */
+  discordRoom?: { channelId: string; guildId: string | null; channelName?: string; guildName?: string };
   // Slug of the companion who authored this message, when the backend
   // recorded one (per-companion sends). Lets the chat
   // attach the right avatar even without an in-text voice header.

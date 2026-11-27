@@ -83,6 +83,21 @@ function extractSurfacedMemory(
   return { cards: validCards, dejavu: dejavu === true };
 }
 
+/** Where a Discord-bridged message was said, read off its metadata. */
+function discordRoomOf(km: BytelightMessage): PhoneMessage['discordRoom'] {
+  if (km.platform !== 'discord') return undefined;
+  const m = (km.metadata ?? {}) as Record<string, unknown>;
+  const str = (v: unknown) => (typeof v === 'string' && v ? v : undefined);
+  const channelId = str(m.discordChannelId);
+  if (!channelId) return undefined;
+  return {
+    channelId,
+    guildId: str(m.discordGuildId) ?? null,
+    channelName: str(m.discordChannelName),
+    guildName: str(m.discordGuildName),
+  };
+}
+
 export function toPhoneMessage(km: BytelightMessage): PhoneMessage {
   // The phone's Message model uses 'inbound' for the phone owner's own
   // messages and 'outbound' for the other party (see MessageBubble/App.tsx).
@@ -116,6 +131,7 @@ export function toPhoneMessage(km: BytelightMessage): PhoneMessage {
     sender: km.role === 'system' ? (discordUsername || 'System') : undefined,
     senderAvatar: discordUsername ? discordMeta?.discordAvatarUrl : undefined,
     via: discordUsername ? 'Discord' : undefined,
+    discordRoom: discordRoomOf(km),
     companionSlug:
       typeof (km.metadata as { companionSlug?: unknown } | null)?.companionSlug === 'string'
         ? ((km.metadata as { companionSlug: string }).companionSlug)

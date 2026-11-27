@@ -46,12 +46,13 @@ import { parseAttachmentMarkers } from './attach-markers.js';
 import type { MessageBatch } from './types.js';
 import type { AgentService } from '../agent.js';
 import { isDeliberateSilence } from '../silence.js';
-import { createMessage, resolveRoutingThread, updateThreadActivity, listCompanions } from '../db.js';
+import { createMessage, updateThreadActivity, listCompanions } from '../db.js';
 import { getBytelightConfig } from '../../config.js';
 import type { registry as registryInstance } from '../registry.js';
 import type { VoiceService } from '../voice.js';
 import { errMessage } from '../../util/errors.js';
 import { discordAvatarFor, backfillDiscordAvatars } from './avatars.js';
+import { discordThreadFor } from './routing.js';
 import { getDb } from '../db.js';
 import { isResident, residentIds } from '../residents.js';
 
@@ -536,7 +537,16 @@ export class DiscordService {
       // community, DMs. This ensures social interactions and community
       // conversations are visible in the handoff context alongside everything
       // else. (Thornvale port: per-channel threads stop being created.)
-      const routedThread = resolveRoutingThread('discord', this.registry);
+      // Where it lands is Kay's call on the Discord tab (routing.ts): Home as
+      // always, one Discord thread, or each room its own.
+      const roomName = nameOf(lastMessage.channel) ?? nameOf(this.client.channels.cache.get(channelId));
+      const serverName = batch.guildId
+        ? nameOf(lastMessage.guild) ?? nameOf(this.client.guilds.cache.get(batch.guildId))
+        : undefined;
+      const routedThread = discordThreadFor(
+        { channelId, guildId: batch.guildId, channelName: roomName, guildName: serverName, dmName: displayNameOf(firstMessage) },
+        this.registry,
+      );
       const threadId = routedThread.id;
       const threadName = routedThread.name;
       console.log(`[Discord] ${isOwner ? 'Owner' : 'Community'} routed to routing thread: ${threadName} (${threadId})`);
@@ -575,6 +585,9 @@ export class DiscordService {
           ...(discordAvatarFor(firstMessage) ? { discordAvatarUrl: discordAvatarFor(firstMessage) } : {}),
           discordChannelId: channelId,
           discordGuildId: batch.guildId,
+          // The room's names, so the chat can say where talk moved to.
+          ...(roomName ? { discordChannelName: roomName } : {}),
+          ...(serverName ? { discordGuildName: serverName } : {}),
           discordMessageId: lastMessage.id,
           ...(stickers.length > 0 ? { discordStickers: stickers } : {}),
           // A message about the owner rather than to us says so, and where it
