@@ -5,21 +5,23 @@
 //   preview  reads the export and says what is in it: which app made it, how
 //            many chats and messages, how many abandoned drafts would be left
 //            out, and which months it covers.
-//   import   stores the kept messages word for word (history-passages.ts),
-//            then brings the search index up to date from them
-//            (history-index.ts), in the background, one import at a time.
+//   import   stores the kept messages word for word in the house's history
+//            store (history-store.ts: the local file, or the brain when the
+//            house has one), then brings the search index up to date from
+//            them (history-index.ts), in the background, one import at a time.
 //
 // Running the same export twice adds nothing. An import can be limited to
 // one month, to try a small piece first.
 
 import { existsSync, statSync, unlinkSync } from 'node:fs';
 import { buildHistoryIndex, HISTORY_INDEX_PATH } from './history-index.js';
-import { PassageStore, HISTORY_PASSAGES_PATH } from './history-passages.js';
+import { localStore, openHistoryStore, type HistoryStore } from './history-store.js';
+import { OLD_WINDOW_VOICE } from './heartbeat/whisper.js';
 import { chatReader, detectSource, readExportElements, READABLE, SOURCE_LABEL, type ChatReader, type ExportSource, type ReadChat } from './history-readers.js';
 import Database from 'better-sqlite3';
 
-/** Whose history the house index holds (heartbeat/whisper.ts OLD_WINDOW_VOICE). */
-export const HOUSE_VOICE = 'house';
+/** Whose history the house index holds: the voice old windows answer for. */
+export const HOUSE_VOICE = OLD_WINDOW_VOICE;
 
 export interface MonthCount { chats: number; messages: number; dropped: number }
 
@@ -121,6 +123,9 @@ export function importStatus(): ImportStatus {
 
 export interface ImportDeps {
   embed: (text: string) => Promise<Float32Array>;
+  /** Where the words go. Default: the house's own (history-store.ts openHistoryStore). */
+  store?: HistoryStore;
+  /** A local file to use instead of the house's store (tests). */
   passagesPath?: string;
   indexPath?: string;
   /** Remove this file when the import has finished well (an upload the house made). */
@@ -150,17 +155,27 @@ export function startImport(path: string, opts: { month?: string }, deps: Import
 }
 
 async function runImport(path: string, opts: { month?: string }, deps: ImportDeps): Promise<ImportStatus> {
-  const passagesPath = deps.passagesPath ?? HISTORY_PASSAGES_PATH;
   const indexPath = deps.indexPath ?? HISTORY_INDEX_PATH;
-  const store = new PassageStore(passagesPath);
+  let store: HistoryStore | null = null;
   try {
+    store = deps.store ?? (deps.passagesPath ? localStore(deps.passagesPath) : await openHistoryStore());
+    const home = store;
     let source: ExportSource | null = null;
     let reader: ChatReader | null = null;
+    // Chats are read as a stream, but storing one can wait on the brain, so
+    // they queue here and are stored in order between reads.
+    const waiting: ReadChat[] = [];
     const keep = (chat: ReadChat) => {
       if (opts.month && monthOf(chat.startedAt) !== opts.month) return;
-      status.chats++;
-      status.dropped += chat.dropped;
-      status.stored += store.addChat({ source: source!, chat: chat.chat, title: chat.title, voice: HOUSE_VOICE, lines: chat.lines });
+      waiting.push(chat);
+    };
+    const storeWaiting = async () => {
+      while (waiting.length) {
+        const chat = waiting.shift()!;
+        status.chats++;
+        status.dropped += chat.dropped;
+        status.stored += await home.addChat({ source: source!, chat: chat.chat, title: chat.title, voice: HOUSE_VOICE, lines: chat.lines });
+      }
     };
     await readExportElements(path, (raw) => {
       if (!source) {
@@ -170,13 +185,14 @@ async function runImport(path: string, opts: { month?: string }, deps: ImportDep
         reader = chatReader(source);
       }
       reader!.take(raw).forEach(keep);
-    });
+    }, { between: storeWaiting });
     if (reader) (reader as ChatReader).finish().forEach(keep);
+    await storeWaiting();
 
     status.state = 'indexing';
-    status.toIndex = store.countAfter(HOUSE_VOICE, indexCursor(indexPath));
+    status.toIndex = await home.countAfter(HOUSE_VOICE, indexCursor(indexPath));
     const built = await buildHistoryIndex(HOUSE_VOICE, {
-      fetchPage: async (voice, after) => store.page(voice, after),
+      fetchPage: (voice, after) => home.page(voice, after),
       embed: deps.embed,
       indexPath,
       onProgress: (p) => { status.indexed = p.passages; status.pieces = p.pieces; },
@@ -192,7 +208,7 @@ async function runImport(path: string, opts: { month?: string }, deps: ImportDep
     status.finishedAt = new Date().toISOString();
     console.warn('[history-import] import stopped:', status.error);
   } finally {
-    store.close();
+    store?.close();
   }
   return importStatus();
 }

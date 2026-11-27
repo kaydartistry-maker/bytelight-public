@@ -114,6 +114,9 @@ Do these after every UI-touching batch.
 - [ ] Bring the same export in again → *Everything in that export was already here.*
 - [ ] A ChatGPT export → the preview says ChatGPT, with its chats and drafts left out; bringing it in works the same way.
 - [ ] A Google Takeout (My Activity → Gemini Apps, JSON) → the preview says Gemini, chats gathered back together. A Letta .af → the preview says Letta, one chat per day. A Grok export zip → the preview says Grok. A Copilot activity CSV → the preview says Copilot, each conversation in order.
+- [ ] **With a brain (Neuralis) connected:** the preview says *Kept word for word in your brain, not on this machine.* After an import, `data/history-passages.db` does not exist, and **Read old chats** lists the chats the brain already held before this import too.
+- [ ] **With no brain set up:** the preview says *Kept word for word on this machine*, and the words land in `data/history-passages.db`.
+- [ ] **Brain set up but not answering:** an import stops with *The brain is not answering right now*; nothing is written to this machine.
 - [ ] **Read old chats →** on the Old windows card → the chats brought in, newest first, a chip per app. Search a word you remember → only chats holding it, with the line it is in. Open one → it reads in order, your words on the right, the word marked and scrolled into view. ← All old chats goes back.
 - [ ] Once chats are imported: mention a moment from them → one card marked *old window* on the reply. Mention something unrelated → none. Turn the switch off → none.
 

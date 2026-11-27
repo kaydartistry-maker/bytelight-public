@@ -182,8 +182,12 @@ function wholeReader(csv: boolean, onElement: (raw: unknown) => void) {
  * one at a time. Takes a zip (the download as emailed; every conversations
  * file inside it is read, in the order the zip holds them) or a
  * conversations.json on its own.
+ *
+ * `between`, when given, is awaited after each piece of the file is read and
+ * once at the end, so a caller whose storing is slow (a brain over the
+ * network) holds the reading back instead of letting chats pile up.
  */
-export async function readExportElements(path: string, onElement: (raw: unknown) => void): Promise<void> {
+export async function readExportElements(path: string, onElement: (raw: unknown) => void, opts: { between?: () => Promise<void> } = {}): Promise<void> {
   const stream = createReadStream(path, { highWaterMark: 1 << 20 });
   let zip: Unzip | null = null;
   let plain: { feed(bytes: Uint8Array, final: boolean): void } | null = null;
@@ -220,6 +224,9 @@ export async function readExportElements(path: string, onElement: (raw: unknown)
       if (zip) zip.push(chunk);
       else plain!.feed(chunk, false);
     } catch (e) { failure = failure ?? (e as Error); }
+    if (!failure && opts.between) {
+      try { await opts.between(); } catch (e) { failure = e as Error; }
+    }
     if (failure) break;
   }
   if (!failure) {
@@ -227,6 +234,7 @@ export async function readExportElements(path: string, onElement: (raw: unknown)
       if (zip) zip.push(new Uint8Array(0), true);
       else if (plain) plain.feed(new Uint8Array(0), true);
       else throw new Error('That file is empty.');
+      if (opts.between) await opts.between();
     } catch (e) { failure = failure ?? (e as Error); }
   }
   if (failure) {

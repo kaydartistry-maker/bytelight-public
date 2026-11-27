@@ -19,6 +19,8 @@ interface Preview {
   dropped: number;
   months: Record<string, MonthCount>;
   sample: { title: string; startedAt: string | null; messages: number }[];
+  /** Where the words will be kept: this machine, or the house's brain. */
+  home?: 'local' | 'brain';
 }
 interface Status {
   state: 'idle' | 'reading' | 'indexing' | 'done' | 'failed';
@@ -294,7 +296,7 @@ export function OldWindowsImport({ colors, onImported }: { colors: Colors; onImp
           )}
 
           <div className={cn('text-[10px] mt-2.5 leading-relaxed', colors.textMuted)}>
-            Kept word for word on this machine. Abandoned edits and regenerations are left out. Indexing takes {roughTime(pick.messages)}, in the background. Chats already here are skipped.
+            {preview.home === 'brain' ? 'Kept word for word in your brain, not on this machine.' : 'Kept word for word on this machine.'} Abandoned edits and regenerations are left out. Indexing takes {roughTime(pick.messages)}, in the background. Chats already here are skipped.
           </div>
           <button
             onClick={() => void start()}

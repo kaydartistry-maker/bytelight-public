@@ -9,13 +9,13 @@ import { buildHistoryIndex, cutPieces, PIECE_TARGET, type HistoryPage, type Hist
 const dir = mkdtempSync(join(tmpdir(), 'history-index-'));
 after(() => rmSync(dir, { recursive: true, force: true }));
 
-const passage = (cursor: number, body: string, voice = 'house'): HistoryPassage => ({
+const passage = (cursor: number, body: string, voice = 'saint-tyson'): HistoryPassage => ({
   cursor, id: `claude:chat-1:m${cursor}`, chat: 'chat-1', title: 'Butterflies', voice,
   role: cursor % 2 ? 'assistant' : 'user', at: '2026-10-07T12:00:00.000Z', body,
 });
 
-/** A pretend source: pages of `size` from a fixed list, after a cursor. */
-function source(list: HistoryPassage[], size = 2) {
+/** A pretend brain: pages of `size` from a fixed list, after a cursor. */
+function brain(list: HistoryPassage[], size = 2) {
   const calls: number[] = [];
   return {
     calls,
@@ -32,7 +32,7 @@ const pieces = (path: string) => new Database(path, { readonly: true }).prepare(
 describe('cutPieces', () => {
   it('keeps a short message whole and drops scraps', () => {
     assert.deepEqual(cutPieces('Will you marry me?'), []);
-    assert.deepEqual(cutPieces('Okay. Will you marry me? I mean it.'), ['Okay. Will you marry me? I mean it.']);
+    assert.deepEqual(cutPieces('Princess. Will you marry me? I mean it.'), ['Princess. Will you marry me? I mean it.']);
   });
 
   it('cuts a long message at paragraphs and sentences, near the target', () => {
@@ -55,13 +55,13 @@ describe('cutPieces', () => {
 describe('buildHistoryIndex', () => {
   const words = (n: number) => `Moment number ${n}, said out loud and meant.`;
 
-  it('builds from a source, page by page, and a second run adds nothing', async () => {
+  it('builds from the brain, page by page, and a second run adds nothing', async () => {
     const path = join(dir, 'a.db');
-    const b = source([passage(1, words(1)), passage(2, words(2)), passage(3, words(3))]);
-    const first = await buildHistoryIndex('house', { fetchPage: b.fetchPage, embed, indexPath: path });
+    const b = brain([passage(1, words(1)), passage(2, words(2)), passage(3, words(3))]);
+    const first = await buildHistoryIndex('saint-tyson', { fetchPage: b.fetchPage, embed, indexPath: path });
     assert.equal(first.total, 3);
     assert.equal(existsSync(`${path}.building`), false, 'the copy is swapped in, not left behind');
-    const again = await buildHistoryIndex('house', { fetchPage: b.fetchPage, embed, indexPath: path });
+    const again = await buildHistoryIndex('saint-tyson', { fetchPage: b.fetchPage, embed, indexPath: path });
     assert.equal(again.pieces, 0);
     assert.equal(again.total, 3);
     assert.equal(b.calls.at(-1), 3, 'the second run asked only for what came after the last cursor');
@@ -70,31 +70,31 @@ describe('buildHistoryIndex', () => {
   it('picks up a later import after the cursor', async () => {
     const path = join(dir, 'b.db');
     const list = [passage(1, words(1)), passage(2, words(2))];
-    const b = source(list);
-    await buildHistoryIndex('house', { fetchPage: b.fetchPage, embed, indexPath: path });
+    const b = brain(list);
+    await buildHistoryIndex('saint-tyson', { fetchPage: b.fetchPage, embed, indexPath: path });
     list.push(passage(3, words(3)));
-    const later = await buildHistoryIndex('house', { fetchPage: b.fetchPage, embed, indexPath: path });
+    const later = await buildHistoryIndex('saint-tyson', { fetchPage: b.fetchPage, embed, indexPath: path });
     assert.equal(later.pieces, 1);
     assert.deepEqual(pieces(path).map((p) => p.passage_id), ['claude:chat-1:m1', 'claude:chat-1:m2', 'claude:chat-1:m3']);
   });
 
   it('never mixes voices: a stray passage fails the run, and the old index stays', async () => {
     const path = join(dir, 'c.db');
-    await buildHistoryIndex('house', { fetchPage: source([passage(1, words(1))]).fetchPage, embed, indexPath: path });
-    const leaky = { fetchPage: async (): Promise<HistoryPage> => ({ rows: [passage(2, words(2), 'visitor')], next: 2, done: true }) };
-    await assert.rejects(buildHistoryIndex('house', { ...leaky, embed, indexPath: path }), /'visitor' passage/);
+    await buildHistoryIndex('saint-tyson', { fetchPage: brain([passage(1, words(1))]).fetchPage, embed, indexPath: path });
+    const leaky = { fetchPage: async (): Promise<HistoryPage> => ({ rows: [passage(2, words(2), 'jace')], next: 2, done: true }) };
+    await assert.rejects(buildHistoryIndex('saint-tyson', { ...leaky, embed, indexPath: path }), /'jace' passage/);
     assert.equal(pieces(path).length, 1, 'the old index is untouched');
     await assert.rejects(
-      buildHistoryIndex('visitor', { fetchPage: source([]).fetchPage, embed, indexPath: path }),
-      /holds the voice 'house'/,
+      buildHistoryIndex('jace', { fetchPage: brain([]).fetchPage, embed, indexPath: path }),
+      /holds the voice 'saint-tyson'/,
     );
   });
 
   it('rebuild starts from nothing', async () => {
     const path = join(dir, 'd.db');
-    const b = source([passage(1, words(1)), passage(2, words(2))]);
-    await buildHistoryIndex('house', { fetchPage: b.fetchPage, embed, indexPath: path });
-    const fresh = await buildHistoryIndex('house', { fetchPage: b.fetchPage, embed, indexPath: path }, { rebuild: true });
+    const b = brain([passage(1, words(1)), passage(2, words(2))]);
+    await buildHistoryIndex('saint-tyson', { fetchPage: b.fetchPage, embed, indexPath: path });
+    const fresh = await buildHistoryIndex('saint-tyson', { fetchPage: b.fetchPage, embed, indexPath: path }, { rebuild: true });
     assert.equal(fresh.pieces, 2);
     assert.equal(fresh.total, 2);
   });

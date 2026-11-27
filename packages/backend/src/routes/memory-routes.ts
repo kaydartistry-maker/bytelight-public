@@ -283,6 +283,9 @@ export function createMemoryRoutes(): Router {
     res.json({ enabled: oldWindowsEnabled(), indexed: historyIndexStats() });
   });
 
+  // Bringing old chats in: upload or name an export, preview it, import it.
+  registerHistoryImportRoutes(router);
+
   router.put('/memory/old-windows', (req, res) => {
     const enabled = req.body?.enabled;
     if (typeof enabled !== 'boolean') {

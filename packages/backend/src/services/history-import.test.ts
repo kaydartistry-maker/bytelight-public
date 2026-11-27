@@ -376,7 +376,7 @@ describe('preview and import', () => {
     const owner = (idx.prepare("SELECT value FROM meta WHERE key = 'voice'").get() as { value: string }).value;
     idx.close();
     assert.equal(n, 6);
-    assert.equal(owner, 'house');
+    assert.equal(owner, HOUSE_VOICE);
   });
 
   it('removes an upload the house made once it is in, and never a file it was pointed at', async () => {
