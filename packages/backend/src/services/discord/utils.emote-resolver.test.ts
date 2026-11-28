@@ -87,3 +87,26 @@ test('adjacent emojis both resolve', () => {
     '<:kekw:111111111111111111><a:catjam:222222222222222222>',
   );
 });
+
+test('repairs a hand-typed token with the wrong animated flag', () => {
+  assert.equal(
+    resolveEmoteShorthand('woo <:catjam:222222222222222222>', INDEX),
+    'woo <a:catjam:222222222222222222>',
+  );
+  assert.equal(
+    resolveEmoteShorthand('lol <a:kekw:111111111111111111>', INDEX),
+    'lol <:kekw:111111111111111111>',
+  );
+});
+
+test('repairs a known name typed with a stale id', () => {
+  assert.equal(
+    resolveEmoteShorthand('vibe <a:catjam:999999999999999999>', INDEX),
+    'vibe <a:catjam:222222222222222222>',
+  );
+});
+
+test('leaves an unknown complete token as written', () => {
+  const t = 'other server <a:goos:751117409040990328>';
+  assert.equal(resolveEmoteShorthand(t, INDEX), t);
+});

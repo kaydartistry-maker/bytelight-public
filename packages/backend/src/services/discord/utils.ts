@@ -3,6 +3,7 @@
 import type { Message as DiscordMessage } from 'discord.js';
 import { splitMessage } from '../split-message.js';
 import { composeIncomingContent, stickerTokensFor } from './sticker-content.js';
+import { STICKER_TOKEN, resolveStickerRef } from '../sticker-ref.js';
 
 /** Split a response into Discord-safe chunks (max 1900 chars). */
 export function splitResponse(text: string, maxLength = 1900): string[] {
@@ -49,9 +50,22 @@ export function resolveEmoteShorthand(
   if (!text || emojiIndex.length === 0) return text;
   // name → emoji (first wins on duplicate names across guilds).
   const byName = new Map<string, { id: string; animated: boolean }>();
+  const byId = new Map<string, { name: string; animated: boolean }>();
   for (const e of emojiIndex) {
     if (!byName.has(e.name)) byName.set(e.name, { id: e.id, animated: e.animated });
+    byId.set(e.id, { name: e.name, animated: e.animated });
   }
+  // Repair complete tokens a companion typed by hand. A wrong animated flag
+  // (<:name:id> on an animated emoji) or a stale id makes Discord show the
+  // bare name, so a token we know is rewritten from the live catalog: by id
+  // first, then by name. Tokens we don't know pass through as written.
+  text = text.replace(/<(a?):([A-Za-z0-9_]+):(\d{17,20})>/g, (whole, _a: string, name: string, id: string) => {
+    const known = byId.get(id);
+    if (known) return known.animated ? `<a:${known.name}:${id}>` : `<:${known.name}:${id}>`;
+    const named = byName.get(name);
+    if (named) return named.animated ? `<a:${name}:${named.id}>` : `<:${name}:${named.id}>`;
+    return whole;
+  });
   // Match a bare :name:. The `(?<!<)` lookbehind skips a token's opening colon
   // (`<:name:...`), and the `(?![0-9]+>)` lookahead skips a token's middle colon
   // (`...:id>`) — together they leave complete <:name:id> / <a:name:id> tokens
@@ -107,4 +121,27 @@ export function formatChannelHistory(messages: DiscordMessage[]): string {
       || (msg.attachments.size > 0 ? '[attachment]' : '[embed]');
     return `[${time}] ${author}: ${content}`;
   }).join('\n');
+}
+
+/**
+ * Drop the house's own sticker refs (`:pack_sticker:`) from a Discord reply.
+ * They draw as pictures in the app, but Discord has no such picture and
+ * would print the words. Run after resolveEmoteShorthand, so a name that is
+ * a real Discord emoji has already become a token and is never touched here.
+ * Anything the lookup does not recognise as a house sticker is left alone.
+ */
+export function stripHouseStickerRefs(
+  text: string,
+  lookup: (pack: string, name: string) => unknown | null,
+): string {
+  if (!text) return text;
+  let changed = false;
+  const out = text.replace(STICKER_TOKEN, (whole, body: string, offset: number, all: string) => {
+    if (offset > 0 && all[offset - 1] === '<') return whole; // inside <:name:id>
+    if (offset > 1 && all.slice(offset - 2, offset) === '<a') return whole;
+    if (!resolveStickerRef(body, lookup)) return whole;
+    changed = true;
+    return '';
+  });
+  return changed ? out.replace(/[ \t]{2,}/g, ' ').replace(/[ \t]+\n/g, '\n').trim() : text;
 }

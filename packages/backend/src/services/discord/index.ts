@@ -41,7 +41,8 @@ import { discordSpeaker } from './speaker.js';
 import { buildOwnerMentionPush, type OwnerMentionReason } from './owner-mention.js';
 import { getPushService } from '../push.js';
 import { DISCORD_CONFIG, getDiscordConfig } from './config.js';
-import { splitResponse, formatChannelHistory, resolveEmoteShorthand } from './utils.js';
+import { splitResponse, formatChannelHistory, resolveEmoteShorthand, stripHouseStickerRefs } from './utils.js';
+import { getStickerByRef } from '../stickers.js';
 import { parseAttachmentMarkers } from './attach-markers.js';
 import type { MessageBatch } from './types.js';
 import type { AgentService } from '../agent.js';
@@ -770,7 +771,12 @@ export class DiscordService {
     // so shorthand the companion wrote renders as the server's actual emoji.
     // Empty index / gateway down → identity (no-op). Done pre-split so a token
     // is never severed across a chunk boundary.
-    const resolved = resolveEmoteShorthand(response, this.listCustomEmojis());
+    // Then drop our own app-sticker refs: Discord can't draw them and would
+    // print the words instead.
+    const resolved = stripHouseStickerRefs(
+      resolveEmoteShorthand(response, this.listCustomEmojis()),
+      getStickerByRef,
+    );
 
     // [discord-attach:<fileId>] markers become real files on the message
     // and are stripped from the words (attach-markers.ts, Aerie): a picture
