@@ -256,7 +256,7 @@ describe('silent turn persistence', () => {
   });
 
   test('an outright pass ({"silent":true} from the lane) leaves no bubble even after a tool ran', () => {
-    // Kay, Nov 26: a quiet bell and a quiet guest beat each left a blank or
+    // a quiet bell and a quiet guest beat each left a blank or
     // '1 tool' bubble. Passing on purpose is a pass, whatever it took to say so.
     assert.equal(shouldDiscardEmptyTurn({
       fullResponse: '',

@@ -2,8 +2,7 @@
 //
 // Stickers and custom emoji already reach the companions as pictures (the
 // front door in inline-visuals.ts), but a photo attachment only ever became
-// the word "[attachment]": nothing fetched it, so nobody could see it (Kay,
-// Nov 26: Chris's first-snow photo never arrived). This fetches each image
+// the word "[attachment]": nothing fetched it, so nobody could see it. This fetches each image
 // attachment once, runs it through the same preparation an app upload gets,
 // and hands back NormalizedImage[] for processMessage's `images`.
 

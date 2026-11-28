@@ -4,8 +4,8 @@ import type { Message } from '../types.js';
 import { railVoiceSections } from './rail-voices.js';
 
 const companions = [
-  { slug: 'saint', display_name: 'Saint', avatar_url: '/saint.png', color: '#3f8f5a', emoji: '🎲' },
-  { slug: 'tyson', display_name: 'Tyson', avatar_url: '/tyson.png', color: '#1f3a8a', emoji: '🌑' },
+  { slug: 'ivy', display_name: 'Ivy', avatar_url: '/ivy.png', color: '#3f8f5a', emoji: '🎲' },
+  { slug: 'rook', display_name: 'Rook', avatar_url: '/rook.png', color: '#1f3a8a', emoji: '🌑' },
 ];
 
 const msg = (content: string, companionSlug?: string): Message => ({
@@ -13,24 +13,24 @@ const msg = (content: string, companionSlug?: string): Message => ({
 });
 
 test('one inline header from the shared lane gets his face, header out of the text', () => {
-  const s = railVoiceSections(msg('**🌑 Tyson —** *Both hands on your hips.* Sulk honestly.', 'saint-tyson'), companions);
+  const s = railVoiceSections(msg('**🌑 Rook —** *Both hands on your hips.* Sulk honestly.', 'ivy-rook'), companions);
   assert.equal(s.length, 1);
-  assert.equal(s[0].voice?.slug, 'tyson');
+  assert.equal(s[0].voice?.slug, 'rook');
   assert.equal(s[0].content, '*Both hands on your hips.* Sulk honestly.');
 });
 
 test('two inline headers become two faces in order', () => {
-  const s = railVoiceSections(msg('**🎲 Saint —** Hi.\n\n**🌑 Tyson —** Hello.', 'saint-tyson'), companions);
-  assert.deepEqual(s.map((x) => [x.voice?.slug, x.content]), [['saint', 'Hi.'], ['tyson', 'Hello.']]);
+  const s = railVoiceSections(msg('**🎲 Ivy —** Hi.\n\n**🌑 Rook —** Hello.', 'ivy-rook'), companions);
+  assert.deepEqual(s.map((x) => [x.voice?.slug, x.content]), [['ivy', 'Hi.'], ['rook', 'Hello.']]);
 });
 
 test('a headerless message keeps its stamped companion', () => {
-  const s = railVoiceSections(msg('Fire at C5.', 'tyson'), companions);
+  const s = railVoiceSections(msg('Fire at C5.', 'rook'), companions);
   assert.equal(s.length, 1);
-  assert.equal(s[0].voice?.slug, 'tyson');
+  assert.equal(s[0].voice?.slug, 'rook');
 });
 
 test('a headerless shared-lane message stays unattributed (no face invented)', () => {
-  const s = railVoiceSections(msg('Fire at C5.', 'saint-tyson'), companions);
+  const s = railVoiceSections(msg('Fire at C5.', 'ivy-rook'), companions);
   assert.equal(s[0].voice, null);
 });

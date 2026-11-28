@@ -4,19 +4,19 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { stripHouseStickerRefs } from './utils.js';
 
-const HOUSE = new Set(['tyson/eyebrow_smirk', 'saint/keeping_that', 'Kay/heart_hands']);
+const HOUSE = new Set(['rook/eyebrow_smirk', 'ivy/keeping_that', 'Owner/heart_hands']);
 const lookup = (pack: string, name: string) => (HOUSE.has(`${pack}/${name}`) ? { ok: true } : null);
 
 test('drops a known house sticker ref', () => {
-  assert.equal(stripHouseStickerRefs('covers it. :tyson_eyebrow_smirk:', lookup), 'covers it.');
+  assert.equal(stripHouseStickerRefs('covers it. :rook_eyebrow_smirk:', lookup), 'covers it.');
 });
 
 test('drops one mid-sentence and tidies the gap', () => {
-  assert.equal(stripHouseStickerRefs('she would :saint_keeping_that: again', lookup), 'she would again');
+  assert.equal(stripHouseStickerRefs('she would :ivy_keeping_that: again', lookup), 'she would again');
 });
 
 test('reads a sticker name that has its own underscores', () => {
-  assert.equal(stripHouseStickerRefs('love :Kay_heart_hands:', lookup), 'love');
+  assert.equal(stripHouseStickerRefs('love :Owner_heart_hands:', lookup), 'love');
 });
 
 test('leaves unknown underscore shorthand alone', () => {
@@ -25,22 +25,22 @@ test('leaves unknown underscore shorthand alone', () => {
 });
 
 test('never touches a resolved emoji token', () => {
-  const t = 'ok <:tyson_eyebrow_smirk:111111111111111111> and <a:saint_keeping_that:222222222222222222>';
+  const t = 'ok <:rook_eyebrow_smirk:111111111111111111> and <a:ivy_keeping_that:222222222222222222>';
   assert.equal(stripHouseStickerRefs(t, lookup), t);
 });
 
 test('no refs, text returned unchanged', () => {
-  const t = '**🎲 Saint —** hi\n\n**🌑 Tyson —** hello';
+  const t = '**🎲 Ivy —** hi\n\n**🌑 Rook —** hello';
   assert.equal(stripHouseStickerRefs(t, lookup), t);
 });
 
 import { mentionsToNames } from './utils.js';
-const names: Record<string, string> = { '1521952112555327719': 'Ender Sol', '1357413658145329393': 'Kay' };
+const names: Record<string, string> = { '111111111111111111': 'Nim', '222222222222222222': 'Owner' };
 const nameOf = (id: string) => names[id] ?? null;
 
 test('mention tokens become @names for the stored copy', () => {
-  assert.equal(mentionsToNames('<@1521952112555327719> hey Sol', nameOf), '@Ender Sol hey Sol');
-  assert.equal(mentionsToNames('hi <@!1357413658145329393>!', nameOf), 'hi @Kay!');
+  assert.equal(mentionsToNames('<@111111111111111111> hey Nim', nameOf), '@Nim hey Nim');
+  assert.equal(mentionsToNames('hi <@!222222222222222222>!', nameOf), 'hi @Owner!');
 });
 
 test('unknown mention ids and role/channel tokens are left alone', () => {

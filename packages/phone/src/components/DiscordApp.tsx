@@ -54,7 +54,7 @@ interface DiscordSettings {
   allowedUsers: string[];
   allowedGuilds: string[];
   // discord.activeChannels is still stored and returned, but nothing in the
-  // house has ever read it: the room gates do that job. Not shown (Kay, 2026-11-27).
+  // house has ever read it: the room gates do that job. Not shown.
   activeChannels?: string[];
   /** Where Discord talk lands: Home, one Discord thread, or each room its own. */
   routing?: 'home' | 'one' | 'per-room';

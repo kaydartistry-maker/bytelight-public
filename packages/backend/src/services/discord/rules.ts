@@ -56,7 +56,7 @@ export interface UserRule {
   // 'blocked' is never answered, anywhere; a blocked bot is turned away at the gateway.
   trustLevel: 'full' | 'standard' | 'limited' | 'blocked';
   relationship?: string;
-  /** Added by the house the first time they spoke near us, not by Kay. */
+  /** Added by the house the first time they spoke near us, not by the owner. */
   auto?: boolean;
   /** When the house first saw them (ISO). */
   seenAt?: string;
@@ -336,14 +336,14 @@ export function reloadRules(data?: RulesData): void {
   console.log(`[Discord Rules] Reloaded: ${serverRules.size} server, ${channelRules.size} channel, ${userRules.size} user rules`);
 }
 
-// --- People who appear on their own (Kay, 2026-11-27) ---
+// --- People who appear on their own ---
 
 /**
  * The rule the house writes for someone it hears for the first time, or null
  * when it writes none. It changes nothing about who is answered: a person
  * with no rule is already treated as Limited, and a bot with no rule is
  * already turned away, which is what Blocked does. They simply become a name
- * in the Users list that Kay can raise with one tap.
+ * in the Users list that the owner can raise with one tap.
  */
 export function autoRuleFor(
   author: { id: string; name: string; bot: boolean },

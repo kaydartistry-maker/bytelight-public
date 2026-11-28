@@ -2,8 +2,8 @@
 //
 // The rail asked splitMessageVoices first, and that reader only takes a header
 // that owns its whole line. The house writes its header inline —
-// `**🌑 Tyson —** words…` — so the reader found nobody, the rail fell back to
-// the message's companion stamp, and a shared-lane reply ('saint-tyson', no
+// `**🌑 Rook —** words…` — so the reader found nobody, the rail fell back to
+// the message's companion stamp, and a shared-lane reply ('ivy-rook', no
 // single companion) drew a faceless ✦. The chat bubble already reads inline
 // headers through splitBySpeaker; the rail now does the same when the
 // whole-line reader comes back empty.

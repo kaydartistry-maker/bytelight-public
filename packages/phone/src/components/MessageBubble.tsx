@@ -607,7 +607,7 @@ export function MessageBubble({ message, onReact, onBookmark, onDelete, onEdit, 
     !!segRows &&
     (segTextRows.length > 1 ||
       (segTextRows.length === 1 && segTextRows[0].kind === 'text' && segTextRows[0].speaker !== 'fallback'));
-  // One header from the shared lane ('🌑 Tyson — …' alone) still names its
+  // One header from the shared lane ('🌑 Rook — …' alone) still names its
   // speaker: draw his bubble with his face, the way the segment path above
   // already does, instead of a faceless slab with the header left in as text.
   const isSplit =

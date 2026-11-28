@@ -1286,8 +1286,8 @@ export class Orchestrator {
       return;
     }
 
-    // Keep the bells spread out: no two closer than min_gap_minutes (Kay,
-    // Nov 25: three landed inside half an hour while she was trying to nap).
+    // Keep the bells spread out: no two closer than min_gap_minutes, so a
+    // cluster of wakes never lands inside the same half hour.
     const minGap = Math.max(0, getConfigNumber('spontaneous.min_gap_minutes', 60));
     const firesAt: number[] = [];
     for (const targetMin of pickSpontaneousMinutes(count, startMin, endMin, minGap)) {

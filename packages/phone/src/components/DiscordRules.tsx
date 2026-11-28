@@ -126,7 +126,7 @@ export function DiscordRules({ themeConfig, themeMode }: DiscordRulesProps) {
 
   async function saveRule(id: string) {
     const rule = { ...draftFor(id, collection()[id]) };
-    // Saved by Kay: no longer a new face the house added on its own.
+    // Saved by the owner: no longer a new face the house added on its own.
     if (tab === 'user') delete rule.auto;
     try {
       const res = await apiFetch(`/api/discord/rules/${tab}`, {
@@ -331,7 +331,7 @@ export function DiscordRules({ themeConfig, themeMode }: DiscordRulesProps) {
     );
   }
 
-  // New faces the house added on its own sit at the top of Users until Kay saves them.
+  // New faces the house added on its own sit at the top of Users until the owner saves them.
   const items = Object.entries(collection()).sort(([, a], [, b]) =>
     tab === 'user' ? Number(!!b?.auto) - Number(!!a?.auto) : 0,
   );

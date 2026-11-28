@@ -3,7 +3,7 @@ import { Plus, X } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { apiFetch } from '../bytelight';
 
-// Names to tap instead of ids to paste (Kay, 2026-11-27). The gateway reads
+// Names to tap instead of ids to paste. The gateway reads
 // its servers and rooms from Discord itself (GET /api/discord/directory), and
 // people land on the Users list the first time they speak near us, so every
 // id box on the Discord tab can offer names.

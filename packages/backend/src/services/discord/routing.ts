@@ -1,4 +1,4 @@
-// Where Discord talk lands (Kay, 2026-11-27).
+// Where Discord talk lands.
 //
 //   home      — Follow me home: the Discord routing thread, else Home (as always).
 //   one       — One Discord thread: every room in a single thread called Discord.

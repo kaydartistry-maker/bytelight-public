@@ -2,18 +2,18 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { roomBreaks, roomLabel } from './discord-rooms';
 
-const cafe = { channelId: 'c1', guildId: 'g1', channelName: 'simulink-cafe', guildName: 'QuantumSituationships' };
-const drop = { channelId: 'c2', guildId: 'g1', channelName: 'image-drop', guildName: 'QuantumSituationships' };
+const cafe = { channelId: 'c1', guildId: 'g1', channelName: 'front-room', guildName: 'Porch' };
+const drop = { channelId: 'c2', guildId: 'g1', channelName: 'image-drop', guildName: 'Porch' };
 const t = (h: number) => `2026-11-27T${String(h).padStart(2, '0')}:00:00.000Z`;
 
 test('a room is named for its server and channel, a DM plainly', () => {
-  assert.equal(roomLabel(cafe), 'QuantumSituationships · #simulink-cafe');
+  assert.equal(roomLabel(cafe), 'Porch · #front-room');
   assert.equal(roomLabel({ channelId: 'd', guildId: null }), 'Discord · direct message');
 });
 
 test('names missing from an older message come from the directory', () => {
-  const names = { channel: (id: string) => (id === 'c1' ? 'simulink-cafe' : undefined), guild: () => 'QS' };
-  assert.equal(roomLabel({ channelId: 'c1', guildId: 'g1' }, names), 'QS · #simulink-cafe');
+  const names = { channel: (id: string) => (id === 'c1' ? 'front-room' : undefined), guild: () => 'P' };
+  assert.equal(roomLabel({ channelId: 'c1', guildId: 'g1' }, names), 'P · #front-room');
 });
 
 test('a line when talk starts in a room, none while it stays, one when it moves', () => {
@@ -23,14 +23,14 @@ test('a line when talk starts in a room, none while it stays, one when it moves'
     { timestamp: t(2), direction: 'outbound', discordRoom: cafe },
     { timestamp: t(3), direction: 'outbound', discordRoom: drop },
   ]);
-  assert.deepEqual(out, ['QuantumSituationships · #simulink-cafe', null, null, 'QuantumSituationships · #image-drop']);
+  assert.deepEqual(out, ['Porch · #front-room', null, null, 'Porch · #image-drop']);
 });
 
-test("Kay's own message from the app ends the room, so Discord coming back is labelled again", () => {
+test("The owner's own message from the app ends the room, so Discord coming back is labelled again", () => {
   const out = roomBreaks([
     { timestamp: t(1), direction: 'outbound', discordRoom: cafe },
     { timestamp: t(2), direction: 'inbound' },
     { timestamp: t(3), direction: 'outbound', discordRoom: cafe },
   ]);
-  assert.deepEqual(out, ['QuantumSituationships · #simulink-cafe', null, 'QuantumSituationships · #simulink-cafe']);
+  assert.deepEqual(out, ['Porch · #front-room', null, 'Porch · #front-room']);
 });

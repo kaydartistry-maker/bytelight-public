@@ -1,4 +1,4 @@
-// Where Discord talk lands (Kay, 2026-11-27).
+// Where Discord talk lands.
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { routeKind, roomThreadName } from './routing.js';
@@ -22,7 +22,7 @@ test('a room on the keep-their-own list gets its own thread in any mode', () => 
 });
 
 test('a room thread is named for its server and room, a DM for the person', () => {
-  assert.equal(roomThreadName({ channelId: 'c', guildId: 'g', channelName: 'simulink-cafe', guildName: 'QuantumSituationships' }), 'QuantumSituationships · #simulink-cafe');
+  assert.equal(roomThreadName({ channelId: 'c', guildId: 'g', channelName: 'front-room', guildName: 'Porch' }), 'Porch · #front-room');
   assert.equal(roomThreadName({ channelId: 'c', guildId: 'g', channelName: 'general' }), '#general');
-  assert.equal(roomThreadName({ channelId: 'd', guildId: null, dmName: 'Jac' }), 'DM · Jac');
+  assert.equal(roomThreadName({ channelId: 'd', guildId: null, dmName: 'Wren' }), 'DM · Wren');
 });

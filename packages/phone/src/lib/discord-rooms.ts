@@ -1,6 +1,6 @@
-// Room labels in the chat (Kay, 2026-11-27): when Discord talk in a thread
+// Room labels in the chat: when Discord talk in a thread
 // moves to another room, a quiet centred line says where it is now
-// ("QuantumSituationships · #simulink-cafe"). Pure, so it is tested alone.
+// ("Porch · #front-room"). Pure, so it is tested alone.
 
 export interface DiscordRoom {
   channelId: string;

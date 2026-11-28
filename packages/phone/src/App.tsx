@@ -419,7 +419,7 @@ export default function App() {
   const ksActiveThreadId = useActiveThreadId();
   // The lock screen's message card counts our unread words, read off the rows
   // of each room with something waiting, never the room's counter, which
-  // counts everybody a listening cafe says (bytelight/lock-unread.ts).
+  // counts everybody a listening room says (bytelight/lock-unread.ts).
   const lockThreads = useBytelight((s) => s.threads);
   const ksIsViewingAround = useBytelight((s) => s.isViewingAround);
   const totalUnread = useTotalUnread();

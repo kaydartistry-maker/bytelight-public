@@ -318,7 +318,7 @@ export class DiscordService {
       noteSpoke(message.channelId, message.author.id);
 
       // Anyone speaking where we listen lands on the Users list by name, so
-      // Kay taps a trust level instead of pasting an id. Unknown bots go on as
+      // The owner taps a trust level instead of pasting an id. Unknown bots go on as
       // Blocked, which is what they already were.
       if (!message.guildId || DISCORD_CONFIG.allowedGuilds.has(message.guildId) || getServerRule(message.guildId)) {
         try {
@@ -538,7 +538,7 @@ export class DiscordService {
       // community, DMs. This ensures social interactions and community
       // conversations are visible in the handoff context alongside everything
       // else. (Thornvale port: per-channel threads stop being created.)
-      // Where it lands is Kay's call on the Discord tab (routing.ts): Home as
+      // Where it lands is the owner's call on the Discord tab (routing.ts): Home as
       // always, one Discord thread, or each room its own.
       const roomName = nameOf(lastMessage.channel) ?? nameOf(this.client.channels.cache.get(channelId));
       const serverName = batch.guildId
