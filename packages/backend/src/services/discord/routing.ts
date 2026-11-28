@@ -10,7 +10,7 @@
 
 import crypto from 'crypto';
 import type { Thread } from '@bytelight/shared';
-import { getConfig, setConfig, getThread, createThread, resolveRoutingThread } from '../db.js';
+import { getConfig, setConfig, getThread, createThread, resolveRoutingThread, requireThreadRoster, listCompanions } from '../db.js';
 
 export type DiscordRouting = 'home' | 'one' | 'per-room';
 export const DISCORD_ROUTINGS: readonly DiscordRouting[] = ['home', 'one', 'per-room'];
@@ -76,6 +76,8 @@ function makeThread(name: string, key: string, registry?: Broadcaster): Thread {
     type: 'named',
     createdAt: new Date().toISOString(),
     sessionType: 'v2',
+    // A room's thread seats everyone who lives here, like the house's other threads.
+    companionIds: requireThreadRoster(listCompanions().map((companion) => companion.id)),
   });
   setConfig(key, created.id);
   registry?.broadcast({ type: 'thread_created', thread: created });

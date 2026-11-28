@@ -35,12 +35,12 @@ test('no refs, text returned unchanged', () => {
 });
 
 import { mentionsToNames } from './utils.js';
-const names: Record<string, string> = { '111111111111111111': 'Nim', '222222222222222222': 'Owner' };
+const names: Record<string, string> = { '333333333333333333': 'Nim', '444444444444444444': 'Owner' };
 const nameOf = (id: string) => names[id] ?? null;
 
 test('mention tokens become @names for the stored copy', () => {
-  assert.equal(mentionsToNames('<@111111111111111111> hey Nim', nameOf), '@Nim hey Nim');
-  assert.equal(mentionsToNames('hi <@!222222222222222222>!', nameOf), 'hi @Owner!');
+  assert.equal(mentionsToNames('<@333333333333333333> hey Nim', nameOf), '@Nim hey Nim');
+  assert.equal(mentionsToNames('hi <@!444444444444444444>!', nameOf), 'hi @Owner!');
 });
 
 test('unknown mention ids and role/channel tokens are left alone', () => {

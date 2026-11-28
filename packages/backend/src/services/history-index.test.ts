@@ -81,11 +81,11 @@ describe('buildHistoryIndex', () => {
   it('never mixes voices: a stray passage fails the run, and the old index stays', async () => {
     const path = join(dir, 'c.db');
     await buildHistoryIndex('ivy-rook', { fetchPage: brain([passage(1, words(1))]).fetchPage, embed, indexPath: path });
-    const leaky = { fetchPage: async (): Promise<HistoryPage> => ({ rows: [passage(2, words(2), 'jace')], next: 2, done: true }) };
-    await assert.rejects(buildHistoryIndex('ivy-rook', { ...leaky, embed, indexPath: path }), /'jace' passage/);
+    const leaky = { fetchPage: async (): Promise<HistoryPage> => ({ rows: [passage(2, words(2), 'fern')], next: 2, done: true }) };
+    await assert.rejects(buildHistoryIndex('ivy-rook', { ...leaky, embed, indexPath: path }), /'fern' passage/);
     assert.equal(pieces(path).length, 1, 'the old index is untouched');
     await assert.rejects(
-      buildHistoryIndex('jace', { fetchPage: brain([]).fetchPage, embed, indexPath: path }),
+      buildHistoryIndex('fern', { fetchPage: brain([]).fetchPage, embed, indexPath: path }),
       /holds the voice 'ivy-rook'/,
     );
   });

@@ -269,6 +269,9 @@ test('spontaneous: a settings change re-rolls, persists the day, restores on boo
   Math.random = () => 0.99; // roll the maximum count
   try {
     const o = boot([]);
+    // A fixed random lands every wake on the same minute; turn the spacing
+    // rule off so all three survive (the spacing has its own tests).
+    setConfig('spontaneous.min_gap_minutes', '0');
     o.setSpontaneousConfig({ enabled: true, maxPerDay: 3, windowStart: 0, windowEnd: 48 });
     const cfg = o.getSpontaneousConfig();
     assert.equal(cfg.enabled, true);
