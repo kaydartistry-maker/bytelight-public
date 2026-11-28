@@ -33,3 +33,17 @@ test('no refs, text returned unchanged', () => {
   const t = '**🎲 Saint —** hi\n\n**🌑 Tyson —** hello';
   assert.equal(stripHouseStickerRefs(t, lookup), t);
 });
+
+import { mentionsToNames } from './utils.js';
+const names: Record<string, string> = { '1521952112555327719': 'Ender Sol', '1357413658145329393': 'Kay' };
+const nameOf = (id: string) => names[id] ?? null;
+
+test('mention tokens become @names for the stored copy', () => {
+  assert.equal(mentionsToNames('<@1521952112555327719> hey Sol', nameOf), '@Ender Sol hey Sol');
+  assert.equal(mentionsToNames('hi <@!1357413658145329393>!', nameOf), 'hi @Kay!');
+});
+
+test('unknown mention ids and role/channel tokens are left alone', () => {
+  const t = '<@111111111111111111> <@&222222222222222222> <#333333333333333333>';
+  assert.equal(mentionsToNames(t, nameOf), t);
+});

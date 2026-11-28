@@ -293,7 +293,9 @@ export function MessageBubble({ message, onReact, onBookmark, onDelete, onEdit, 
   // inline images straight off the Discord CDN (gif when animated, png
   // otherwise; the demoji: branch of the img renderer sizes them like
   // emotes). New ingests also resolve mentions server-side via cleanContent.
-  if (message.via && textContent.includes('<')) {
+  // Our own replies in a Discord room are tidied server-side into the same
+  // <a:name:id> tokens (discord tidyStoredReplies), so draw those too.
+  if ((message.via || /<a?:\w+:\d{17,20}>/.test(textContent)) && textContent.includes('<')) {
     textContent = textContent
       .replace(/<(a?):(\w+):(\d+)>/g, (_m, anim, name, id) =>
         `![demoji:${name}](https://cdn.discordapp.com/emojis/${id}.${anim ? 'gif' : 'png'}?size=48)`)

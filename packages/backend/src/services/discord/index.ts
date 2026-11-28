@@ -41,7 +41,7 @@ import { discordSpeaker } from './speaker.js';
 import { buildOwnerMentionPush, type OwnerMentionReason } from './owner-mention.js';
 import { getPushService } from '../push.js';
 import { DISCORD_CONFIG, getDiscordConfig } from './config.js';
-import { splitResponse, formatChannelHistory, resolveEmoteShorthand, stripHouseStickerRefs } from './utils.js';
+import { splitResponse, formatChannelHistory, resolveEmoteShorthand, stripHouseStickerRefs, mentionsToNames } from './utils.js';
 import { getStickerByRef } from '../stickers.js';
 import { parseAttachmentMarkers } from './attach-markers.js';
 import type { MessageBatch } from './types.js';
@@ -54,7 +54,7 @@ import type { VoiceService } from '../voice.js';
 import { errMessage } from '../../util/errors.js';
 import { discordAvatarFor, backfillDiscordAvatars } from './avatars.js';
 import { discordThreadFor } from './routing.js';
-import { getDb } from '../db.js';
+import { getDb, listCompanionMessagesSince, replaceMessageContent } from '../db.js';
 import { isResident, residentIds } from '../residents.js';
 
 type ConnectionRegistry = typeof registryInstance;
@@ -726,6 +726,10 @@ export class DiscordService {
       : '';
     const turnContent = [batch.combinedContent, photoNote, ...photos.notes].filter(Boolean).join('\n');
 
+    // When this turn's reply starts being written, so the app's stored copy
+    // can be tidied once Discord has it (tidyStoredReplies).
+    const turnStartIso = new Date().toISOString();
+
     // Process through AgentService
     const response = await this.agentService.processMessage(
       threadId,
@@ -817,9 +821,37 @@ export class DiscordService {
     }
 
     console.log(`[Discord] Sent ${chunks.length} chunk(s)${attachments.length > 0 ? ` with ${attachments.length} attachment(s)` : ''} to ${channelId}`);
+    this.tidyStoredReplies(threadId, turnStartIso, batch.guildId ?? null);
     this.lastSpokeAt.set(channelId, Date.now());
     // A beat that answered has spent the bot turn it opened on (see preflight).
     if (turn.kind !== 'answer') noteJudgedAnswer(channelId, firstMessage.author.bot);
+  }
+
+  /**
+   * The app saves our reply before it goes to Discord, so its copy still says
+   * :name: and <@id>. Once Discord has it, give the app the same thing the
+   * room sees: real emoji (the phone draws <a:name:id> tokens) and @names
+   * instead of digits. Never throws; a miss just leaves the old copy.
+   */
+  private tidyStoredReplies(threadId: string, sinceIso: string, guildId: string | null): void {
+    try {
+      const emojis = this.listCustomEmojis();
+      const guild = guildId ? this.client.guilds.cache.get(guildId) : undefined;
+      const nameOf = (id: string): string | null => {
+        const member = guild?.members.cache.get(id);
+        if (member) return member.displayName;
+        const user = this.client.users.cache.get(id);
+        return user ? (user.globalName ?? user.username) : null;
+      };
+      for (const row of listCompanionMessagesSince(threadId, sinceIso)) {
+        const tidy = mentionsToNames(resolveEmoteShorthand(row.content, emojis), nameOf);
+        if (tidy === row.content) continue;
+        replaceMessageContent(row.id, tidy);
+        this.registry.broadcast({ type: 'message_edited', messageId: row.id, newContent: tidy, editedAt: '' }); // '' = not a user edit, no 'edited' label
+      }
+    } catch (err) {
+      console.warn('[Discord] Could not tidy the stored reply:', (err as Error).message);
+    }
   }
 
   /**

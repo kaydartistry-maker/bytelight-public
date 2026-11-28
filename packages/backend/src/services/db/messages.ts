@@ -286,3 +286,15 @@ export function searchMessages(params: {
 
   return { messages: rows, total };
 }
+
+/** Companion rows written in a thread at or after a moment (oldest first). */
+export function listCompanionMessagesSince(threadId: string, sinceIso: string): Array<{ id: string; content: string }> {
+  return getDb().prepare(
+    "SELECT id, content FROM messages WHERE thread_id = ? AND role = 'companion' AND deleted_at IS NULL AND created_at >= ? ORDER BY sequence ASC"
+  ).all(threadId, sinceIso) as Array<{ id: string; content: string }>;
+}
+
+/** Swap a row's text in place without marking it edited (house-side tidy, not a user edit). */
+export function replaceMessageContent(id: string, content: string): void {
+  getDb().prepare('UPDATE messages SET content = ? WHERE id = ?').run(content, id);
+}

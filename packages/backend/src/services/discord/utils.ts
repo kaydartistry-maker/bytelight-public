@@ -145,3 +145,18 @@ export function stripHouseStickerRefs(
   });
   return changed ? out.replace(/[ \t]{2,}/g, ' ').replace(/[ \t]+\n/g, '\n').trim() : text;
 }
+
+/**
+ * Turn Discord user mentions (<@id>, <@!id>) into readable @names, for the
+ * copy of a reply the app keeps. Discord itself gets the real mention; the
+ * phone shows a name instead of a string of digits. Unknown ids are left as
+ * they are (the phone hides bare mention tokens on its own).
+ */
+export function mentionsToNames(text: string, nameOf: (id: string) => string | null): string {
+  if (!text || !text.includes('<@')) return text;
+  return text.replace(/<@!?(\d{17,20})>/g, (whole, id: string) => {
+    let name: string | null = null;
+    try { name = nameOf(id); } catch { name = null; }
+    return name ? `@${name}` : whole;
+  });
+}
